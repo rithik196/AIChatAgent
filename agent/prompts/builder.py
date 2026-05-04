@@ -1,0 +1,145 @@
+import json
+from datetime import datetime
+from prompts.master_prompt import MASTER_SYSTEM_PROMPT
+from prompts.step_goals import STEP_GOALS, EXTRACTION_SCHEMAS
+from prompts.regulatory import REGULATORY_PROFILES
+
+def build_system_prompt(session: dict) -> str:
+    region = session.get("region", "SA")
+    step = session.get("step", "identity")
+    sub_step = session.get("sub_step", "awaiting_id")
+    user_type = session.get("user_type", "unknown")
+    
+    step_goal = STEP_GOALS.get(step, "Continue the journey naturally")
+    if isinstance(step_goal, dict):
+        step_goal = step_goal.get(region, step_goal.get("SA", ""))
+    
+    schema = EXTRACTION_SCHEMAS.get(step, '{}')
+    if isinstance(schema, dict):
+        schema = schema.get(region, schema.get("SA", '{}'))
+
+    # Sub-step specific instructions
+    sub_step_instructions = _get_sub_step_instructions(step, sub_step, user_type)
+
+    return f"""
+{MASTER_SYSTEM_PROMPT}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CURRENT SESSION CONTEXT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Timestamp:          {datetime.utcnow().isoformat()}
+Region:             {region}
+Regulator:          {REGULATORY_PROFILES.get(region, '')}
+Channel:            {session.get('channel', 'text')}
+Language:           {session.get('language', 'auto-detect')}
+Customer Name:      {session.get('customer_name', 'valued customer')}
+Product:            {session.get('product', 'cash_finance')}
+User Type:          {user_type}
+Current Step:       {step} ({session.get('step_number', 1)} of {session.get('total_steps', 5)})
+Current Sub-Step:   {sub_step}
+Step Goal:          {step_goal}
+Extraction Schema:  {schema}
+Failed Attempts:    {session.get('failed_attempts', 0)} of 3
+Data Collected:     {json.dumps(session.get('collected', {}), indent=2, ensure_ascii=False)}
+Current Offer:      {json.dumps(session.get('offer', {}), indent=2, ensure_ascii=False)}
+Finance Summary:    {json.dumps(session.get('finance_summary', {}), indent=2, ensure_ascii=False)}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SUB-STEP INSTRUCTIONS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+{sub_step_instructions}
+    """.strip()
+
+
+def _get_sub_step_instructions(step: str, sub_step: str, user_type: str) -> str:
+    """Return specific instructions based on step + sub_step."""
+    
+    instructions = {
+        ("identity", "awaiting_id"): """
+You are at the beginning of the journey.
+- Greet the customer warmly and ask for their 10-digit National ID or Iqama number.
+- Extract: {"id_number": "the number", "id_type": "national_id or iqama"}
+""",
+        ("identity", "nafath_pending"): """
+The customer has provided their ID. A Nafath verification request has been sent.
+- Tell them: "I've sent a request to your Nafath app to securely verify your identity. Please open Nafath app and select the number displayed to continue."
+- DO NOT advance to the next step yet. Wait for Nafath approval confirmation.
+- When customer confirms (e.g., "done", "approved", "Open Nafath App"): Extract: {"nafath_approved": true}
+""",
+        ("identity", "loading"): """
+The customer has approved Nafath. Verification is in progress.
+- Briefly acknowledge: "Verifying your identity now..."
+- The system will show a loading widget automatically.
+- Extract: {"verification_loading": true}
+""",
+        ("identity", "verified"): """
+Identity verification is complete!
+- Congratulate the customer.
+- The system will fetch their personal details next.
+- Extract: {"identity_complete": true}
+""",
+        ("identity", "personal_details"): """
+CRITICAL INSTRUCTION: You are currently showing the customer their Personal Details.
+DO NOT present any finance offers yet! You must wait for the customer to confirm their details first.
+- The system is showing a widget with the customer's personal details.
+- Say exactly: "I have retrieved your current profile details. Please review them to make sure everything is correct to proceed."
+- DO NOT mention any loan amounts, profit rates, or tenures at this stage.
+- Extract: {"identity_complete": true} when they confirm the details are correct.
+""",
+        ("offer", "eligible"): f"""
+Present the pre-approved/eligible finance offer.
+- {"This is an EXISTING customer — present as 'Pre Approved Offer'" if user_type == 'existing' else "This is a NEW customer — present as 'Eligible Finance Offer'"}
+- Mention the maximum eligible amount, profit rate, and tenure
+- Ask if they want to accept or request a higher amount
+- Extract: {{"accepted_offer": true}} when they accept
+""",
+        ("offer", "slider"): """
+The customer has accepted the offer. Now let them configure the exact amount and tenure.
+- Tell them to adjust the amount and tenure sliders to their preference.
+- Extract: {"loan_amount": number, "tenure_months": number}
+""",
+        ("offer", "summary"): """
+Show the complete finance summary with all calculated values.
+- Present: Finance Amount, Repayment Period, Annual Profit Rate, Monthly Installment, Total Amount Payable
+- Ask if they want to proceed to commodity trade or modify
+- Extract: {"proceed_trade": true} when they proceed
+""",
+        ("trade", "loading"): """
+The commodity trade (Murabaha) is being executed.
+- Explain that the commodity trade ensures Shariah compliance.
+- The system will show a loading widget.
+- Extract: {"trade_executing": true}
+""",
+        ("trade", "success"): """
+The commodity trade was successful!
+- Inform the customer the trade is complete.
+- Ask for their authorization to proceed.
+- Extract: {"confirmed": true} when they authorize
+""",
+        ("esign", "documents"): """
+Present the documents for digital signing.
+- Mention the Contract Letter and Promissory Note
+- Tell customer signed copies will be sent to their email
+- Extract: {"esign_nafath": true} when they click E-Sign via Nafath
+""",
+        ("esign", "otp_ivr"): """
+E-Sign is successful! Now ask for final verification method.
+- Ask customer to choose OTP or IVR verification for disbursement authorization
+- Extract: {"otp_method": "otp" or "ivr"}
+""",
+        ("disburse", "account"): """
+Ask the customer to select their bank account for disbursement.
+- Present available accounts
+- Extract: {"account_confirmed": true, "account_number": "selected IBAN"}
+""",
+        ("done", "complete"): """
+Journey is complete! Congratulate the customer.
+- Share the disbursement details and reference number.
+- Inform about welcome letter and repayment schedule.
+- Provide bank contact information.
+- Thank them sincerely.
+""",
+    }
+    
+    key = (step, sub_step)
+    return instructions.get(key, f"Continue the {step} step naturally. Current sub-step: {sub_step}")

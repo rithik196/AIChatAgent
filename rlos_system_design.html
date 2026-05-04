@@ -1,0 +1,1718 @@
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <title></title>
+    <meta name="description" content="" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <style>
+      :root {
+        /* Typography */
+        --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
+        
+        /* Primary Colors */
+        --color-text-primary: #000000;
+        --color-text-secondary: #666666;
+        --color-text-tertiary: #999999;
+        --color-background-primary: #FFFFFF;
+        --color-background-secondary: #F5F5F5;
+        
+        /* Border Colors */
+        --color-border-primary: #0D47A1;
+        --color-border-secondary: #DDDDDD;
+        --color-border-tertiary: #EEEEEE;
+        
+        /* Status Colors */
+        --color-background-info: #E3F2FD;
+        --color-text-info: #0D47A1;
+        --color-background-success: #E8F5E9;
+        --color-text-success: #2E7D32;
+        --color-background-warning: #FFF3E0;
+        --color-text-warning: #F57C00;
+        --color-background-danger: #FFEBEE;
+        --color-text-danger: #C62828;
+        
+        /* Spacing & Sizing */
+        --border-radius-lg: 12px;
+        --border-radius-sm: 6px;
+      }
+      
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 8px;
+      }
+      body {
+        font-family: var(--font-sans);
+      }
+      .wrap {
+        padding: 1rem 0;
+      }
+      .tabs {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        margin-bottom: 1.25rem;
+      }
+      .tab {
+        padding: 6px 14px;
+        font-size: 12px;
+        border: 0.5px solid var(--color-border-secondary);
+        border-radius: 20px;
+        cursor: pointer;
+        background: transparent;
+        color: var(--color-text-secondary);
+        transition: all 0.15s;
+      }
+      .tab.active {
+        background: var(--color-text-primary);
+        color: var(--color-background-primary);
+        border-color: transparent;
+      }
+      .panel {
+        display: none;
+      }
+      .panel.active {
+        display: block;
+      }
+      .section-title {
+        font-size: 11px;
+        font-weight: 500;
+        color: var(--color-text-tertiary);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        margin-bottom: 12px;
+      }
+      .grid {
+        display: grid;
+        gap: 10px;
+      }
+      .grid2 {
+        grid-template-columns: 1fr 1fr;
+      }
+      .grid3 {
+        grid-template-columns: 1fr 1fr 1fr;
+      }
+      .card {
+        background: var(--color-background-primary);
+        border: 0.5px solid var(--color-border-tertiary);
+        border-radius: var(--border-radius-lg);
+        padding: 14px;
+      }
+      .card-head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 10px;
+      }
+      .card-icon {
+        width: 28px;
+        height: 28px;
+        border-radius: 6px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 14px;
+        flex-shrink: 0;
+      }
+      .card-title {
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--color-text-primary);
+      }
+      .card-sub {
+        font-size: 11px;
+        color: var(--color-text-tertiary);
+        margin-top: 2px;
+      }
+      .tag {
+        display: inline-block;
+        font-size: 11px;
+        padding: 2px 8px;
+        border-radius: 10px;
+        margin: 2px;
+      }
+      .tag-blue {
+        background: var(--color-background-info);
+        color: var(--color-text-info);
+      }
+      .tag-green {
+        background: var(--color-background-success);
+        color: var(--color-text-success);
+      }
+      .tag-amber {
+        background: var(--color-background-warning);
+        color: var(--color-text-warning);
+      }
+      .tag-red {
+        background: var(--color-background-danger);
+        color: var(--color-text-danger);
+      }
+      .tag-gray {
+        background: var(--color-background-secondary);
+        color: var(--color-text-secondary);
+      }
+      .spec-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 5px 0;
+        border-bottom: 0.5px solid var(--color-border-tertiary);
+        font-size: 12px;
+      }
+      .spec-row:last-child {
+        border-bottom: none;
+      }
+      .spec-label {
+        color: var(--color-text-tertiary);
+      }
+      .spec-val {
+        color: var(--color-text-primary);
+        font-weight: 500;
+        font-family: var(--font-mono);
+      }
+      .flow-box {
+        background: var(--color-background-secondary);
+        border: 0.5px solid var(--color-border-tertiary);
+        border-radius: var(--border-radius-md);
+        padding: 8px 12px;
+        font-size: 12px;
+        color: var(--color-text-primary);
+        text-align: center;
+        position: relative;
+      }
+      .flow-arrow {
+        text-align: center;
+        font-size: 12px;
+        color: var(--color-text-tertiary);
+        padding: 2px 0;
+      }
+      .flow-split {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+      }
+      .flow-badge {
+        position: absolute;
+        top: -8px;
+        left: 50%;
+        transform: translateX(-50%);
+        font-size: 10px;
+        padding: 1px 6px;
+        border-radius: 8px;
+        white-space: nowrap;
+      }
+      .metric-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 8px;
+        margin-bottom: 12px;
+      }
+      .metric {
+        background: var(--color-background-secondary);
+        border-radius: var(--border-radius-md);
+        padding: 10px 12px;
+      }
+      .metric-label {
+        font-size: 11px;
+        color: var(--color-text-tertiary);
+      }
+      .metric-val {
+        font-size: 18px;
+        font-weight: 500;
+        color: var(--color-text-primary);
+      }
+      .metric-sub {
+        font-size: 11px;
+        color: var(--color-text-tertiary);
+      }
+      .layer {
+        border: 0.5px solid var(--color-border-tertiary);
+        border-radius: var(--border-radius-lg);
+        margin-bottom: 10px;
+        overflow: hidden;
+      }
+      .layer-head {
+        padding: 8px 14px;
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--color-text-primary);
+        border-bottom: 0.5px solid var(--color-border-tertiary);
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .layer-body {
+        padding: 10px 14px;
+        display: grid;
+        gap: 8px;
+      }
+      .comp {
+        background: var(--color-background-secondary);
+        border-radius: var(--border-radius-md);
+        padding: 8px 12px;
+      }
+      .comp-name {
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--color-text-primary);
+      }
+      .comp-desc {
+        font-size: 11px;
+        color: var(--color-text-tertiary);
+        margin-top: 2px;
+      }
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        flex-shrink: 0;
+      }
+      .dot-blue {
+        background: var(--color-text-info);
+      }
+      .dot-green {
+        background: var(--color-text-success);
+      }
+      .dot-amber {
+        background: var(--color-text-warning);
+      }
+      .dot-red {
+        background: var(--color-text-danger);
+      }
+      .dot-gray {
+        background: var(--color-text-tertiary);
+      }
+      .connector {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 11px;
+        color: var(--color-text-tertiary);
+        padding: 4px 0;
+      }
+      .connector-line {
+        flex: 1;
+        height: 0.5px;
+        background: var(--color-border-secondary);
+      }
+      .db-card {
+        background: var(--color-background-primary);
+        border: 0.5px solid var(--color-border-tertiary);
+        border-radius: var(--border-radius-md);
+        padding: 10px 12px;
+      }
+      .db-name {
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--color-text-primary);
+        margin-bottom: 6px;
+      }
+      .db-field {
+        display: flex;
+        justify-content: space-between;
+        font-size: 11px;
+        padding: 3px 0;
+        border-bottom: 0.5px solid var(--color-border-tertiary);
+      }
+      .db-field:last-child {
+        border-bottom: none;
+      }
+      .db-key {
+        color: var(--color-text-tertiary);
+      }
+      .db-type {
+        color: var(--color-text-info);
+        font-family: var(--font-mono);
+      }
+      .security-item {
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        padding: 6px 0;
+        border-bottom: 0.5px solid var(--color-border-tertiary);
+      }
+      .security-item:last-child {
+        border-bottom: none;
+      }
+      .security-text {
+        font-size: 12px;
+        color: var(--color-text-primary);
+      }
+      .security-sub {
+        font-size: 11px;
+        color: var(--color-text-tertiary);
+        margin-top: 2px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="tabs">
+        <button class="tab active" onclick="switchTab('overview', this)">
+          Overview
+        </button>
+        <button class="tab" onclick="switchTab('components', this)">
+          Components
+        </button>
+        <button class="tab" onclick="switchTab('voice', this)">
+          Voice pipeline
+        </button>
+        <button class="tab" onclick="switchTab('workflow', this)">
+          Workflow engine
+        </button>
+        <button class="tab" onclick="switchTab('data', this)">
+          Data design
+        </button>
+        <button class="tab" onclick="switchTab('infra', this)">
+          Infra & Docker
+        </button>
+        <button class="tab" onclick="switchTab('security', this)">
+          Security
+        </button>
+      </div>
+
+      <!-- OVERVIEW -->
+      <div class="panel active" id="tab-overview">
+        <div class="metric-grid">
+          <div class="metric">
+            <div class="metric-label">Target scale</div>
+            <div class="metric-val">10k</div>
+            <div class="metric-sub">concurrent users</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">Channels</div>
+            <div class="metric-val">2</div>
+            <div class="metric-sub">voice + text</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">Regions</div>
+            <div class="metric-val">5</div>
+            <div class="metric-sub">SA UAE IN BH KW</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">Languages</div>
+            <div class="metric-val">3</div>
+            <div class="metric-sub">AR EN HI</div>
+          </div>
+        </div>
+
+        <div class="section-title">Full system layers</div>
+
+        <div class="layer">
+          <div class="layer-head">
+            <div class="dot dot-blue"></div>
+            Client layer
+          </div>
+          <div class="layer-body" style="grid-template-columns: 1fr 1fr 1fr">
+            <div class="comp">
+              <div class="comp-name">Web chat UI</div>
+              <div class="comp-desc">
+                Next.js + Tailwind + shadcn/ui + Vercel AI SDK
+              </div>
+            </div>
+            <div class="comp">
+              <div class="comp-name">Voice interface</div>
+              <div class="comp-desc">WebRTC / SIP + browser mic capture</div>
+            </div>
+            <div class="comp">
+              <div class="comp-name">Mobile app</div>
+              <div class="comp-desc">PWA</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="layer">
+          <div class="layer-head">
+            <div class="dot dot-amber"></div>
+            API gateway layer
+          </div>
+          <div class="layer-body" style="grid-template-columns: 1fr 1fr">
+            <div class="comp">
+              <div class="comp-name">Nginx reverse proxy</div>
+              <div class="comp-desc">
+                Rate limiting, SSL termination, routing
+              </div>
+            </div>
+            <div class="comp">
+              <div class="comp-name">FastAPI gateway</div>
+              <div class="comp-desc">
+                Auth, session management, channel routing
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="layer">
+          <div class="layer-head">
+            <div class="dot dot-green"></div>
+            Intelligence layer
+          </div>
+          <div class="layer-body" style="grid-template-columns: 1fr 1fr 1fr">
+            <div class="comp">
+              <div class="comp-name">LangGraph agent</div>
+              <div class="comp-desc">
+                Intent classification, data extraction, conversation
+              </div>
+            </div>
+            <div class="comp">
+              <div class="comp-name">Claude API</div>
+              <div class="comp-desc">
+                claude-sonnet-4 — NLU, generation, multilingual
+              </div>
+            </div>
+            <div class="comp">
+              <div class="comp-name">Voice pipeline</div>
+              <div class="comp-desc">Whisper STT → Claude → ElevenLabs TTS</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="layer">
+          <div class="layer-head">
+            <div class="dot dot-red"></div>
+            Workflow layer
+          </div>
+          <div class="layer-body" style="grid-template-columns: 1fr 1fr 1fr">
+            <div class="comp">
+              <div class="comp-name">Temporal cluster</div>
+              <div class="comp-desc">
+                Durable workflow execution, signals, timers
+              </div>
+            </div>
+            <div class="comp">
+              <div class="comp-name">Python workers</div>
+              <div class="comp-desc">
+                Activity execution — APIs, bureau, eSign
+              </div>
+            </div>
+            <div class="comp">
+              <div class="comp-name">Notification service</div>
+              <div class="comp-desc">SMS, WhatsApp, email triggers</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="layer">
+          <div class="layer-head">
+            <div class="dot dot-gray"></div>
+            Data layer
+          </div>
+          <div
+            class="layer-body"
+            style="grid-template-columns: 1fr 1fr 1fr 1fr"
+          >
+            <div class="comp">
+              <div class="comp-name">PostgreSQL</div>
+              <div class="comp-desc">Temporal state, audit trail</div>
+            </div>
+            <div class="comp">
+              <div class="comp-name">Redis</div>
+              <div class="comp-desc">Session cache, rate limits</div>
+            </div>
+            <div class="comp">
+              <div class="comp-name">MongoDB</div>
+              <div class="comp-desc">Conversation history, analytics</div>
+            </div>
+            <div class="comp">
+              <div class="comp-name">S3 / MinIO</div>
+              <div class="comp-desc">Document storage, voice recordings</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="layer">
+          <div class="layer-head">
+            <div class="dot dot-gray"></div>
+            External integrations
+          </div>
+          <div
+            class="layer-body"
+            style="grid-template-columns: 1fr 1fr 1fr 1fr"
+          >
+            <div class="comp">
+              <div class="comp-name">Nafath / UAE Pass / Aadhaar</div>
+              <div class="comp-desc">Identity verification by region</div>
+            </div>
+            <div class="comp">
+              <div class="comp-name">SIMAH / AECB / CIBIL</div>
+              <div class="comp-desc">Bureau score by region</div>
+            </div>
+            <div class="comp">
+              <div class="comp-name">DocuSign / eSign</div>
+              <div class="comp-desc">Digital signature</div>
+            </div>
+            <div class="comp">
+              <div class="comp-name">Core banking API</div>
+              <div class="comp-desc">Offer, disbursement, account</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- COMPONENTS -->
+      <div class="panel" id="tab-components">
+        <div class="section-title">Detailed component specs</div>
+        <div class="grid grid2">
+          <div class="card">
+            <div class="card-head">
+              <div class="card-icon tag-blue">⚡</div>
+              <div>
+                <div class="card-title">FastAPI gateway</div>
+                <div class="card-sub">Core backend service</div>
+              </div>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Framework</span
+              ><span class="spec-val">FastAPI + Uvicorn</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Workers</span
+              ><span class="spec-val">4 Gunicorn workers</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Auth</span
+              ><span class="spec-val">JWT + Redis session</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Rate limit</span
+              ><span class="spec-val">100 req/min per IP</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Websocket</span
+              ><span class="spec-val">streaming chat</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Port</span
+              ><span class="spec-val">8000</span>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-head">
+              <div class="card-icon tag-green">🧠</div>
+              <div>
+                <div class="card-title">LangGraph agent</div>
+                <div class="card-sub">Conversation intelligence</div>
+              </div>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Framework</span
+              ><span class="spec-val">LangGraph + LangChain</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Model</span
+              ><span class="spec-val">claude-sonnet-4</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Nodes</span
+              ><span class="spec-val">classify → extract → respond</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">State</span
+              ><span class="spec-val">Redis per session</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Streaming</span
+              ><span class="spec-val">SSE token streaming</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Timeout</span
+              ><span class="spec-val">30s per LLM call</span>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-head">
+              <div class="card-icon tag-amber">🔄</div>
+              <div>
+                <div class="card-title">Temporal cluster</div>
+                <div class="card-sub">Workflow orchestration</div>
+              </div>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Version</span
+              ><span class="spec-val">temporalio/auto-setup:latest</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Persistence</span
+              ><span class="spec-val">PostgreSQL</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Port</span
+              ><span class="spec-val">7233 (gRPC)</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">UI</span
+              ><span class="spec-val">8080 (dashboard)</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Namespaces</span
+              ><span class="spec-val">dev / staging / prod</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Workers</span
+              ><span class="spec-val">3 Python worker pods</span>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-head">
+              <div class="card-icon tag-red">🎙</div>
+              <div>
+                <div class="card-title">Voice pipeline</div>
+                <div class="card-sub">Real-time speech processing</div>
+              </div>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">STT</span
+              ><span class="spec-val">Whisper large-v3</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">TTS</span
+              ><span class="spec-val">ElevenLabs multilingual</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Protocol</span
+              ><span class="spec-val">WebRTC / WebSocket</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Latency target</span
+              ><span class="spec-val">&lt;2s end-to-end</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">VAD</span
+              ><span class="spec-val">Silero VAD</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Barge-in</span
+              ><span class="spec-val">interruption detection</span>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-head">
+              <div class="card-icon tag-blue">🗄</div>
+              <div>
+                <div class="card-title">PostgreSQL</div>
+                <div class="card-sub">Primary database</div>
+              </div>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Version</span
+              ><span class="spec-val">PostgreSQL 15</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Use</span
+              ><span class="spec-val">Temporal state + audit</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Backups</span
+              ><span class="spec-val">Daily pg_dump to S3</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Connection pool</span
+              ><span class="spec-val">PgBouncer (max 100)</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">RAM</span
+              ><span class="spec-val">8GB recommended</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Port</span
+              ><span class="spec-val">5432</span>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-head">
+              <div class="card-icon tag-green">⚡</div>
+              <div>
+                <div class="card-title">Redis</div>
+                <div class="card-sub">Cache & session store</div>
+              </div>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Version</span
+              ><span class="spec-val">Redis 7</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Use</span
+              ><span class="spec-val">sessions, rate limits, locks</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Session TTL</span
+              ><span class="spec-val">30 min idle</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Max memory</span
+              ><span class="spec-val">2GB + LRU eviction</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Persistence</span
+              ><span class="spec-val">RDB every 5 min</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Port</span
+              ><span class="spec-val">6379</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- VOICE PIPELINE -->
+      <div class="panel" id="tab-voice">
+        <div class="section-title">Voice pipeline — end to end flow</div>
+
+        <div style="max-width: 480px; margin: 0 auto">
+          <div
+            class="flow-box"
+            style="
+              background: var(--color-background-info);
+              border-color: var(--color-border-info);
+            "
+          >
+            <span style="font-size: 11px; color: var(--color-text-info)"
+              >Customer</span
+            >
+            <div style="font-weight: 500">
+              Speaks into mic (Arabic / English / Hindi)
+            </div>
+          </div>
+          <div class="flow-arrow">↓ WebRTC / WebSocket stream</div>
+          <div class="flow-box">
+            <div class="flow-badge tag-amber">STT</div>
+            Whisper large-v3
+            <div
+              style="
+                font-size: 11px;
+                color: var(--color-text-tertiary);
+                margin-top: 4px;
+              "
+            >
+              VAD → chunk → transcribe → language detect
+            </div>
+          </div>
+          <div class="flow-arrow">↓ transcript + language tag</div>
+          <div class="flow-box">
+            <div class="flow-badge tag-green">Agent</div>
+            LangGraph conversation graph
+            <div
+              style="
+                font-size: 11px;
+                color: var(--color-text-tertiary);
+                margin-top: 4px;
+              "
+            >
+              classify intent → extract data → build response
+            </div>
+          </div>
+          <div class="flow-split" style="margin: 6px 0">
+            <div>
+              <div class="flow-arrow">↓ if data extracted</div>
+              <div class="flow-box" style="font-size: 11px">
+                <div class="flow-badge tag-blue">Signal</div>
+                Temporal signal fired
+                <div
+                  style="
+                    font-size: 10px;
+                    color: var(--color-text-tertiary);
+                    margin-top: 4px;
+                  "
+                >
+                  workflow advances
+                </div>
+              </div>
+            </div>
+            <div>
+              <div class="flow-arrow">↓ response text</div>
+              <div class="flow-box" style="font-size: 11px">
+                <div class="flow-badge tag-red">TTS</div>
+                ElevenLabs multilingual
+                <div
+                  style="
+                    font-size: 10px;
+                    color: var(--color-text-tertiary);
+                    margin-top: 4px;
+                  "
+                >
+                  voice cloned per region
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="flow-arrow">↓ audio stream back</div>
+          <div
+            class="flow-box"
+            style="
+              background: var(--color-background-info);
+              border-color: var(--color-border-info);
+            "
+          >
+            <span style="font-size: 11px; color: var(--color-text-info)"
+              >Customer hears Raya speaking</span
+            >
+          </div>
+        </div>
+
+        <div style="margin-top: 16px" class="section-title">
+          Latency budget (target &lt;2s)
+        </div>
+        <div class="grid grid2" style="margin-top: 0">
+          <div class="card">
+            <div class="spec-row">
+              <span class="spec-label">VAD + chunking</span
+              ><span class="spec-val">~50ms</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Whisper STT</span
+              ><span class="spec-val">~300ms</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">LangGraph classify</span
+              ><span class="spec-val">~200ms</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Claude API (streaming)</span
+              ><span class="spec-val">~600ms TTFT</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">ElevenLabs TTS</span
+              ><span class="spec-val">~400ms</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Network round trip</span
+              ><span class="spec-val">~150ms</span>
+            </div>
+          </div>
+          <div class="card">
+            <div class="spec-row">
+              <span class="spec-label">Barge-in handling</span
+              ><span class="spec-val">Stop TTS immediately</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Silence detection</span
+              ><span class="spec-val">Silero VAD 10ms frames</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Language detection</span
+              ><span class="spec-val">Whisper built-in</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Voice model (AR)</span
+              ><span class="spec-val">ElevenLabs Arabic</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Voice model (HI)</span
+              ><span class="spec-val">ElevenLabs Hindi</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Fallback</span
+              ><span class="spec-val">Azure TTS if EL down</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- WORKFLOW ENGINE -->
+      <div class="panel" id="tab-workflow">
+        <div class="section-title">Temporal workflow design — RLOS journey</div>
+
+        <div style="max-width: 480px; margin: 0 auto 16px">
+          <div
+            class="flow-box"
+            style="
+              background: var(--color-background-success);
+              border-color: var(--color-border-success);
+            "
+          >
+            <span style="font-size: 11px; color: var(--color-text-success)"
+              >RLOSWorkflow starts (1 per customer)</span
+            >
+          </div>
+          <div class="flow-arrow">↓ child workflow</div>
+          <div class="flow-box">
+            <div class="flow-badge tag-blue">Step 1</div>
+            IdentityWorkflow
+            <div
+              style="
+                font-size: 11px;
+                color: var(--color-text-tertiary);
+                margin-top: 4px;
+              "
+            >
+              wait signal → verify ID → Nafath/eKYC → parallel fraud check
+            </div>
+          </div>
+          <div class="flow-arrow">↓ child workflow</div>
+          <div class="flow-box">
+            <div class="flow-badge tag-blue">Step 2</div>
+            OfferWorkflow
+            <div
+              style="
+                font-size: 11px;
+                color: var(--color-text-tertiary);
+                margin-top: 4px;
+              "
+            >
+              parallel: bureau + compliance + fraud → calc offer → wait signal
+            </div>
+          </div>
+          <div class="flow-arrow">↓ child workflow</div>
+          <div class="flow-box">
+            <div class="flow-badge tag-blue">Step 3</div>
+            TradeWorkflow
+            <div
+              style="
+                font-size: 11px;
+                color: var(--color-text-tertiary);
+                margin-top: 4px;
+              "
+            >
+              Murabaha execution (SA/UAE/BH/KW) or agreement (IN) → wait confirm
+            </div>
+          </div>
+          <div class="flow-arrow">↓ child workflow</div>
+          <div class="flow-box">
+            <div class="flow-badge tag-blue">Step 4</div>
+            SignatureWorkflow
+            <div
+              style="
+                font-size: 11px;
+                color: var(--color-text-tertiary);
+                margin-top: 4px;
+              "
+            >
+              send eSign → wait up to 48h → reminder at 24h → wait signal
+            </div>
+          </div>
+          <div class="flow-arrow">↓ child workflow</div>
+          <div class="flow-box">
+            <div class="flow-badge tag-blue">Step 5</div>
+            DisbursementWorkflow
+            <div
+              style="
+                font-size: 11px;
+                color: var(--color-text-tertiary);
+                margin-top: 4px;
+              "
+            >
+              validate IBAN → call core banking → saga rollback if fails
+            </div>
+          </div>
+          <div class="flow-arrow">↓</div>
+          <div
+            class="flow-box"
+            style="
+              background: var(--color-background-success);
+              border-color: var(--color-border-success);
+            "
+          >
+            <span style="color: var(--color-text-success); font-weight: 500"
+              >Journey complete — disbursed</span
+            >
+          </div>
+        </div>
+
+        <div class="grid grid2">
+          <div class="card">
+            <div class="card-head">
+              <div class="card-title">Signal types</div>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">identity_received</span
+              ><span class="spec-val tag tag-blue">data</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">offer_selected</span
+              ><span class="spec-val tag tag-blue">data</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">trade_confirmed</span
+              ><span class="spec-val tag tag-blue">data</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">esign_completed</span
+              ><span class="spec-val tag tag-blue">data</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">disburse_confirmed</span
+              ><span class="spec-val tag tag-blue">data</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">escalate_to_human</span
+              ><span class="spec-val tag tag-red">control</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">max_attempts_reached</span
+              ><span class="spec-val tag tag-red">control</span>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-head">
+              <div class="card-title">Retry policies</div>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">API failures</span
+              ><span class="spec-val">5x, 5s backoff×2</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Wrong input</span
+              ><span class="spec-val">non_retryable</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">eSign wait</span
+              ><span class="spec-val">48h timeout</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Doc upload wait</span
+              ><span class="spec-val">24h + reminder</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Max wrong attempts</span
+              ><span class="spec-val">3 → escalate</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Saga rollback</span
+              ><span class="spec-val">on disburse fail</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- DATA DESIGN -->
+      <div class="panel" id="tab-data">
+        <div class="section-title">Database schema — key tables</div>
+        <div class="grid grid2">
+          <div class="db-card">
+            <div class="db-name">applications</div>
+            <div class="db-field">
+              <span class="db-key">id</span><span class="db-type">UUID PK</span>
+            </div>
+            <div class="db-field">
+              <span class="db-key">customer_id</span
+              ><span class="db-type">UUID FK</span>
+            </div>
+            <div class="db-field">
+              <span class="db-key">workflow_id</span
+              ><span class="db-type">VARCHAR</span>
+            </div>
+            <div class="db-field">
+              <span class="db-key">region</span
+              ><span class="db-type">ENUM</span>
+            </div>
+            <div class="db-field">
+              <span class="db-key">product</span
+              ><span class="db-type">ENUM</span>
+            </div>
+            <div class="db-field">
+              <span class="db-key">current_step</span
+              ><span class="db-type">ENUM</span>
+            </div>
+            <div class="db-field">
+              <span class="db-key">status</span
+              ><span class="db-type">ENUM</span>
+            </div>
+            <div class="db-field">
+              <span class="db-key">loan_amount</span
+              ><span class="db-type">DECIMAL</span>
+            </div>
+            <div class="db-field">
+              <span class="db-key">created_at</span
+              ><span class="db-type">TIMESTAMP</span>
+            </div>
+          </div>
+
+          <div class="db-card">
+            <div class="db-name">customers</div>
+            <div class="db-field">
+              <span class="db-key">id</span><span class="db-type">UUID PK</span>
+            </div>
+            <div class="db-field">
+              <span class="db-key">id_number_hash</span
+              ><span class="db-type">VARCHAR</span>
+            </div>
+            <div class="db-field">
+              <span class="db-key">id_type</span
+              ><span class="db-type">ENUM</span>
+            </div>
+            <div class="db-field">
+              <span class="db-key">region</span
+              ><span class="db-type">ENUM</span>
+            </div>
+            <div class="db-field">
+              <span class="db-key">language_pref</span
+              ><span class="db-type">ENUM</span>
+            </div>
+            <div class="db-field">
+              <span class="db-key">phone_hash</span
+              ><span class="db-type">VARCHAR</span>
+            </div>
+            <div class="db-field">
+              <span class="db-key">verified_at</span
+              ><span class="db-type">TIMESTAMP</span>
+            </div>
+          </div>
+
+          <div class="db-card">
+            <div class="db-name">conversations (MongoDB)</div>
+            <div class="db-field">
+              <span class="db-key">_id</span
+              ><span class="db-type">ObjectId</span>
+            </div>
+            <div class="db-field">
+              <span class="db-key">application_id</span
+              ><span class="db-type">UUID</span>
+            </div>
+            <div class="db-field">
+              <span class="db-key">channel</span
+              ><span class="db-type">voice | text</span>
+            </div>
+            <div class="db-field">
+              <span class="db-key">messages</span
+              ><span class="db-type">Array</span>
+            </div>
+            <div class="db-field">
+              <span class="db-key">sentiment_log</span
+              ><span class="db-type">Array</span>
+            </div>
+            <div class="db-field">
+              <span class="db-key">language_detected</span
+              ><span class="db-type">String</span>
+            </div>
+            <div class="db-field">
+              <span class="db-key">extract_log</span
+              ><span class="db-type">Array</span>
+            </div>
+          </div>
+
+          <div class="db-card">
+            <div class="db-name">audit_trail</div>
+            <div class="db-field">
+              <span class="db-key">id</span><span class="db-type">UUID PK</span>
+            </div>
+            <div class="db-field">
+              <span class="db-key">application_id</span
+              ><span class="db-type">UUID FK</span>
+            </div>
+            <div class="db-field">
+              <span class="db-key">event_type</span
+              ><span class="db-type">VARCHAR</span>
+            </div>
+            <div class="db-field">
+              <span class="db-key">step</span><span class="db-type">ENUM</span>
+            </div>
+            <div class="db-field">
+              <span class="db-key">actor</span
+              ><span class="db-type">VARCHAR</span>
+            </div>
+            <div class="db-field">
+              <span class="db-key">payload_hash</span
+              ><span class="db-type">VARCHAR</span>
+            </div>
+            <div class="db-field">
+              <span class="db-key">created_at</span
+              ><span class="db-type">TIMESTAMP</span>
+            </div>
+          </div>
+
+          <div class="db-card">
+            <div class="db-name">offers</div>
+            <div class="db-field">
+              <span class="db-key">id</span><span class="db-type">UUID PK</span>
+            </div>
+            <div class="db-field">
+              <span class="db-key">application_id</span
+              ><span class="db-type">UUID FK</span>
+            </div>
+            <div class="db-field">
+              <span class="db-key">bureau_score_band</span
+              ><span class="db-type">VARCHAR</span>
+            </div>
+            <div class="db-field">
+              <span class="db-key">profit_rate</span
+              ><span class="db-type">DECIMAL</span>
+            </div>
+            <div class="db-field">
+              <span class="db-key">max_amount</span
+              ><span class="db-type">DECIMAL</span>
+            </div>
+            <div class="db-field">
+              <span class="db-key">selected_amount</span
+              ><span class="db-type">DECIMAL</span>
+            </div>
+            <div class="db-field">
+              <span class="db-key">tenure_months</span
+              ><span class="db-type">INT</span>
+            </div>
+            <div class="db-field">
+              <span class="db-key">monthly_instalment</span
+              ><span class="db-type">DECIMAL</span>
+            </div>
+          </div>
+
+          <div class="db-card">
+            <div class="db-name">sessions (Redis schema)</div>
+            <div class="db-field">
+              <span class="db-key">key</span
+              ><span class="db-type">session:{uuid}</span>
+            </div>
+            <div class="db-field">
+              <span class="db-key">customer_id</span
+              ><span class="db-type">String</span>
+            </div>
+            <div class="db-field">
+              <span class="db-key">workflow_id</span
+              ><span class="db-type">String</span>
+            </div>
+            <div class="db-field">
+              <span class="db-key">current_step</span
+              ><span class="db-type">String</span>
+            </div>
+            <div class="db-field">
+              <span class="db-key">language</span
+              ><span class="db-type">String</span>
+            </div>
+            <div class="db-field">
+              <span class="db-key">failed_attempts</span
+              ><span class="db-type">Int</span>
+            </div>
+            <div class="db-field">
+              <span class="db-key">TTL</span
+              ><span class="db-type">1800s (30 min)</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- INFRA -->
+      <div class="panel" id="tab-infra">
+        <div class="section-title">Docker compose — service map</div>
+        <div class="grid grid3" style="margin-bottom: 12px">
+          <div class="card">
+            <div class="card-head"><div class="card-title">nginx</div></div>
+            <div class="spec-row">
+              <span class="spec-label">Image</span
+              ><span class="spec-val">nginx:alpine</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Ports</span
+              ><span class="spec-val">80, 443</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">CPU</span
+              ><span class="spec-val">0.5 core</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">RAM</span
+              ><span class="spec-val">256MB</span>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-head"><div class="card-title">fastapi</div></div>
+            <div class="spec-row">
+              <span class="spec-label">Image</span
+              ><span class="spec-val">python:3.11</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Port</span
+              ><span class="spec-val">8000</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">CPU</span
+              ><span class="spec-val">2 cores</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">RAM</span
+              ><span class="spec-val">2GB</span>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-head">
+              <div class="card-title">langgraph-agent</div>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Image</span
+              ><span class="spec-val">python:3.11</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Port</span
+              ><span class="spec-val">8001 (internal)</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">CPU</span
+              ><span class="spec-val">2 cores</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">RAM</span
+              ><span class="spec-val">4GB</span>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-head"><div class="card-title">temporal</div></div>
+            <div class="spec-row">
+              <span class="spec-label">Image</span
+              ><span class="spec-val">temporalio/auto-setup</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Ports</span
+              ><span class="spec-val">7233, 8080</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">CPU</span
+              ><span class="spec-val">2 cores</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">RAM</span
+              ><span class="spec-val">4GB</span>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-head">
+              <div class="card-title">temporal-worker</div>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Image</span
+              ><span class="spec-val">python:3.11</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Replicas</span
+              ><span class="spec-val">3</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">CPU</span
+              ><span class="spec-val">1 core each</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">RAM</span
+              ><span class="spec-val">1GB each</span>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-head">
+              <div class="card-title">voice-service</div>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Image</span
+              ><span class="spec-val">python:3.11-gpu</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Port</span
+              ><span class="spec-val">8002 (internal)</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">CPU/GPU</span
+              ><span class="spec-val">4 core / 1 GPU</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">RAM</span
+              ><span class="spec-val">8GB</span>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-head">
+              <div class="card-title">postgresql</div>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Image</span
+              ><span class="spec-val">postgres:15</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Port</span
+              ><span class="spec-val">5432</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">CPU</span
+              ><span class="spec-val">2 cores</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">RAM</span
+              ><span class="spec-val">8GB</span>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-head"><div class="card-title">redis</div></div>
+            <div class="spec-row">
+              <span class="spec-label">Image</span
+              ><span class="spec-val">redis:7-alpine</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Port</span
+              ><span class="spec-val">6379</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">CPU</span
+              ><span class="spec-val">1 core</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">RAM</span
+              ><span class="spec-val">2GB</span>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-head"><div class="card-title">mongodb</div></div>
+            <div class="spec-row">
+              <span class="spec-label">Image</span
+              ><span class="spec-val">mongo:7</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Port</span
+              ><span class="spec-val">27017</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">CPU</span
+              ><span class="spec-val">2 cores</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">RAM</span
+              ><span class="spec-val">4GB</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="section-title">Minimum server spec (1k–10k users)</div>
+        <div class="grid grid2">
+          <div class="card">
+            <div class="card-head">
+              <div class="card-title">App server</div>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">CPU</span
+              ><span class="spec-val">16 vCPU</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">RAM</span
+              ><span class="spec-val">32GB</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Disk</span
+              ><span class="spec-val">200GB SSD</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Services</span
+              ><span class="spec-val"
+                >nginx, fastapi, agent, temporal, workers</span
+              >
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-head">
+              <div class="card-title">Data server</div>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">CPU</span
+              ><span class="spec-val">8 vCPU</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">RAM</span
+              ><span class="spec-val">16GB</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Disk</span
+              ><span class="spec-val">500GB SSD</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-label">Services</span
+              ><span class="spec-val">postgres, redis, mongodb, minio</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- SECURITY -->
+      <div class="panel" id="tab-security">
+        <div class="section-title">Security & compliance design</div>
+        <div class="grid grid2">
+          <div class="card">
+            <div class="card-head">
+              <div class="card-title">Authentication & access</div>
+            </div>
+            <div class="security-item">
+              <div class="dot dot-blue" style="margin-top: 3px"></div>
+              <div>
+                <div class="security-text">
+                  JWT tokens — 15 min expiry, refresh via Redis
+                </div>
+                <div class="security-sub">
+                  Stateless auth, revokable via Redis blacklist
+                </div>
+              </div>
+            </div>
+            <div class="security-item">
+              <div class="dot dot-blue" style="margin-top: 3px"></div>
+              <div>
+                <div class="security-text">mTLS between internal services</div>
+                <div class="security-sub">
+                  Temporal ↔ workers ↔ FastAPI all mutual TLS
+                </div>
+              </div>
+            </div>
+            <div class="security-item">
+              <div class="dot dot-blue" style="margin-top: 3px"></div>
+              <div>
+                <div class="security-text">API key rotation every 90 days</div>
+                <div class="security-sub">
+                  Claude, ElevenLabs, Whisper — all rotated
+                </div>
+              </div>
+            </div>
+            <div class="security-item">
+              <div class="dot dot-blue" style="margin-top: 3px"></div>
+              <div>
+                <div class="security-text">RBAC on internal dashboards</div>
+                <div class="security-sub">
+                  Temporal UI, monitoring — role-gated access
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-head">
+              <div class="card-title">Data protection</div>
+            </div>
+            <div class="security-item">
+              <div class="dot dot-green" style="margin-top: 3px"></div>
+              <div>
+                <div class="security-text">
+                  PII stored only as hashed values
+                </div>
+                <div class="security-sub">
+                  ID numbers, phone, account — SHA-256 hashed
+                </div>
+              </div>
+            </div>
+            <div class="security-item">
+              <div class="dot dot-green" style="margin-top: 3px"></div>
+              <div>
+                <div class="security-text">Encryption at rest — AES-256</div>
+                <div class="security-sub">
+                  PostgreSQL, MongoDB, S3 all encrypted
+                </div>
+              </div>
+            </div>
+            <div class="security-item">
+              <div class="dot dot-green" style="margin-top: 3px"></div>
+              <div>
+                <div class="security-text">TLS 1.3 in transit everywhere</div>
+                <div class="security-sub">
+                  No plaintext communication between any services
+                </div>
+              </div>
+            </div>
+            <div class="security-item">
+              <div class="dot dot-green" style="margin-top: 3px"></div>
+              <div>
+                <div class="security-text">Data residency per region</div>
+                <div class="security-sub">
+                  SA data stays in KSA, IN data stays in India
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-head">
+              <div class="card-title">Compliance — by regulator</div>
+            </div>
+            <div class="security-item">
+              <div class="dot dot-amber" style="margin-top: 3px"></div>
+              <div>
+                <div class="security-text">SAMA — PDPL data privacy law</div>
+                <div class="security-sub">
+                  Consent capture, right to deletion, data logs
+                </div>
+              </div>
+            </div>
+            <div class="security-item">
+              <div class="dot dot-amber" style="margin-top: 3px"></div>
+              <div>
+                <div class="security-text">
+                  RBI — KYC norms + Fair Practices Code
+                </div>
+                <div class="security-sub">
+                  PAN mandatory &gt;INR 50k, audit trail mandatory
+                </div>
+              </div>
+            </div>
+            <div class="security-item">
+              <div class="dot dot-amber" style="margin-top: 3px"></div>
+              <div>
+                <div class="security-text">
+                  CBUAE — cooling-off period disclosure
+                </div>
+                <div class="security-sub">
+                  Customer notified of right to cancel
+                </div>
+              </div>
+            </div>
+            <div class="security-item">
+              <div class="dot dot-amber" style="margin-top: 3px"></div>
+              <div>
+                <div class="security-text">
+                  Full audit trail — immutable log
+                </div>
+                <div class="security-sub">
+                  Every state change in audit_trail table, hash-chained
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-head">
+              <div class="card-title">Threat mitigation</div>
+            </div>
+            <div class="security-item">
+              <div class="dot dot-red" style="margin-top: 3px"></div>
+              <div>
+                <div class="security-text">Rate limiting — Nginx + Redis</div>
+                <div class="security-sub">
+                  100 req/min per IP, 10 auth attempts/hour
+                </div>
+              </div>
+            </div>
+            <div class="security-item">
+              <div class="dot dot-red" style="margin-top: 3px"></div>
+              <div>
+                <div class="security-text">Prompt injection protection</div>
+                <div class="security-sub">
+                  System prompt locked, user input sandboxed
+                </div>
+              </div>
+            </div>
+            <div class="security-item">
+              <div class="dot dot-red" style="margin-top: 3px"></div>
+              <div>
+                <div class="security-text">Voice deepfake detection</div>
+                <div class="security-sub">
+                  Nafath/UAE Pass as ground truth — not voice alone
+                </div>
+              </div>
+            </div>
+            <div class="security-item">
+              <div class="dot dot-red" style="margin-top: 3px"></div>
+              <div>
+                <div class="security-text">Daily automated backups</div>
+                <div class="security-sub">
+                  pg_dump to encrypted S3, 90-day retention
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      function switchTab(id, btn) {
+        document
+          .querySelectorAll(".panel")
+          .forEach((p) => p.classList.remove("active"));
+        document
+          .querySelectorAll(".tab")
+          .forEach((t) => t.classList.remove("active"));
+        document.getElementById("tab-" + id).classList.add("active");
+        btn.classList.add("active");
+      }
+    </script>
+  </body>
+</html>

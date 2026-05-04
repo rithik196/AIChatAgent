@@ -1,0 +1,5 @@
+# Persistent data store (sessions + conversations)
+.data/
+__pycache__/
+*.pyc
+.env
