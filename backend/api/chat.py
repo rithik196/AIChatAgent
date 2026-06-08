@@ -13,13 +13,55 @@ import time
 import math
 import random
 import re
+import logging
+
+from db import get_customer_by_phone, get_customer_by_national_id
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 AGENT_URL = "http://localhost:8001"
 
 # ── In-memory session store (backed by agent persistence) ────────────
 SESSION_STORE: dict[str, dict] = {}
+
+
+def _get_phone_from_session_id(session_id: str) -> str:
+    """Session IDs are formatted as '<phone>_<product>' for this app."""
+    return session_id.split("_", 1)[0] if session_id else ""
+
+
+def _customer_to_widget_data(customer: Any) -> dict:
+    """Map backend CustomerProfile model into the widget's expected payload shape."""
+    return {
+        "name": customer.name,
+        "phone": customer.phone,
+        "email": customer.email,
+        "personal": {
+            "idNumber": customer.personal.id_number,
+            "age": customer.personal.age,
+            "gender": customer.personal.gender,
+            "dobGR": customer.personal.dob_gr,
+            "dobHJ": customer.personal.dob_hj,
+            "address": customer.personal.address,
+            "maritalStatus": customer.personal.marital_status,
+            "nationality": customer.personal.nationality,
+            "fatherName": customer.personal.father_name,
+            "grandfatherName": customer.personal.grandfather_name,
+            "dependents": customer.personal.dependents,
+            "incomeType": customer.personal.income_type,
+        },
+        "employment": {
+            "type": customer.employment.type,
+            "industry": customer.employment.industry,
+            "employer": customer.employment.employer,
+            "experience": customer.employment.experience,
+            "address": customer.employment.address,
+        },
+        "income": {
+            "monthly": customer.income.monthly,
+        },
+    }
 
 
 # ── Helpers ──────────────────────────────────────────────────────────
@@ -28,47 +70,59 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
     """Map step+sub_step to widget type + data payload."""
     step = session.get("step", "identity")
     sub_step = session.get("sub_step", "")
-    user_type = session.get("user_type", "new")
+    customer_type = session.get("customerType") or ("ETB" if session.get("user_type") == "existing" else "NTB")
+    journey_mode = session.get("journeyMode", "PRE_DEDUPE")
 
     if step == "identity" and sub_step == "nafath_pending":
         return {"widget": "NafathWidget", "data": {"nafath_code": session.get("nafath_code", math.floor(10 + random.random() * 89))}}
 
     if step == "identity" and sub_step == "loading":
-        return {"widget": "LoadingWidget", "data": {"title": "Verifying OTP...", "subtitle": "Fetching Existing Records"}}
+        return {"widget": "LoadingWidget", "data": {"title": "Verifying OTP...", "subtitle": "Processing your secure request", "auto_advance_ms": 3000, "next_message": "loading_complete", "silent": True}}
 
     if step == "identity" and sub_step == "verified":
-        return {"widget": "VerificationSuccessWidget", "data": {"title": "Verification Successful", "subtitle": "Your details have been fetched successfully."}}
+        return {"widget": "VerificationSuccessWidget", "data": {"title": "OTP Verified", "subtitle": "Your identity has been verified.", "auto_advance_ms": 3000, "next_message": "continue", "silent": True}}
+
+    if step == "identity" and sub_step == "dedupe_check":
+        return {"widget": "LoadingWidget", "data": {"title": "Running Dedupe Check...", "subtitle": "Verifying your records", "auto_advance_ms": 3000, "next_message": "dedupe_complete", "silent": True}}
+
+    if step == "identity" and sub_step == "identify_yourself":
+        if customer_type == "ETB" and journey_mode != "NTB_ENRICHMENT":
+            return None
+        return {"widget": "NTBIntroductionWidget", "data": {}}
 
     if step == "identity" and sub_step == "personal_details":
+        if customer_type == "ETB" and journey_mode != "NTB_ENRICHMENT":
+            return None
+        customer = session.get("customer_profile")
         return {
             "widget": "PersonalDetailsWidget",
-            "data": {
-                "name": "Abdullah Al-Dosari",
-                "phone": "+966 5X XXX XXXX",
-                "email": "abdullah.d@example.com",
+            "data": customer or {
+                "name": "Customer",
+                "phone": "",
+                "email": "",
                 "personal": {
-                    "idNumber": session.get("collected", {}).get("id_number", "10XXXXXX32"),
-                    "age": 34,
-                    "gender": "Male",
-                    "dobGR": "15-08-1989",
-                    "dobHJ": "13-01-1410",
-                    "address": "Riyadh, Saudi Arabia",
-                    "maritalStatus": "Married",
-                    "nationality": "Saudi",
-                    "fatherName": "Mohammed",
-                    "grandfatherName": "Saleh",
-                    "dependents": "3",
-                    "incomeType": "Salary"
+                    "idNumber": session.get("collected", {}).get("id_number", ""),
+                    "age": 0,
+                    "gender": "",
+                    "dobGR": "",
+                    "dobHJ": "",
+                    "address": "",
+                    "maritalStatus": "",
+                    "nationality": "",
+                    "fatherName": "",
+                    "grandfatherName": "",
+                    "dependents": "",
+                    "incomeType": ""
                 },
                 "employment": {
-                    "type": "Private Sector",
-                    "industry": "Technology",
-                    "employer": "Saudi Telecom Company",
-                    "experience": "8",
-                    "address": "King Fahd Road, Riyadh"
+                    "type": "",
+                    "industry": "",
+                    "employer": "",
+                    "experience": "",
+                    "address": ""
                 },
                 "income": {
-                    "monthly": "SAR 25,000"
+                    "monthly": ""
                 }
             }
         }
@@ -78,7 +132,7 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
         return {
             "widget": "EligibleOfferWidget",
             "data": {
-                "title": "Pre Approved Offer" if user_type == "existing" else "Eligible Finance Offer",
+                "title": "Pre Approved Offer" if customer_type == "ETB" and journey_mode == "ETB_CORE" else "Eligible Finance Offer",
                 "max_amount": offer.get("max_amount", 350000),
                 "profit_rate": offer.get("profit_rate", "12%"),
                 "max_tenure": offer.get("max_tenure", 60),
@@ -200,6 +254,7 @@ class ChatRequest(BaseModel):
 @router.post("/chat")
 async def chat(request: ChatRequest):
     session_id = request.session_id
+    last_user_msg = (request.messages[-1].get("content", "") if request.messages else "").strip()
 
     # Get or create session
     current_session = SESSION_STORE.get(session_id)
@@ -212,6 +267,10 @@ async def chat(request: ChatRequest):
             "total_steps": 5,
             "product": "cash_finance",
             "user_type": "unknown",
+            "customerType": "UNKNOWN",
+            "journeyMode": "PRE_DEDUPE",
+            "journeyOrigin": "UNKNOWN",
+            "transitionReason": None,
             "collected": {},
             "offer": {},
             "finance_summary": {},
@@ -239,16 +298,51 @@ async def chat(request: ChatRequest):
 
     # Update session
     updated_session = data.get("session", current_session)
-    updated_session["_lastWidgetState"] = current_session.get("_lastWidgetState", "identity/awaiting_id")
+
+    # Attach DB-backed customer profile only when needed.
+    # This avoids repeated DB round-trips on every chat turn.
+    need_profile = (
+        updated_session.get("step") == "identity"
+        and updated_session.get("sub_step") == "personal_details"
+        and not updated_session.get("customer_profile")
+    )
+    if need_profile:
+        national_id = updated_session.get("collected", {}).get("id_number")
+        customer = get_customer_by_national_id(national_id) if national_id else None
+        if not customer:
+            phone = _get_phone_from_session_id(session_id)
+            if phone:
+                customer = get_customer_by_phone(phone)
+        if customer:
+            updated_session["customer_profile"] = _customer_to_widget_data(customer)
+
     SESSION_STORE[session_id] = updated_session
 
-    # Widget resolution — only on state transitions
-    state_key = f"{updated_session['step']}/{updated_session['sub_step']}"
-    prev_key = current_session.get("_lastWidgetState", "")
-    widget_spec = resolve_widget(updated_session, data.get("extract")) if state_key != prev_key else None
+    # Widget resolution — compare step/sub_step before vs after the agent call.
+    # This is restart-safe: no stale in-memory _lastWidgetState involved.
+    prev_step = current_session.get("step", "identity")
+    prev_sub  = current_session.get("sub_step", "awaiting_id")
+    new_step  = updated_session.get("step", "identity")
+    new_sub   = updated_session.get("sub_step", "awaiting_id")
+    state_changed = (prev_step != new_step) or (prev_sub != new_sub)
+    widget_spec = resolve_widget(updated_session, data.get("extract")) if state_changed else None
+
+    logger.info(
+        "[routing] session=%s msg=%r state=%s/%s -> %s/%s changed=%s",
+        session_id,
+        last_user_msg,
+        prev_step,
+        prev_sub,
+        new_step,
+        new_sub,
+        state_changed,
+    )
     if widget_spec:
-        updated_session["_lastWidgetState"] = state_key
-        SESSION_STORE[session_id] = updated_session
+        logger.info(
+            "[routing] session=%s widget=%s",
+            session_id,
+            widget_spec.get("widget"),
+        )
 
     # Clean response text
     response_text = data.get("response", "No response generated.")

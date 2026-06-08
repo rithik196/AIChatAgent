@@ -8,6 +8,9 @@ interface VerificationSuccessWidgetProps {
     title?: string;
     subtitle?: string;
     auto_advance_ms?: number;
+    next_message?: string;
+    /** If true, auto-fires silently (no chat bubble). If false/absent, shows Continue button. */
+    silent?: boolean;
   };
 }
 
@@ -15,18 +18,30 @@ export function VerificationSuccessWidget({ data }: VerificationSuccessWidgetPro
   const title = data?.title || 'Verification Successful';
   const subtitle = data?.subtitle || 'Your details have been fetched successfully.';
   const autoAdvanceMs = data?.auto_advance_ms || 3000;
-  const [advanced, setAdvanced] = useState(false);
+  const nextMessage = data?.next_message || 'continue';
+  const silent = data?.silent ?? false;
+  const [done, setDone] = useState(false);
+  const [readyToContinue, setReadyToContinue] = useState(false);
 
   useEffect(() => {
     const timer = setTimeout(() => {
-      if (!advanced) {
-        setAdvanced(true);
-        const event = new CustomEvent('mock-send-message', { detail: 'continue' });
+      if (silent) {
+        setDone(true);
+        const event = new CustomEvent('mock-send-message', { detail: `__SYS__${nextMessage}` });
         window.dispatchEvent(event);
+      } else {
+        setReadyToContinue(true);
       }
     }, autoAdvanceMs);
     return () => clearTimeout(timer);
-  }, [autoAdvanceMs, advanced]);
+  }, [autoAdvanceMs, nextMessage, silent]);
+
+  const handleContinue = () => {
+    const event = new CustomEvent('mock-send-message', { detail: nextMessage });
+    window.dispatchEvent(event);
+  };
+
+  if (done) return null;
 
   return (
     <motion.div
@@ -90,6 +105,18 @@ export function VerificationSuccessWidget({ data }: VerificationSuccessWidgetPro
         >
           {subtitle}
         </motion.p>
+
+        {!silent && readyToContinue && (
+          <button
+            onClick={handleContinue}
+            className="mt-5 px-5 py-2.5 text-white font-semibold rounded-full shadow-md hover:opacity-90 transition-all"
+            style={{
+              background: 'linear-gradient(90deg, #1B6A8A 0%, #4BA3C7 100%)',
+            }}
+          >
+            Continue
+          </button>
+        )}
       </div>
     </motion.div>
   );

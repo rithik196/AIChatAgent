@@ -4,8 +4,8 @@ from temporalio.client import Client
 from temporalio.worker import Worker
 from dotenv import load_dotenv
 
-from workflows.rlos_workflow import RLOSWorkflow
-from activities.mock_activities import (
+from workflow.workflows.rlos_workflow import RLOSWorkflow
+from workflow.activities.mock_activities import (
     mock_nafath_push,
     mock_simah_pull,
     mock_docusign_send,

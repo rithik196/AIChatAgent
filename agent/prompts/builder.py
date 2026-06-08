@@ -75,8 +75,23 @@ The customer has approved Nafath. Verification is in progress.
         ("identity", "verified"): """
 Identity verification is complete!
 - Congratulate the customer.
-- The system will fetch their personal details next.
+- The system will run a dedupe check next.
+- DO NOT mention offers, limits, profit rates, or tenures in this sub-step.
 - Extract: {"identity_complete": true}
+""",
+        ("identity", "dedupe_check"): """
+The system is running a dedupe check to verify existing records.
+- Briefly acknowledge: "Running dedupe check to verify your records..."
+- The system will show a loading widget automatically.
+- DO NOT mention offers until dedupe is completed.
+- Extract: {"dedupe_complete": true} when you receive the dedupe complete signal.
+""",
+        ("identity", "identify_yourself"): """
+The customer is viewing the Journey Overview for onboarding.
+- The system will show a widget with the 5 steps of the journey and ask if they would like to proceed.
+- You must wait for the customer to confirm their intent. 
+- If they type or say "Yes", "Proceed", "Okay", etc., extract: {"proceed": true}.
+- If they type or say "No", "Cancel", etc., extract: {"cancel": true}.
 """,
         ("identity", "personal_details"): """
 CRITICAL INSTRUCTION: You are currently showing the customer their Personal Details.
@@ -91,7 +106,8 @@ Present the pre-approved/eligible finance offer.
 - {"This is an EXISTING customer — present as 'Pre Approved Offer'" if user_type == 'existing' else "This is a NEW customer — present as 'Eligible Finance Offer'"}
 - Mention the maximum eligible amount, profit rate, and tenure
 - Ask if they want to accept or request a higher amount
-- Extract: {{"accepted_offer": true}} when they accept
+- If they accept the offer: Extract: {{"accepted_offer": true}}
+- If they request a higher amount or want to change it to a higher value: Extract: {{"higher_amount_requested": true}}
 """,
         ("offer", "slider"): """
 The customer has accepted the offer. Now let them configure the exact amount and tenure.

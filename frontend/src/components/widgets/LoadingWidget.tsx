@@ -9,6 +9,8 @@ interface LoadingWidgetProps {
     subtitle?: string;
     auto_advance_ms?: number;
     next_message?: string;
+    /** If true, auto-fires silently (no chat bubble). If false/absent, shows Continue button. */
+    silent?: boolean;
   };
 }
 
@@ -17,17 +19,29 @@ export function LoadingWidget({ data }: LoadingWidgetProps) {
   const subtitle = data?.subtitle || 'Processing your secure request';
   const autoAdvanceMs = data?.auto_advance_ms || 3000;
   const nextMessage = data?.next_message || 'done';
+  const silent = data?.silent ?? false;
   const [completed, setCompleted] = useState(false);
+  const [readyToContinue, setReadyToContinue] = useState(false);
 
   useEffect(() => {
     const timer = setTimeout(() => {
-      setCompleted(true);
-      const event = new CustomEvent('mock-send-message', { detail: nextMessage });
-      window.dispatchEvent(event);
+      if (silent) {
+        // Auto-advance internally — no user bubble
+        setCompleted(true);
+        const event = new CustomEvent('mock-send-message', { detail: `__SYS__${nextMessage}` });
+        window.dispatchEvent(event);
+      } else {
+        setReadyToContinue(true);
+      }
     }, autoAdvanceMs);
-
     return () => clearTimeout(timer);
-  }, [autoAdvanceMs, nextMessage]);
+  }, [autoAdvanceMs, nextMessage, silent]);
+
+  const handleContinue = () => {
+    setCompleted(true);
+    const event = new CustomEvent('mock-send-message', { detail: nextMessage });
+    window.dispatchEvent(event);
+  };
 
   if (completed) return null;
 
@@ -58,6 +72,18 @@ export function LoadingWidget({ data }: LoadingWidgetProps) {
 
         <h3 className="text-lg font-bold text-slate-900 mb-2">{title}</h3>
         <p className="text-sm text-slate-500">{subtitle}</p>
+
+        {!silent && readyToContinue && (
+          <button
+            onClick={handleContinue}
+            className="mt-5 px-5 py-2.5 text-white font-semibold rounded-full shadow-md hover:opacity-90 transition-all"
+            style={{
+              background: 'linear-gradient(90deg, #1B6A8A 0%, #4BA3C7 100%)',
+            }}
+          >
+            Continue
+          </button>
+        )}
       </div>
     </motion.div>
   );

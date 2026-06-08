@@ -25,11 +25,14 @@ export async function POST(req: Request) {
     sessionId = `${phone}_${product}`;
   }
 
-  // Format messages for backend
-  const formattedMessages = messages.map((m: any) => ({
-    role: m.role,
-    content: m.content || (m.parts ? m.parts.map((p: any) => p.text).filter(Boolean).join('') : '')
-  }));
+  // Format messages for backend — strip internal __SYS__ prefix before forwarding
+  const formattedMessages = messages.map((m: any) => {
+    let content = m.content || (m.parts ? m.parts.map((p: any) => p.text).filter(Boolean).join('') : '');
+    if (m.role === 'user' && content.startsWith('__SYS__')) {
+      content = content.slice('__SYS__'.length);
+    }
+    return { role: m.role, content };
+  });
 
   try {
     // Proxy to backend API gateway

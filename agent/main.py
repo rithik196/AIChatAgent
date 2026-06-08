@@ -54,6 +54,10 @@ async def invoke_agent(req: InvokeRequest):
                     "total_steps": 5,
                     "product": "cash_finance",
                     "user_type": "unknown",
+                    "customerType": "UNKNOWN",
+                    "journeyMode": "PRE_DEDUPE",
+                    "journeyOrigin": "UNKNOWN",
+                    "transitionReason": None,
                     "collected": {},
                     "offer": {},
                     "finance_summary": {},
@@ -79,12 +83,24 @@ async def invoke_agent(req: InvokeRequest):
         SESSION_CACHE[req.session_id] = result["session"]
         save_session(req.session_id, result["session"])
 
+        # Internal routing signals — never stored in history so LLM cannot read them
+        _ROUTING_SIGNALS = {
+            "nafath approved", "loading_complete", "loading complete",
+            "continue", "dedupe_complete", "dedupe complete",
+            "identity_complete", "verification_loading", "done",
+        }
+
         # Save conversation: user message + assistant response
+        # Skip internal routing signals so they never pollute the LLM context
         last_user = req.messages[-1] if req.messages else None
         new_msgs = []
         if last_user and last_user.get("role") == "user":
-            new_msgs.append({"role": "user", "content": last_user.get("content", "")})
-        new_msgs.append({"role": "assistant", "content": result["last_response"]})
+            content = last_user.get("content", "")
+            if content.lower().strip() not in _ROUTING_SIGNALS:
+                new_msgs.append({"role": "user", "content": content})
+        assistant_content = (result.get("last_response") or "").strip()
+        if assistant_content:
+            new_msgs.append({"role": "assistant", "content": assistant_content})
         append_messages(req.session_id, new_msgs)
         
         return InvokeResponse(

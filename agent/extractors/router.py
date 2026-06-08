@@ -1,4 +1,5 @@
 import logging
+import os
 import uuid
 from temporalio.client import Client
 from temporalio.service import RPCError
@@ -10,16 +11,81 @@ EXISTING_USER_IDS = {"1234567890", "1111111111", "1987654321"}
 
 # Track which sessions have a running Temporal workflow
 _TEMPORAL_WORKFLOWS: dict[str, bool] = {}
+_TEMPORAL_ENABLED = os.getenv("RLOS_ENABLE_TEMPORAL", "false").lower() in {"1", "true", "yes", "on"}
+
+CUSTOMER_TYPE_ETB = "ETB"
+CUSTOMER_TYPE_NTB = "NTB"
+CUSTOMER_TYPE_UNKNOWN = "UNKNOWN"
+
+JOURNEY_MODE_PRE_DEDUPE = "PRE_DEDUPE"
+JOURNEY_MODE_ETB_CORE = "ETB_CORE"
+JOURNEY_MODE_NTB_ENRICHMENT = "NTB_ENRICHMENT"
 
 
 def detect_user_type(id_number: str) -> str:
-    """Detect user type based on ID number.
-    IDs starting with '1' are existing customers, '2' are new."""
+    """Detect user type based on ID number."""
+    if id_number == "1046403930":
+        return "existing"
+    if id_number == "1046403940":
+        return "new"
+    
     if id_number in EXISTING_USER_IDS:
         return "existing"
-    if id_number and id_number.startswith("1"):
-        return "existing"
     return "new"
+
+
+def detect_customer_type(id_number: str) -> str:
+    """Return the immutable customer type used for journey routing."""
+    return CUSTOMER_TYPE_ETB if detect_user_type(id_number) == "existing" else CUSTOMER_TYPE_NTB
+
+
+def _sync_customer_routing_fields(session: dict) -> None:
+    """Keep legacy user_type aligned with immutable customerType for compatibility."""
+    customer_type = session.get("customerType") or CUSTOMER_TYPE_UNKNOWN
+    legacy_user_type = session.get("user_type")
+
+    if customer_type == CUSTOMER_TYPE_UNKNOWN and legacy_user_type in {"existing", "new"}:
+        customer_type = CUSTOMER_TYPE_ETB if legacy_user_type == "existing" else CUSTOMER_TYPE_NTB
+        session["customerType"] = customer_type
+
+    if customer_type == CUSTOMER_TYPE_ETB:
+        session["user_type"] = "existing"
+    elif customer_type == CUSTOMER_TYPE_NTB:
+        session["user_type"] = "new"
+
+    session.setdefault("journeyMode", JOURNEY_MODE_PRE_DEDUPE)
+    session.setdefault("journeyOrigin", CUSTOMER_TYPE_UNKNOWN)
+    session.setdefault("transitionReason", None)
+
+
+def _set_customer_identity(session: dict, id_number: str) -> None:
+    """Set immutable customer identity fields once from the captured ID."""
+    resolved_type = detect_customer_type(id_number)
+    if session.get("customerType") in (None, "", CUSTOMER_TYPE_UNKNOWN):
+        session["customerType"] = resolved_type
+    if session.get("journeyOrigin") in (None, "", CUSTOMER_TYPE_UNKNOWN):
+        session["journeyOrigin"] = session["customerType"]
+    _sync_customer_routing_fields(session)
+
+
+def _route_to_etb_core(session: dict, reason: str | None = None) -> None:
+    session["step"] = "offer"
+    session["sub_step"] = "eligible"
+    session["journeyMode"] = JOURNEY_MODE_ETB_CORE
+    session["transitionReason"] = reason
+
+
+def _route_to_ntb_enrichment(session: dict, reason: str | None = None) -> None:
+    session["step"] = "identity"
+    session["sub_step"] = "identify_yourself"
+    session["journeyMode"] = JOURNEY_MODE_NTB_ENRICHMENT
+    session["transitionReason"] = reason
+
+
+def _can_enter_ntb_enrichment(session: dict) -> bool:
+    customer_type = session.get("customerType", CUSTOMER_TYPE_UNKNOWN)
+    journey_mode = session.get("journeyMode", JOURNEY_MODE_PRE_DEDUPE)
+    return customer_type == CUSTOMER_TYPE_NTB or journey_mode == JOURNEY_MODE_NTB_ENRICHMENT
 
 
 async def _get_or_start_workflow(client: Client, session: dict):
@@ -87,6 +153,10 @@ async def route_to_temporal(extract: dict, session: dict) -> None:
             should_send_identity_verified = True
         _advance_session_state(extract, session)
 
+    # Local-first mode: keep routing fully session-driven unless explicitly enabled.
+    if not _TEMPORAL_ENABLED:
+        return
+
     # Try to send Temporal signals (non-blocking — failures fall back to session state)
     try:
         client = await Client.connect("localhost:7233")
@@ -152,6 +222,8 @@ def _advance_session_state(extract: dict, session: dict) -> None:
     data = extract.get("data", {})
     if not data:
         return
+
+    _sync_customer_routing_fields(session)
     
     current_step = session.get("step", "identity")
     current_sub = session.get("sub_step", "awaiting_id")
@@ -166,13 +238,17 @@ def _advance_session_state(extract: dict, session: dict) -> None:
             if not (len(id_number) == 10 and id_number[0] in ("1", "2") and id_number.isdigit()):
                 logger.warning(f"Invalid ID format rejected: {id_number}")
                 return  # Don't advance — let LLM ask user to retry
-            user_type = detect_user_type(id_number)
-            session["user_type"] = user_type
+            _set_customer_identity(session, id_number)
             session["collected"]["id_number"] = id_number
             session["collected"]["id_type"] = data.get("id_type", "national_id")
             session["sub_step"] = "nafath_pending"
             session["nafath_code"] = int(str(hash(id_number))[-2:].replace("-", "")) % 90 + 10
-            logger.info(f"ID received: {id_number}, user_type: {user_type}, nafath_code: {session['nafath_code']}")
+            logger.info(
+                "ID received: %s, customerType: %s, nafath_code: %s",
+                id_number,
+                session.get("customerType"),
+                session["nafath_code"],
+            )
 
         elif data.get("nafath_approved") and current_sub == "nafath_pending":
             session["sub_step"] = "loading"
@@ -182,15 +258,37 @@ def _advance_session_state(extract: dict, session: dict) -> None:
             session["sub_step"] = "verified"
             logger.info("Verification complete")
 
-        elif (current_sub == "verified") and (data.get("identity_complete") or data.get("loading_complete")):
-            session["sub_step"] = "personal_details"
-            logger.info("Moving to personal details")
+        elif current_sub == "verified" and (data.get("identity_complete") or data.get("loading_complete") or data.get("continue")):
+            session["sub_step"] = "dedupe_check"
+            logger.info("Starting dedupe check...")
+
+        elif current_sub == "dedupe_check" and data.get("dedupe_complete"):
+            customer_type = session.get("customerType", CUSTOMER_TYPE_UNKNOWN)
+            if customer_type == CUSTOMER_TYPE_ETB:
+                _route_to_etb_core(session)
+                logger.info("Dedupe identified ETB. Routing directly to pre-approved offer.")
+            else:
+                _route_to_ntb_enrichment(session)
+                logger.info("Dedupe identified NTB. Showing journey introduction.")
+
+        elif current_sub == "identify_yourself":
+            if not _can_enter_ntb_enrichment(session):
+                logger.warning("Blocked invalid identify_yourself transition for session with customerType=%s journeyMode=%s", session.get("customerType"), session.get("journeyMode"))
+                return
+            if data.get("proceed"):
+                session["sub_step"] = "personal_details"
+                logger.info("NTB user proceeded. Showing personal details.")
+            elif data.get("cancel"):
+                session["step"] = "done"
+                session["sub_step"] = "cancel"
+                logger.info("User cancelled at identify_yourself.")
 
         elif (current_sub == "personal_details") and (data.get("identity_complete") or data.get("loading_complete")):
             # Move to offer step
             session["step"] = "offer"
             session["step_number"] = 2
             session["sub_step"] = "eligible"
+            session["journeyMode"] = JOURNEY_MODE_ETB_CORE if session.get("customerType") == CUSTOMER_TYPE_ETB else JOURNEY_MODE_NTB_ENRICHMENT
             session["offer"] = {
                 "max_amount": 350000,
                 "profit_rate": "12%",
@@ -202,10 +300,15 @@ def _advance_session_state(extract: dict, session: dict) -> None:
     # STEP 2: OFFER
     # ═══════════════════════════════════════════
     elif current_step == "offer":
-        if data.get("accepted_offer") and current_sub == "eligible":
-            session["sub_step"] = "slider"
-            logger.info("Offer accepted, showing slider")
-
+        if current_sub == "eligible":
+            if data.get("accepted_offer"):
+                session["sub_step"] = "slider"
+            elif data.get("higher_amount_requested"):
+                if session.get("customerType") == CUSTOMER_TYPE_ETB:
+                    _route_to_ntb_enrichment(session, reason="HIGHER_AMOUNT_REQUEST")
+                    logger.info("ETB requested higher amount. Transitioning to NTB enrichment while preserving ETB identity.")
+                else:
+                    logger.info("Higher amount requested for NTB flow; remaining within current NTB enrichment path.")
         elif data.get("loan_amount") and current_sub == "slider":
             amount = data["loan_amount"]
             tenure = data.get("tenure_months", 36)

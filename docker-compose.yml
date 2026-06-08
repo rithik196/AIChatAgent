@@ -32,6 +32,19 @@ services:
     networks:
       - rlos-network
 
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      - ACCEPT_EULA=Y
+      - MSSQL_PID=Developer
+      - SA_PASSWORD=YourStrong!Passw0rd
+    ports:
+      - "1433:1433"
+    volumes:
+      - mssql-data:/var/opt/mssql
+    networks:
+      - rlos-network
+
   temporal:
     image: temporalio/auto-setup:latest
     environment:
@@ -56,3 +69,4 @@ volumes:
   postgres-data:
   redis-data:
   mongo-data:
+  mssql-data:

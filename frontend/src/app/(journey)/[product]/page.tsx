@@ -2,13 +2,13 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useChat, type UIMessage } from '@ai-sdk/react'
+import { DefaultChatTransport } from 'ai';
 import { ChatWindow } from '@/components/chat/ChatWindow';
 import { VoiceButton } from '@/components/chat/VoiceButton';
 import { Send } from 'lucide-react';
 import { useParams, useRouter } from 'next/navigation';
 import { useVoice } from '@/hooks/useVoice';
 import { SpeakContext } from '@/hooks/SpeakContext';
-import { PersonalDetailsWidget } from '@/components/widgets/PersonalDetailsWidget';
 
 /** Convert saved conversation messages → UIMessage format for useChat */
 function toUIMessages(saved: { role: string; content: string; timestamp?: number }[]): UIMessage[] {
@@ -27,8 +27,6 @@ export default function JourneyPage() {
   const [phone, setPhone] = useState<string | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
   const [initialMessages, setInitialMessages] = useState<UIMessage[] | null>(null);
-  const [identityVerified, setIdentityVerified] = useState(false);
-  const [profile, setProfile] = useState<any>(null);
 
   // Check auth on mount — redirect to login if not authenticated
   useEffect(() => {
@@ -81,30 +79,6 @@ export default function JourneyPage() {
       });
   }, [sessionId, product]);
 
-  // Watch for verification in chat messages
-  useEffect(() => {
-    // Look for a message indicating verification success
-    const found = initialMessages?.some(
-      (msg) =>
-        msg.role === 'assistant' &&
-        msg.parts.some(
-          (part) =>
-            part.type === 'text' &&
-            (part.text.includes('Verification Successful') || part.text.includes('details have been fetched'))
-        )
-    );
-    setIdentityVerified(found);
-  }, [initialMessages]);
-
-  // Fetch profile only after verification
-  useEffect(() => {
-    if (identityVerified && phone) {
-      fetch(`/api/customer/profile/${phone}`)
-        .then((r) => r.json())
-        .then((data) => setProfile(data));
-    }
-  }, [identityVerified, phone]);
-
   // Show loading while checking auth or loading history
   if (!authChecked || !phone || !initialMessages) {
     return (
@@ -120,28 +94,27 @@ export default function JourneyPage() {
         product={product}
         sessionId={sessionId}
         initialMessages={initialMessages}
-        identityVerified={identityVerified}
-        profile={profile}
       />
     </SpeakContext.Provider>
   );
 }
 
 /** Inner component — only mounted after auth + history are resolved */
-function ChatView({ product, sessionId, initialMessages, identityVerified, profile }: {
+function ChatView({ product, sessionId, initialMessages }: {
   product: string;
   sessionId: string;
   initialMessages: UIMessage[];
-  identityVerified: boolean;
-  profile: any;
 }) {
   const [input, setInput] = useState('');
 
   const { messages, status, sendMessage } = useChat({
     id: sessionId,
     messages: initialMessages,
-    body: { sessionId },
-    headers: { "x-session-id": sessionId },
+    transport: new DefaultChatTransport({
+      api: '/api/chat',
+      headers: { 'x-session-id': sessionId },
+      body: { sessionId },
+    }),
   });
 
   // Track whether voice mode is active (user initiated via mic button)
@@ -225,12 +198,6 @@ function ChatView({ product, sessionId, initialMessages, identityVerified, profi
       </div>
 
       <div className="flex-1 overflow-hidden pt-20 pb-24">
-        {/* Show PersonalDetailsWidget only after verification */}
-        {identityVerified && profile && (
-          <div className="mb-4">
-            <PersonalDetailsWidget data={profile} />
-          </div>
-        )}
         <ChatWindow messages={messages as any} isLoading={isLoading} />
       </div>
 

@@ -1,6 +1,6 @@
 "use client";
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 
 interface NafathWidgetProps {
@@ -10,7 +10,20 @@ interface NafathWidgetProps {
 }
 
 export function NafathWidget({ data }: NafathWidgetProps) {
-  const code = data?.nafath_code || Math.floor(10 + Math.random() * 89);
+  const code = data?.nafath_code ?? 42;
+  const [done, setDone] = useState(false);
+
+  // Auto-approve after 3 seconds — dispatched as internal silent message (no chat bubble)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDone(true);
+      const event = new CustomEvent('mock-send-message', { detail: '__SYS__Nafath Approved' });
+      window.dispatchEvent(event);
+    }, 3000);
+    return () => clearTimeout(timer);
+  }, []);
+
+  if (done) return null;
 
   return (
     <motion.div
@@ -42,30 +55,26 @@ export function NafathWidget({ data }: NafathWidgetProps) {
           {code}
         </motion.div>
 
-        {/* Action Buttons */}
-        <div className="flex flex-col gap-3">
-          <button
-            onClick={() => {
-              const event = new CustomEvent('mock-send-message', { detail: 'Open Nafath App' });
-              window.dispatchEvent(event);
-            }}
-            className="w-full py-3 text-white font-semibold rounded-full shadow-md hover:opacity-90 transition-all"
-            style={{
-              background: 'linear-gradient(90deg, #1B6A8A 0%, #4BA3C7 100%)',
-            }}
-          >
-            Open Nafath App
-          </button>
-          <button
-            onClick={() => {
-              const event = new CustomEvent('mock-send-message', { detail: 'Did not receive the request' });
-              window.dispatchEvent(event);
-            }}
-            className="w-full py-3 text-slate-600 font-semibold rounded-full border-2 border-slate-200 hover:bg-slate-50 transition-all"
-          >
-            Did not receive the request
-          </button>
+        {/* Auto-verification notice */}
+        <div className="flex items-center gap-2 text-xs text-slate-500">
+          <motion.div
+            animate={{ rotate: 360 }}
+            transition={{ repeat: Infinity, duration: 1.5, ease: 'linear' }}
+            className="w-4 h-4 rounded-full border-2 border-slate-300 border-t-slate-600"
+          />
+          Waiting for Nafath approval…
         </div>
+
+        {/* Did not receive */}
+        <button
+          onClick={() => {
+            const event = new CustomEvent('mock-send-message', { detail: 'Did not receive the request' });
+            window.dispatchEvent(event);
+          }}
+          className="mt-4 w-full py-3 text-slate-600 font-semibold rounded-full border-2 border-slate-200 hover:bg-slate-50 transition-all"
+        >
+          Did not receive the request
+        </button>
       </div>
     </motion.div>
   );

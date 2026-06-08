@@ -12,7 +12,6 @@ export default function LoginPage() {
   const [otp, setOtp] = useState(["", "", "", ""]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [generatedOtp, setGeneratedOtp] = useState("");
   const otpRefs = useRef<(HTMLInputElement | null)[]>([]);
 
   // Auto-focus first OTP input
@@ -31,11 +30,23 @@ export default function LoginPage() {
       return;
     }
     setLoading(true);
-    // Generate a mock OTP and show it
-    const mockOtp = String(Math.floor(1000 + Math.random() * 9000));
-    setGeneratedOtp(mockOtp);
-    // Simulate SMS delay
-    await new Promise((r) => setTimeout(r, 800));
+    try {
+      const res = await fetch("/api/auth/send-otp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone: cleaned, purpose: "login" }),
+      });
+      const data = await res.json();
+      if (!data.success) {
+        setError("Failed to send OTP. Please try again.");
+        setLoading(false);
+        return;
+      }
+    } catch {
+      setError("Network error. Please try again.");
+      setLoading(false);
+      return;
+    }
     setLoading(false);
     setStage("otp");
   };
@@ -64,20 +75,16 @@ export default function LoginPage() {
       setError("Please enter the 4-digit OTP");
       return;
     }
-    if (entered !== generatedOtp) {
-      setError("Invalid OTP. Please try again.");
-      return;
-    }
     setLoading(true);
-    // Store session
     try {
-      const res = await fetch("/api/auth/login", {
+      const res = await fetch("/api/auth/verify-otp", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone: phone.replace(/\s/g, "") }),
+        body: JSON.stringify({ phone: phone.replace(/\s/g, ""), otp: entered, purpose: "login" }),
       });
-      if (!res.ok) {
-        setError("Login failed. Please try again.");
+      const data = await res.json();
+      if (!data.success) {
+        setError(data.error ?? "Invalid OTP. Please try again.");
         setLoading(false);
         return;
       }
@@ -157,12 +164,17 @@ export default function LoginPage() {
               <div className="text-center">
                 <h2 className="text-lg font-semibold text-slate-900">Verify OTP</h2>
                 <p className="text-sm text-slate-500 mt-1">
-                  Enter the 4-digit code sent to <span className="font-medium text-slate-700">+966 {phone}</span>
+                  A 4-digit code was sent to your Mobile Number{" "}
+                  <span className="font-medium text-slate-700">+966 {phone}</span>
                 </p>
               </div>
-              {/* Mock OTP hint (for demo) */}
-              <div className="bg-blue-50 border border-blue-100 rounded-xl px-4 py-2.5 text-center">
-                <p className="text-xs text-blue-600">Demo OTP: <span className="font-bold text-blue-800 tracking-widest">{generatedOtp}</span></p>
+              {/* WhatsApp delivery notice */}
+              <div className="flex items-center gap-2.5 bg-green-50 border border-green-100 rounded-xl px-4 py-3">
+                <svg viewBox="0 0 24 24" className="w-5 h-5 flex-shrink-0 text-green-600" fill="currentColor">
+                  <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/>
+                  <path d="M12 0C5.374 0 0 5.373 0 12c0 2.136.564 4.14 1.545 5.875L0 24l6.335-1.524A11.949 11.949 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818a9.818 9.818 0 01-4.962-1.345l-.357-.212-3.692.889.924-3.585-.233-.369A9.825 9.825 0 012.182 12C2.182 6.579 6.579 2.182 12 2.182S21.818 6.579 21.818 12 17.421 21.818 12 21.818z"/>
+                </svg>
+                <p className="text-xs text-green-700">OTP sent via Mobile Number. Check your Phone.</p>
               </div>
               <div className="flex justify-center gap-3">
                 {otp.map((digit, i) => (

@@ -114,6 +114,64 @@ async def extract_data(state: ConversationState) -> ConversationState:
     return {"extract": extract, "session": session}
 
 
+# Internal routing signals — auto-sent by widgets, never shown to LLM
+_ROUTING_SIGNALS = {
+    "nafath approved", "loading_complete", "loading complete",
+    "continue", "dedupe_complete", "dedupe complete",
+    "identity_complete", "verification_loading", "done",
+}
+
+
+def _fast_state_response(session: dict) -> str | None:
+    """Deterministic response for internal routing-signal turns.
+
+    These turns are widget/system-driven and should be instant and stable.
+    """
+    step = session.get("step", "identity")
+    sub_step = session.get("sub_step", "")
+
+    # After ID entry: Nafath widget text (no LLM).
+    if step == "identity" and sub_step == "nafath_pending":
+        return (
+            "Thank you. I've sent a request to your Nafath app to securely verify your identity. "
+            "Please open the Nafath app and select the number displayed to continue."
+        )
+
+    # After Nafath approval: show loader only (no text).
+    if step == "identity" and sub_step == "loading":
+        return ""
+
+    # After OTP loader completion: show OTP verified widget only.
+    if step == "identity" and sub_step == "verified":
+        return ""
+
+    # After verified auto-continue: dedupe loader widget carries the message; return empty text.
+    if step == "identity" and sub_step == "dedupe_check":
+        return ""
+
+    # After dedupe completion: widget (Journey Overview) carries the content.
+    if step == "identity" and sub_step == "identify_yourself":
+        return ""
+
+    # After Journey Overview "Yes/proceed": show profile-review text only.
+    if step == "identity" and sub_step == "personal_details":
+        return "I have retrieved your current profile details. Please review them to make sure everything is correct to proceed."
+
+    # After personal details confirmation: fast deterministic eligible-offer summary.
+    if step == "offer" and sub_step == "eligible":
+        offer = session.get("offer", {})
+        max_amount = offer.get("max_amount", 350000)
+        profit_rate = offer.get("profit_rate", "12%")
+        max_tenure = offer.get("max_tenure", 60)
+        return (
+            f"Your eligible finance offer is ready. You can qualify for up to **SAR {max_amount:,}** "
+            f"at a profit rate of **{profit_rate}** for a maximum tenure of **{max_tenure} months**.\n\n"
+            "Would you like to proceed with this offer?"
+        )
+
+    return None
+
+
 # ═════════════════════════════════════════════════════════════════════
 # NODE 3: BUILD RESPONSE
 # Full LLM call with updated session context → customer-facing message
@@ -121,13 +179,34 @@ async def extract_data(state: ConversationState) -> ConversationState:
 async def build_response(state: ConversationState) -> ConversationState:
     session = state.get("session", {})
     messages_payload = state.get("messages", [])
+    extract = state.get("extract") or {}
+
+    # If the latest user turn is an internal routing signal, skip LLM entirely.
+    last_user = ""
+    for m in reversed(messages_payload):
+        if m.get("role") == "user":
+            last_user = m.get("content", "").lower().strip()
+            break
+    if last_user in _ROUTING_SIGNALS:
+        fast = _fast_state_response(session)
+        if fast is not None:
+            return {"last_response": fast}
+
+    # For deterministic STEP_DATA turns in key flow states, skip LLM for speed.
+    if extract.get("intent") in ("STEP_DATA", "BOTH"):
+        fast = _fast_state_response(session)
+        if fast is not None:
+            return {"last_response": fast}
 
     # Build system prompt with UPDATED session (post-extraction)
     sys_prompt = build_system_prompt(session)
 
-    # Format messages for OpenAI
+    # Format messages for OpenAI — skip internal routing signals so LLM
+    # never reads them and cannot "jump ahead" in its response.
     oai_messages = [{"role": "system", "content": sys_prompt}]
     for m in messages_payload:
+        if m["role"] == "user" and m.get("content", "").lower().strip() in _ROUTING_SIGNALS:
+            continue  # skip — routing signal, not a real user utterance
         if m["role"] in ("user", "assistant"):
             oai_messages.append({"role": m["role"], "content": m["content"]})
 
@@ -164,28 +243,53 @@ def _deterministic_classify(msg: str, step: str, sub_step: str, session: dict) -
                         "data": {"nafath_approved": True}}
 
         elif sub_step == "loading":
-            # Any message while loading auto-advances (user acknowledging)
-            signals = ["done", "ok", "yes", "continue", "next", "proceed"]
-            if any(s in msg_lower for s in signals) or len(msg_lower) > 0:
+            signals = ["done", "ok", "yes", "continue", "next", "proceed", "loading_complete"]
+            if any(s in msg_lower for s in signals):
                 return {"step": "identity", "intent": "STEP_DATA",
                         "data": {"loading_complete": True}}
 
-        elif sub_step in ["verified", "personal_details"]:
-            # Any confirmation moves to next step
-            signals = ["done", "ok", "yes", "continue", "next", "proceed", "offer", "go"]
-            if any(s in msg_lower for s in signals) or len(msg_lower) > 0:
+        elif sub_step == "verified":
+            # VerificationSuccessWidget auto-sends __SYS__continue internally
+            signals = ["done", "ok", "yes", "continue", "next", "proceed"]
+            if any(s in msg_lower for s in signals):
+                return {"step": "identity", "intent": "STEP_DATA",
+                        "data": {"identity_complete": True}}
+
+        elif sub_step == "dedupe_check":
+            signals = ["dedupe_complete", "loading_complete"]
+            if any(s in msg_lower for s in signals):
+                return {"step": "identity", "intent": "STEP_DATA",
+                        "data": {"dedupe_complete": True}}
+
+        elif sub_step == "identify_yourself":
+            # NTBIntroductionWidget shows — user clicks Proceed button
+            signals = ["proceed", "yes", "ok", "start", "continue", "next", "sure", "go ahead", "begin"]
+            if any(s in msg_lower for s in signals):
+                return {"step": "identity", "intent": "STEP_DATA",
+                        "data": {"proceed": True}}
+
+        elif sub_step == "personal_details":
+            # User explicitly confirms their details
+            signals = ["done", "ok", "yes", "continue", "next", "proceed", "confirm", "offer", "go"]
+            if any(s in msg_lower for s in signals):
                 return {"step": "identity", "intent": "STEP_DATA",
                         "data": {"identity_complete": True}}
 
     # ─── OFFER ────────────────────────────────────────
     elif step == "offer":
         if sub_step == "eligible":
+            if "higher amount" in msg_lower:
+                return {"step": "offer", "intent": "STEP_DATA",
+                        "data": {"higher_amount_requested": True}}
             signals = ["accept", "yes", "proceed", "ok", "sure", "go ahead", "done", "continue"]
             if any(s in msg_lower for s in signals):
                 return {"step": "offer", "intent": "STEP_DATA",
                         "data": {"accepted_offer": True}}
 
         elif sub_step == "slider":
+            if "higher amount" in msg_lower:
+                return {"step": "offer", "intent": "STEP_DATA",
+                        "data": {"higher_amount_requested": True}}
             signals = ["proceed", "next", "continue", "confirm", "done"]
             if any(s in msg_lower for s in signals):
                 amount_match = re.search(r'(\d{4,6})', msg.replace(",", ""))
@@ -202,9 +306,11 @@ def _deterministic_classify(msg: str, step: str, sub_step: str, session: dict) -
     # ─── TRADE ────────────────────────────────────────
     elif step == "trade":
         if sub_step == "loading":
-            # Any message while trade is loading auto-advances
-            return {"step": "trade", "intent": "STEP_DATA",
-                    "data": {"loading_complete": True}}
+            # Only explicit confirmation should advance the loading gate
+            signals = ["done", "ok", "yes", "continue", "next", "proceed"]
+            if any(s in msg_lower for s in signals):
+                return {"step": "trade", "intent": "STEP_DATA",
+                        "data": {"loading_complete": True}}
 
         elif sub_step == "success":
             signals = ["yes", "authorize", "proceed", "confirm", "e-sign", "sign", "done", "ok", "continue"]
