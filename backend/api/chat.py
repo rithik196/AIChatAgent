@@ -128,6 +128,21 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
             }
         }
 
+    if step == "identity" and sub_step == "modify_section":
+        return {"widget": "ModifySectionWidget", "data": {}}
+
+    if step == "identity" and sub_step == "modify_personal":
+        return {"widget": "ModifyPersonalWidget", "data": {}}
+
+    if step == "identity" and sub_step == "modify_address":
+        return {"widget": "ModifyAddressWidget", "data": {}}
+
+    if step == "identity" and sub_step == "modify_employment":
+        return {"widget": "ModifyEmploymentWidget", "data": {}}
+
+    if step == "identity" and sub_step == "modify_income":
+        return {"widget": "ModifyIncomeWidget", "data": {}}
+
     if step == "identity" and sub_step == "updating_details":
         updating = session.get("updating", {})
         return {

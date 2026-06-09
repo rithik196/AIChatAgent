@@ -21,6 +21,11 @@ import { DisbursementWidget } from "../widgets/DisbursementWidget";
 import { NTBIntroductionWidget } from "../widgets/NTBIntroductionWidget";
 import { ExpensesWidget } from "../widgets/ExpensesWidget";
 import { UpdatingWidget } from "../widgets/UpdatingWidget";
+import { ModifySectionWidget } from "../widgets/ModifySectionWidget";
+import { ModifyPersonalWidget } from "../widgets/ModifyPersonalWidget";
+import { ModifyAddressWidget } from "../widgets/ModifyAddressWidget";
+import { ModifyEmploymentWidget } from "../widgets/ModifyEmploymentWidget";
+import { ModifyIncomeWidget } from "../widgets/ModifyIncomeWidget";
 
 type WidgetData = unknown;
 
@@ -59,6 +64,11 @@ const WIDGET_REGISTRY: Record<string, WidgetComponent> = {
   NTBIntroductionWidget,
   ExpensesWidget,
   UpdatingWidget,
+  ModifySectionWidget,
+  ModifyPersonalWidget,
+  ModifyAddressWidget,
+  ModifyEmploymentWidget,
+  ModifyIncomeWidget,
 };
 
 interface MessageBubbleProps {

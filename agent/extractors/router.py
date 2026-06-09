@@ -299,15 +299,15 @@ def _advance_session_state(extract: dict, session: dict) -> None:
                 session["sub_step"] = "cancel"
                 logger.info("User cancelled at identify_yourself.")
 
-        elif (current_sub == "personal_details") and (data.get("identity_complete") or data.get("loading_complete")):
-            # Step 7 is now mandatory before eligibility.
-            session["sub_step"] = "expenses"
-            session.setdefault("expenses", {})
-            logger.info("Profile confirmed. Moving to expenses collection.")
-
-        elif current_sub == "personal_details" and data.get("modify_requested"):
-            session["sub_step"] = "modify_section"
-            logger.info("Customer requested profile modification.")
+        elif (current_sub == "personal_details") and (data.get("identity_complete") or data.get("loading_complete") or data.get("continue") or data.get("modify_requested")):
+            if data.get("modify_requested"):
+                session["sub_step"] = "modify_section"
+                logger.info("Customer requested profile modification.")
+            else:
+                # Step 7 is now mandatory before eligibility.
+                session["sub_step"] = "expenses"
+                session.setdefault("expenses", {})
+                logger.info("Profile confirmed. Moving to expenses collection.")
 
         elif current_sub == "modify_section" and data.get("modify_section"):
             selected = str(data.get("modify_section", "")).strip().lower()
