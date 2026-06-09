@@ -25,6 +25,7 @@ class EmploymentDetails(BaseModel):
 
 class IncomeDetails(BaseModel):
     monthly: str
+    obligations: Optional[str] = None
 
 class CustomerProfile(BaseModel):
     name: str

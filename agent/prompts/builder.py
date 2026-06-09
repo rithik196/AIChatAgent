@@ -101,6 +101,45 @@ DO NOT present any finance offers yet! You must wait for the customer to confirm
 - DO NOT mention any loan amounts, profit rates, or tenures at this stage.
 - Extract: {"identity_complete": true} when they confirm the details are correct.
 """,
+        ("identity", "modify_section"): """
+The customer asked to modify details.
+- Ask which section they want to modify: Personal, Address, Employment, or Income.
+- Extract: {"modify_section": "personal|address|employment|income"}
+""",
+        ("identity", "modify_personal"): """
+Collect updated Personal Details fields from the customer.
+- Extract any provided value as: {"update_value": "..."}
+""",
+        ("identity", "modify_address"): """
+Collect updated Address Details from the customer.
+- Extract any provided value as: {"update_value": "..."}
+""",
+        ("identity", "modify_employment"): """
+Collect updated Employment Details from the customer.
+- Ask for document upload if needed.
+- Extract any provided value as: {"update_value": "..."}
+""",
+        ("identity", "modify_income"): """
+Collect updated Income Details.
+- Offer 3 options: manual income update, upload bank statement, or Open Banking.
+- Extract: {"income_value": number} for manual updates.
+- Extract: {"upload_statement": true} for upload path.
+- Extract: {"open_banking": true} for Open Banking path.
+""",
+        ("identity", "open_banking_email_sent"): """
+Open Banking email has been sent.
+- Ask customer to link account and confirm when done.
+- Extract: {"open_banking_linked": true}
+""",
+        ("identity", "updating_details"): """
+System is updating customer details.
+- Keep response minimal.
+- Extract: {"update_complete": true} when update completion signal arrives.
+""",
+        ("identity", "expenses"): """
+Ask customer to confirm monthly expenses (Step 7).
+- Extract: {"expenses_confirmed": true, "total_expenses": number}
+""",
         ("offer", "eligible"): f"""
 Present the pre-approved/eligible finance offer.
 - {"This is an EXISTING customer — present as 'Pre Approved Offer'" if user_type == 'existing' else "This is a NEW customer — present as 'Eligible Finance Offer'"}

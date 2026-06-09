@@ -15,7 +15,8 @@ import random
 import re
 import logging
 
-from db import get_customer_by_phone, get_customer_by_national_id
+from db import get_customer_by_phone, get_customer_by_national_id, update_customer
+from services.mail import send_open_banking_email
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -127,6 +128,27 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
             }
         }
 
+    if step == "identity" and sub_step == "updating_details":
+        updating = session.get("updating", {})
+        return {
+            "widget": "UpdatingWidget",
+            "data": {
+                "section": updating.get("section", "Details"),
+                "auto_advance_ms": updating.get("auto_advance_ms", 3000),
+                "next_message": updating.get("next_message", "update_complete"),
+                "silent": updating.get("silent", True),
+            },
+        }
+
+    if step == "identity" and sub_step == "expenses":
+        return {
+            "widget": "ExpensesWidget",
+            "data": {
+                "prefilled": bool(session.get("expenses_prefilled")),
+                "totalExpenses": session.get("expenses_total", 7560),
+            },
+        }
+
     if step == "offer" and sub_step == "eligible":
         offer = session.get("offer", {})
         return {
@@ -215,7 +237,7 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
 
 # ── SSE stream builder (AI SDK v6 UIMessageStream protocol) ─────────
 
-def _build_sse_stream(response_text: str, widget_spec: dict | None):
+def _build_sse_stream(response_text: str, widget_spec: dict | None, ui_flags: dict | None = None):
     """Generate SSE events in AI SDK v6 UIMessageStream protocol."""
     msg_id = f"msg_{int(time.time()*1000)}_{random.randint(1000,9999)}"
     text_part_id = f"text_{int(time.time()*1000)}_{random.randint(1000,9999)}"
@@ -234,8 +256,13 @@ def _build_sse_stream(response_text: str, widget_spec: dict | None):
 
     yield _event(json.dumps({"type": "text-end", "id": text_part_id}))
 
+    metadata: dict[str, Any] = {}
     if widget_spec:
-        yield _event(json.dumps({"type": "message-metadata", "messageMetadata": {"widget": widget_spec}}))
+        metadata["widget"] = widget_spec
+    if ui_flags:
+        metadata.update(ui_flags)
+    if metadata:
+        yield _event(json.dumps({"type": "message-metadata", "messageMetadata": metadata}))
 
     yield _event(json.dumps({"type": "finish-step"}))
     yield _event(json.dumps({"type": "finish"}))
@@ -247,6 +274,21 @@ def _build_sse_stream(response_text: str, widget_spec: dict | None):
 class ChatRequest(BaseModel):
     session_id: str
     messages: List[Dict[str, Any]]
+
+class UpdateCustomerRequest(BaseModel):
+    session_id: str
+    national_id: str
+    updated_data: Dict[str, Any]
+
+class OpenBankingEmailRequest(BaseModel):
+    session_id: str
+    email: str
+    name: str
+
+class SendOpenBankingEmailRequest(BaseModel):
+    session_id: str
+    email: str
+    name: str
 
 
 # ── Endpoints ────────────────────────────────────────────────────────
@@ -325,7 +367,22 @@ async def chat(request: ChatRequest):
     new_step  = updated_session.get("step", "identity")
     new_sub   = updated_session.get("sub_step", "awaiting_id")
     state_changed = (prev_step != new_step) or (prev_sub != new_sub)
+
+    if state_changed and new_step == "identity" and new_sub == "open_banking_email_sent":
+        profile = updated_session.get("customer_profile") or {}
+        email = profile.get("email")
+        name = profile.get("name") or "Customer"
+        if email:
+            try:
+                send_open_banking_email(email, name)
+            except Exception as exc:
+                logger.error("Failed to trigger Open Banking email for session %s: %s", session_id, exc)
+
     widget_spec = resolve_widget(updated_session, data.get("extract")) if state_changed else None
+
+    if widget_spec and widget_spec.get("widget") == "PersonalDetailsWidget":
+        if "data" in widget_spec:
+            widget_spec["data"]["sessionId"] = session_id
 
     logger.info(
         "[routing] session=%s msg=%r state=%s/%s -> %s/%s changed=%s",
@@ -348,8 +405,13 @@ async def chat(request: ChatRequest):
     response_text = data.get("response", "No response generated.")
     response_text = re.sub(r"<WIDGET_DATA>[\s\S]*?</WIDGET_DATA>", "", response_text).strip()
 
+    allow_upload = (
+        updated_session.get("step") == "identity"
+        and updated_session.get("sub_step") in {"modify_employment", "modify_income"}
+    )
+
     return StreamingResponse(
-        _build_sse_stream(response_text, widget_spec),
+        _build_sse_stream(response_text, widget_spec, {"allow_upload": allow_upload}),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -371,3 +433,33 @@ async def get_history(session_id: str):
         except httpx.RequestError:
             pass
     return {"messages": [], "session": None}
+
+@router.post("/update_customer")
+async def api_update_customer(request: UpdateCustomerRequest):
+    """Update customer in mock DB and session."""
+    session_id = request.session_id
+    national_id = request.national_id
+    updated_data = request.updated_data
+    
+    # 1. Update the actual DB
+    success = update_customer(national_id, updated_data)
+    
+    # 2. Update the session profile so UI reflects changes
+    if session_id in SESSION_STORE:
+        customer = get_customer_by_national_id(national_id)
+        if customer:
+            SESSION_STORE[session_id]["customer_profile"] = _customer_to_widget_data(customer)
+            
+    return {"success": success}
+
+@router.post("/chat/send_open_banking_email")
+async def api_send_open_banking_email(request: OpenBankingEmailRequest):
+    """Trigger the NGP_TRIGGER_MAIL stored procedure."""
+    success = send_open_banking_email(request.email, request.name)
+    return {"success": success}
+
+@router.post("/send_open_banking_email")
+async def api_send_open_banking_email_alt(request: SendOpenBankingEmailRequest):
+    """Trigger Open Banking email via NGP_TRIGGER_MAIL."""
+    success = send_open_banking_email(request.email, request.name)
+    return {"success": success}

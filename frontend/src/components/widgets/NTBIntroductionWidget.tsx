@@ -34,6 +34,16 @@ export function NTBIntroductionWidget() {
           <li>Account Selection and Disbursement</li>
         </ol>
 
+        <button
+          onClick={() => {
+            const event = new CustomEvent('mock-send-message', { detail: 'Continue' });
+            window.dispatchEvent(event);
+          }}
+          className="w-full mt-2 py-3 text-white font-semibold rounded-full shadow-md hover:opacity-90 transition-all"
+          style={{ background: 'linear-gradient(90deg, #1B6A8A 0%, #4BA3C7 100%)' }}
+        >
+          Continue
+        </button>
 
       </div>
     </motion.div>

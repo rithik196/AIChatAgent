@@ -19,6 +19,8 @@ import { OtpVerificationWidget } from "../widgets/OtpVerificationWidget";
 import { AccountSelectorWidget } from "../widgets/AccountSelectorWidget";
 import { DisbursementWidget } from "../widgets/DisbursementWidget";
 import { NTBIntroductionWidget } from "../widgets/NTBIntroductionWidget";
+import { ExpensesWidget } from "../widgets/ExpensesWidget";
+import { UpdatingWidget } from "../widgets/UpdatingWidget";
 
 type WidgetData = unknown;
 
@@ -55,6 +57,8 @@ const WIDGET_REGISTRY: Record<string, WidgetComponent> = {
   AccountSelectorWidget,
   DisbursementWidget,
   NTBIntroductionWidget,
+  ExpensesWidget,
+  UpdatingWidget,
 };
 
 interface MessageBubbleProps {

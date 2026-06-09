@@ -36,7 +36,8 @@ CUSTOMER_DB = {
             address="Kingdom Tower, Office 1205, Riyadh, 12214"
         ),
         income=IncomeDetails(
-            monthly="SAR 25,000"
+            monthly="SAR 25,000",
+            obligations="8750"
         )
     ),
     "5114886789": CustomerProfile(
@@ -65,7 +66,8 @@ CUSTOMER_DB = {
             address="Kingdom Tower, Office 1205, Riyadh, 12214"
         ),
         income=IncomeDetails(
-            monthly="SAR 20,000"
+            monthly="SAR 20,000",
+            obligations="8750"
         )
     )
 }
@@ -99,6 +101,7 @@ def _row_to_profile(row: dict):
         ),
         income=IncomeDetails(
             monthly=row.get("monthly") or "",
+            obligations=str(row.get("obligations") or "8750"),
         ),
     )
 
@@ -133,3 +136,43 @@ def get_customer_by_national_id(national_id: str):
             pass
 
     return None
+
+def update_customer(national_id: str, updated_data: dict):
+    """
+    Updates the customer details in the primary database.
+    This simulates a real database UPDATE transaction.
+    """
+    customer = get_customer_by_national_id(national_id)
+    if not customer:
+        return False
+        
+    # Update personal details
+    if "personal" in updated_data:
+        p_data = updated_data["personal"]
+        customer.personal.marital_status = p_data.get("maritalStatus", customer.personal.marital_status)
+        customer.personal.dependents = str(p_data.get("dependents", customer.personal.dependents))
+        customer.personal.address = p_data.get("address", customer.personal.address)
+        
+        # Education wasn't in PersonalDetails originally but user might update it, 
+        # normally we would map it. If it exists in model we'd update.
+
+    # Update employment details
+    if "employment" in updated_data:
+        e_data = updated_data["employment"]
+        customer.employment.type = e_data.get("type", customer.employment.type)
+        customer.employment.industry = e_data.get("industry", customer.employment.industry)
+        customer.employment.employer = e_data.get("employer", customer.employment.employer)
+        customer.employment.experience = str(e_data.get("experience", customer.employment.experience))
+        customer.employment.address = e_data.get("address", customer.employment.address)
+
+    # Update income details
+    if "income" in updated_data:
+        i_data = updated_data["income"]
+        customer.income.monthly = str(i_data.get("monthly", customer.income.monthly))
+        customer.income.obligations = str(i_data.get("obligations", customer.income.obligations or "8750"))
+        
+    # In a real setup, we would execute an SQL UPDATE here:
+    # e.g., execute_sql("UPDATE Customers SET ... WHERE NationalID = ?", (..., national_id))
+    
+    return True
+

@@ -119,6 +119,7 @@ _ROUTING_SIGNALS = {
     "nafath approved", "loading_complete", "loading complete",
     "continue", "dedupe_complete", "dedupe complete",
     "identity_complete", "verification_loading", "done",
+    "update_complete", "open_banking_complete", "document_uploaded",
 }
 
 
@@ -156,6 +157,40 @@ def _fast_state_response(session: dict) -> str | None:
     # After Journey Overview "Yes/proceed": show profile-review text only.
     if step == "identity" and sub_step == "personal_details":
         return "I have retrieved your current profile details. Please review them to make sure everything is correct to proceed."
+
+    if step == "identity" and sub_step == "modify_section":
+        return (
+            "Which details would you like to modify? Please choose one:\n"
+            "1. Personal Details\n"
+            "2. Address Details\n"
+            "3. Employment Details\n"
+            "4. Income Details"
+        )
+
+    if step == "identity" and sub_step == "modify_personal":
+        return "Please provide the updated Personal Details fields you want to change (for example: marital status, dependents, education)."
+
+    if step == "identity" and sub_step == "modify_address":
+        return "Please share your updated address details. You can type your full updated address in one message."
+
+    if step == "identity" and sub_step == "modify_employment":
+        return "Please provide updated employment details. If required, upload a verification document using the attachment icon below."
+
+    if step == "identity" and sub_step == "modify_income":
+        return (
+            "Please provide your updated monthly income. You can also choose one of these options:\n"
+            "1. Upload Bank Statement\n"
+            "2. Open Banking"
+        )
+
+    if step == "identity" and sub_step == "open_banking_email_sent":
+        return "An email has been sent to your registered ID. Please link your account and reply with 'linked' once done."
+
+    if step == "identity" and sub_step == "updating_details":
+        return ""
+
+    if step == "identity" and sub_step == "expenses":
+        return "Please review and confirm your average monthly expenses across all categories to continue."
 
     # After personal details confirmation: fast deterministic eligible-offer summary.
     if step == "offer" and sub_step == "eligible":
@@ -205,8 +240,13 @@ async def build_response(state: ConversationState) -> ConversationState:
     # never reads them and cannot "jump ahead" in its response.
     oai_messages = [{"role": "system", "content": sys_prompt}]
     for m in messages_payload:
-        if m["role"] == "user" and m.get("content", "").lower().strip() in _ROUTING_SIGNALS:
-            continue  # skip — routing signal, not a real user utterance
+        if m["role"] == "user":
+            msg_content = m.get("content", "").lower().strip()
+            # Strip __SYS__ prefix for signal detection
+            if msg_content.startswith("__sys__"):
+                msg_content = msg_content[7:]  # Remove "__sys__" prefix (7 chars)
+            if msg_content in _ROUTING_SIGNALS:
+                continue  # skip — routing signal, not a real user utterance
         if m["role"] in ("user", "assistant"):
             oai_messages.append({"role": m["role"], "content": m["content"]})
 
@@ -225,6 +265,10 @@ async def build_response(state: ConversationState) -> ConversationState:
 def _deterministic_classify(msg: str, step: str, sub_step: str, session: dict) -> dict | None:
     """Fast-path extraction for messages that can be classified deterministically."""
     msg_lower = msg.lower().strip()
+    
+    # Strip __SYS__ prefix from internal routing signals
+    if msg_lower.startswith("__sys__"):
+        msg_lower = msg_lower[7:]  # Remove "__sys__" prefix (7 chars)
 
     # ─── IDENTITY ─────────────────────────────────────
     if step == "identity":
@@ -270,10 +314,63 @@ def _deterministic_classify(msg: str, step: str, sub_step: str, session: dict) -
 
         elif sub_step == "personal_details":
             # User explicitly confirms their details
-            signals = ["done", "ok", "yes", "continue", "next", "proceed", "confirm", "offer", "go"]
+            if "modify" in msg_lower or "not correct" in msg_lower or "change" in msg_lower:
+                return {"step": "identity", "intent": "STEP_DATA", "data": {"modify_requested": True}}
+            signals = ["done", "ok", "yes", "continue", "next", "proceed", "confirm", "offer", "go", "details confirmed"]
             if any(s in msg_lower for s in signals):
                 return {"step": "identity", "intent": "STEP_DATA",
                         "data": {"identity_complete": True}}
+
+        elif sub_step == "modify_section":
+            if "personal" in msg_lower:
+                return {"step": "identity", "intent": "STEP_DATA", "data": {"modify_section": "personal"}}
+            if "address" in msg_lower:
+                return {"step": "identity", "intent": "STEP_DATA", "data": {"modify_section": "address"}}
+            if "employment" in msg_lower or "job" in msg_lower or "work" in msg_lower:
+                return {"step": "identity", "intent": "STEP_DATA", "data": {"modify_section": "employment"}}
+            if "income" in msg_lower:
+                return {"step": "identity", "intent": "STEP_DATA", "data": {"modify_section": "income"}}
+
+        elif sub_step in {"modify_personal", "modify_address", "modify_employment"}:
+            if "document_uploaded" in msg_lower:
+                return {"step": "identity", "intent": "STEP_DATA", "data": {"document_uploaded": True}}
+            if msg_lower:
+                return {"step": "identity", "intent": "STEP_DATA", "data": {"update_value": msg.strip()}}
+
+        elif sub_step == "modify_income":
+            if "open banking" in msg_lower:
+                return {"step": "identity", "intent": "STEP_DATA", "data": {"open_banking": True}}
+            if "upload" in msg_lower and "statement" in msg_lower:
+                return {"step": "identity", "intent": "STEP_DATA", "data": {"upload_statement": True}}
+            amount_match = re.search(r'\b(\d{4,6})\b', msg.replace(',', ''))
+            if amount_match:
+                return {
+                    "step": "identity",
+                    "intent": "STEP_DATA",
+                    "data": {"income_value": int(amount_match.group(1))}
+                }
+
+        elif sub_step == "open_banking_email_sent":
+            if "linked" in msg_lower or "done" in msg_lower or "complete" in msg_lower:
+                return {"step": "identity", "intent": "STEP_DATA", "data": {"open_banking_linked": True}}
+
+        elif sub_step == "updating_details":
+            if "open_banking_complete" in msg_lower:
+                return {"step": "identity", "intent": "STEP_DATA", "data": {"open_banking_complete": True}}
+            signals = ["update_complete", "done", "ok", "continue"]
+            if any(s in msg_lower for s in signals):
+                return {"step": "identity", "intent": "STEP_DATA", "data": {"update_complete": True}}
+
+        elif sub_step == "expenses":
+            if "confirm" in msg_lower or "monthly expenses confirmed" in msg_lower:
+                amount_match = re.search(r'\b(\d{3,6})\b', msg.replace(',', ''))
+                if amount_match:
+                    return {
+                        "step": "identity",
+                        "intent": "STEP_DATA",
+                        "data": {"expenses_confirmed": True, "total_expenses": int(amount_match.group(1))}
+                    }
+                return {"step": "identity", "intent": "STEP_DATA", "data": {"expenses_confirmed": True}}
 
     # ─── OFFER ────────────────────────────────────────
     elif step == "offer":

@@ -5,7 +5,7 @@ import { useChat, type UIMessage } from '@ai-sdk/react'
 import { DefaultChatTransport } from 'ai';
 import { ChatWindow } from '@/components/chat/ChatWindow';
 import { VoiceButton } from '@/components/chat/VoiceButton';
-import { Send } from 'lucide-react';
+import { Paperclip, Send } from 'lucide-react';
 import { useParams, useRouter } from 'next/navigation';
 import { useVoice } from '@/hooks/useVoice';
 import { SpeakContext } from '@/hooks/SpeakContext';
@@ -106,6 +106,7 @@ function ChatView({ product, sessionId, initialMessages }: {
   initialMessages: UIMessage[];
 }) {
   const [input, setInput] = useState('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { messages, status, sendMessage } = useChat({
     id: sessionId,
@@ -178,6 +179,23 @@ function ChatView({ product, sessionId, initialMessages }: {
     return () => window.removeEventListener('mock-send-message', handleMockMessage);
   }, [sendMessage]);
 
+  const lastAssistant = [...messages].reverse().find((m) => m.role === 'assistant') as
+    | (UIMessage & { metadata?: { allow_upload?: boolean } })
+    | undefined;
+  const allowUpload = Boolean(lastAssistant?.metadata?.allow_upload);
+
+  const handleUploadClick = () => {
+    if (!allowUpload) return;
+    fileInputRef.current?.click();
+  };
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    sendMessage({ text: `__SYS__document_uploaded:${file.name}` });
+    e.target.value = '';
+  };
+
   const isLoading = status === 'submitted' || status === 'streaming';
 
   return (
@@ -198,7 +216,10 @@ function ChatView({ product, sessionId, initialMessages }: {
       </div>
 
       <div className="flex-1 overflow-hidden pt-20 pb-24">
-        <ChatWindow messages={messages as any} isLoading={isLoading} />
+        <ChatWindow
+          messages={messages as unknown as { id: string; role: 'user' | 'assistant'; content?: string; parts?: unknown[]; annotations?: unknown[] }[]}
+          isLoading={isLoading}
+        />
       </div>
 
       {/* Input Area */}
@@ -216,7 +237,7 @@ function ChatView({ product, sessionId, initialMessages }: {
             🎙 {interimText}
           </div>
         )}
-        <form onSubmit={onSubmit} className="flex gap-3 items-center">
+        <form onSubmit={onSubmit} className="flex gap-2 items-center">
           <div className="flex-1 flex items-center bg-slate-100 rounded-2xl px-4 py-3">
             <input
               className="flex-1 bg-transparent border-none focus:outline-none focus:ring-0 text-slate-900 placeholder:text-slate-400"
@@ -226,6 +247,23 @@ function ChatView({ product, sessionId, initialMessages }: {
               disabled={isLoading || voiceState === "listening"}
             />
           </div>
+          <button
+            type="button"
+            onClick={handleUploadClick}
+            disabled={!allowUpload || isLoading || voiceState === "listening"}
+            className="p-2.5 text-slate-600 hover:text-slate-800 disabled:text-slate-300 disabled:cursor-not-allowed transition-colors"
+            aria-label="Upload document"
+            title={allowUpload ? "Upload document" : "Upload is currently unavailable"}
+          >
+            <Paperclip className="w-5 h-5" />
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            onChange={handleFileSelect}
+            className="hidden"
+            accept=".pdf,.jpg,.jpeg,.png"
+          />
           {(input || '').trim() ? (
             <button
               type="submit"

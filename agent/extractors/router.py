@@ -21,6 +21,22 @@ JOURNEY_MODE_PRE_DEDUPE = "PRE_DEDUPE"
 JOURNEY_MODE_ETB_CORE = "ETB_CORE"
 JOURNEY_MODE_NTB_ENRICHMENT = "NTB_ENRICHMENT"
 
+MODIFY_SECTION_PERSONAL = "personal"
+MODIFY_SECTION_ADDRESS = "address"
+MODIFY_SECTION_EMPLOYMENT = "employment"
+MODIFY_SECTION_INCOME = "income"
+
+
+def _begin_updating(session: dict, section: str, auto_advance_ms: int = 3000, next_signal: str = "update_complete", next_sub_step: str = "personal_details") -> None:
+    session["sub_step"] = "updating_details"
+    session["updating"] = {
+        "section": section,
+        "auto_advance_ms": auto_advance_ms,
+        "next_message": next_signal,
+        "silent": True,
+        "next_sub_step": next_sub_step,
+    }
+
 
 def detect_user_type(id_number: str) -> str:
     """Detect user type based on ID number."""
@@ -284,7 +300,82 @@ def _advance_session_state(extract: dict, session: dict) -> None:
                 logger.info("User cancelled at identify_yourself.")
 
         elif (current_sub == "personal_details") and (data.get("identity_complete") or data.get("loading_complete")):
-            # Move to offer step
+            # Step 7 is now mandatory before eligibility.
+            session["sub_step"] = "expenses"
+            session.setdefault("expenses", {})
+            logger.info("Profile confirmed. Moving to expenses collection.")
+
+        elif current_sub == "personal_details" and data.get("modify_requested"):
+            session["sub_step"] = "modify_section"
+            logger.info("Customer requested profile modification.")
+
+        elif current_sub == "modify_section" and data.get("modify_section"):
+            selected = str(data.get("modify_section", "")).strip().lower()
+            if selected in {MODIFY_SECTION_PERSONAL, MODIFY_SECTION_ADDRESS, MODIFY_SECTION_EMPLOYMENT, MODIFY_SECTION_INCOME}:
+                session["sub_step"] = f"modify_{selected}"
+                logger.info("Customer selected modification section: %s", selected)
+
+        elif current_sub in {"modify_personal", "modify_address"} and data.get("update_value"):
+            section = "Personal details" if current_sub == "modify_personal" else "Address details"
+            _begin_updating(session, section)
+            logger.info("Captured %s update. Showing updating loader.", section)
+
+        elif current_sub == "modify_employment":
+            if data.get("document_uploaded") or data.get("update_value"):
+                _begin_updating(session, "Employment details")
+                logger.info("Employment details update received.")
+
+        elif current_sub == "modify_income":
+            if data.get("open_banking"):
+                session["sub_step"] = "open_banking_email_sent"
+                logger.info("Open Banking selected. Email step started.")
+            elif data.get("upload_statement") and data.get("document_uploaded"):
+                _begin_updating(session, "Income details", next_sub_step="expenses")
+                logger.info("Income statement uploaded. Returning to expenses.")
+            elif data.get("document_uploaded"):
+                _begin_updating(session, "Income details", next_sub_step="expenses")
+                logger.info("Income statement uploaded. Returning to expenses.")
+            elif data.get("income_value"):
+                customer_profile = session.get("customer_profile") or {}
+                income = customer_profile.get("income") if isinstance(customer_profile, dict) else None
+                if isinstance(income, dict):
+                    income["monthly"] = f"SAR {int(data.get('income_value')):,}"
+                _begin_updating(session, "Income details", next_sub_step="expenses")
+                logger.info("Income updated manually. Returning to expenses.")
+
+        elif current_sub == "open_banking_email_sent" and data.get("open_banking_linked"):
+            _begin_updating(
+                session,
+                "Income details",
+                auto_advance_ms=10000,
+                next_signal="open_banking_complete",
+                next_sub_step="expenses",
+            )
+            logger.info("Open Banking linked. Starting 10-second update loader.")
+
+        elif current_sub == "updating_details" and (data.get("update_complete") or data.get("open_banking_complete")):
+            updating = session.get("updating") or {}
+            next_sub_step = updating.get("next_sub_step", "personal_details")
+            if data.get("open_banking_complete"):
+                customer_profile = session.get("customer_profile") or {}
+                income = customer_profile.get("income") if isinstance(customer_profile, dict) else None
+                if isinstance(income, dict):
+                    income["monthly"] = "SAR 41,250"
+                    income["obligations"] = "8750"
+                session["expenses_prefilled"] = True
+                session["expenses_total"] = 7560
+            session["sub_step"] = next_sub_step
+            session.pop("updating", None)
+            logger.info("Update completed. Transitioned to %s.", next_sub_step)
+
+        elif current_sub == "expenses" and data.get("expenses_confirmed"):
+            total_expenses = data.get("total_expenses")
+            session.setdefault("expenses", {})
+            if total_expenses is not None:
+                session["expenses"]["total"] = total_expenses
+            elif session.get("expenses_prefilled"):
+                session["expenses"]["total"] = session.get("expenses_total", 7560)
+
             session["step"] = "offer"
             session["step_number"] = 2
             session["sub_step"] = "eligible"
@@ -294,7 +385,7 @@ def _advance_session_state(extract: dict, session: dict) -> None:
                 "profit_rate": "12%",
                 "max_tenure": 60,
             }
-            logger.info("Moving to offer step (eligible)")
+            logger.info("Expenses captured. Moving to offer step (eligible).")
 
     # ═══════════════════════════════════════════
     # STEP 2: OFFER
