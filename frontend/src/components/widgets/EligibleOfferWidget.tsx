@@ -9,6 +9,8 @@ interface EligibleOfferWidgetProps {
     max_amount?: number;
     profit_rate?: string;
     max_tenure?: number;
+    is_etb?: boolean;
+    pre_approval_badge?: string;
   };
 }
 
@@ -40,6 +42,18 @@ export function EligibleOfferWidget({ data }: EligibleOfferWidgetProps) {
           <h3 className="text-base font-bold text-slate-900">{title}</h3>
         </div>
 
+        {/* ETB Pre-Approved Badge */}
+        {data?.is_etb && (
+          <div className="bg-emerald-50 border-l-4 border-emerald-500 p-3 mb-4 rounded">
+            <p className="text-xs font-semibold text-emerald-900">
+              {data.pre_approval_badge || '✓ PRE-APPROVED'}
+            </p>
+            <p className="text-xs text-emerald-700 mt-1">
+              Pre-approved for {maxAmount.toLocaleString('en-IN')} SAR at {profitRate} profit rate
+            </p>
+          </div>
+        )}
+
         {/* Offer Details */}
         <div className="space-y-3 mb-4">
           <div>
@@ -59,7 +73,7 @@ export function EligibleOfferWidget({ data }: EligibleOfferWidgetProps) {
         </div>
 
         <p className="text-xs text-slate-400 mb-5">
-          Note: The amount shown is your maximum eligibility. You will be able to select a specific amount in the next step.
+          Note: The amount shown is your maximum eligibility. In the next step, we will ask if this maximum is okay or if you want more.
         </p>
 
         {/* Action Buttons */}
@@ -74,16 +88,7 @@ export function EligibleOfferWidget({ data }: EligibleOfferWidgetProps) {
               background: 'linear-gradient(90deg, #1B6A8A 0%, #4BA3C7 100%)',
             }}
           >
-            Accept eligible finance offer
-          </button>
-          <button
-            onClick={() => {
-              const event = new CustomEvent('mock-send-message', { detail: 'Request for a higher amount' });
-              window.dispatchEvent(event);
-            }}
-            className="w-full py-3 text-slate-600 font-semibold rounded-full border-2 border-slate-200 hover:bg-slate-50 transition-all"
-          >
-            Request for a higher amount
+            Continue
           </button>
         </div>
       </div>

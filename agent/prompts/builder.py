@@ -9,6 +9,7 @@ def build_system_prompt(session: dict) -> str:
     step = session.get("step", "identity")
     sub_step = session.get("sub_step", "awaiting_id")
     user_type = session.get("user_type", "unknown")
+    journey_mode = session.get("journeyMode", "PRE_DEDUPE")
     
     step_goal = STEP_GOALS.get(step, "Continue the journey naturally")
     if isinstance(step_goal, dict):
@@ -19,7 +20,7 @@ def build_system_prompt(session: dict) -> str:
         schema = schema.get(region, schema.get("SA", '{}'))
 
     # Sub-step specific instructions
-    sub_step_instructions = _get_sub_step_instructions(step, sub_step, user_type)
+    sub_step_instructions = _get_sub_step_instructions(step, sub_step, user_type, journey_mode)
 
     return f"""
 {MASTER_SYSTEM_PROMPT}
@@ -51,8 +52,8 @@ SUB-STEP INSTRUCTIONS
     """.strip()
 
 
-def _get_sub_step_instructions(step: str, sub_step: str, user_type: str) -> str:
-    """Return specific instructions based on step + sub_step."""
+def _get_sub_step_instructions(step: str, sub_step: str, user_type: str, journey_mode: str = "PRE_DEDUPE") -> str:
+    """Return specific instructions based on step + sub_step + journey_mode."""
     
     instructions = {
         ("identity", "awaiting_id"): """
@@ -140,13 +141,41 @@ System is updating customer details.
 Ask customer to confirm monthly expenses (Step 7).
 - Extract: {"expenses_confirmed": true, "total_expenses": number}
 """,
+        ("identity", "bureau_consent"): """
+This is mandatory Step 8.
+- Ask exactly in this style: "We want to take your consent for fetching bureau records. Do you want to proceed?"
+- If customer agrees: Extract {"bureau_consent_granted": true}
+- If customer refuses: Extract {"bureau_consent_denied": true} and ask again because this step is mandatory.
+""",
+        ("identity", "eligibility_check"): """
+This is Step 9 due diligence check.
+- Inform customer that eligibility checks are running.
+- Keep response short.
+- Extract {"eligibility_check_complete": true} when system completion signal arrives.
+""",
         ("offer", "eligible"): f"""
 Present the pre-approved/eligible finance offer.
 - {"This is an EXISTING customer — present as 'Pre Approved Offer'" if user_type == 'existing' else "This is a NEW customer — present as 'Eligible Finance Offer'"}
 - Mention the maximum eligible amount, profit rate, and tenure
-- Ask if they want to accept or request a higher amount
-- If they accept the offer: Extract: {{"accepted_offer": true}}
-- If they request a higher amount or want to change it to a higher value: Extract: {{"higher_amount_requested": true}}
+- Ask customer to continue for the next mandatory decision step.
+- If they continue/accept: Extract: {{"accepted_offer": true}}
+""",
+        ("offer", "wants_more_decision"): """
+This is mandatory Step 11.
+- Ask: "Is this maximum amount okay or do you want more?"
+- If maximum is okay: Extract {"accepted_max_offer": true}
+- If customer wants more: Extract {"higher_amount_requested": true}
+""",
+        ("offer", "wants_more_open_banking"): """
+Customer requested more than max eligible amount.
+- Inform customer we are running Open Banking refresh.
+- When linking is complete, extract {"open_banking_linked": true}
+""",
+        ("offer", "wants_more_backoffice"): """
+Backoffice workitem has been created for higher amount request.
+- Inform customer RM will connect with them.
+- Ask customer if they want to continue with current eligible amount.
+- Extract {"accepted_max_offer": true} when they agree to continue.
 """,
         ("offer", "slider"): """
 The customer has accepted the offer. Now let them configure the exact amount and tenure.
@@ -184,8 +213,26 @@ E-Sign is successful! Now ask for final verification method.
 """,
         ("disburse", "account"): """
 Ask the customer to select their bank account for disbursement.
-- Present available accounts
-- Extract: {"account_confirmed": true, "account_number": "selected IBAN"}
+- Present available accounts or option to enter IBAN manually.
+- Extract: {"account_selected": "iban"} or {"iban_entered": "iban"}
+""",
+        ("disburse", "iban_validation"): """
+IBAN has been submitted. Validate and show bank details.
+- Display: IBAN, Bank Name, Beneficiary Name
+- Ask customer to confirm the IBAN is correct.
+- Extract: {"iban_validated": true} when confirmed.
+""",
+        ("disburse", "application_summary"): """
+Present complete application summary for final review.
+- Display: Customer Name, ID, Monthly Income, Obligations, Eligible Amount, Selected Amount, Tenure, Monthly Installment, Profit Rate, Bank, IBAN, Beneficiary
+- Ask customer to review all details carefully.
+- Extract: {"application_confirmed": true} when they confirm via checkbox and button.
+""",
+        ("disburse", "ivr_consent"): """
+Final verification step before disbursement.
+- Explain the importance of identity verification via OTP or IVR.
+- Ask customer to choose: OTP via SMS or IVR phone call.
+- Extract: {"otp_method": true} or {"ivr_method": true} based on choice.
 """,
         ("done", "complete"): """
 Journey is complete! Congratulate the customer.
@@ -195,6 +242,37 @@ Journey is complete! Congratulate the customer.
 - Thank them sincerely.
 """,
     }
+    
+    # ETB-specific instruction overrides
+    is_etb = journey_mode == "ETB_CORE"
+    
+    if is_etb and step == "offer" and sub_step == "bureau_consent":
+        return """
+ETB customer - Bureau consent is still mandatory.
+- Ask exactly: "We want to take your consent for fetching bureau records. This helps us ensure fair pricing. Do you want to proceed?"
+- If customer agrees: Extract {"bureau_consent_granted": true}
+- If customer refuses: Extract {"bureau_consent_denied": true} and ask again because this step is mandatory.
+"""
+    
+    if is_etb and step == "offer" and sub_step == "eligible":
+        return """
+This is an EXISTING customer (ETB) with a pre-approved offer.
+- Present exactly: "Great news! You're pre-approved for SAR [AMOUNT] at [RATE]% profit rate for up to [TENURE] months."
+- Mention this is based on their credit profile and history with us.
+- Ask: "Does this pre-approved amount work for you, or would you like to explore higher options?"
+- If accepted: Extract: {"accepted_offer": true}
+- If wants more: Extract: {"higher_amount_requested": true}
+"""
+    
+    if is_etb and step == "disburse" and sub_step == "account":
+        return """
+ETB customer selecting disbursement account.
+- Show: "I have your registered accounts on file. Which account should I disburse the funds to?"
+- Display pre-registered accounts with bank names and last 4 digits of IBAN.
+- Highlight default account: "★ Default Account"
+- Allow manual entry as fallback: "Or add a different account"
+- Extract: {"account_selected": "iban"} when they select or {"iban_entered": "iban"} when they enter manually
+"""
     
     key = (step, sub_step)
     return instructions.get(key, f"Continue the {step} step naturally. Current sub-step: {sub_step}")
