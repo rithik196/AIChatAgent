@@ -372,6 +372,19 @@ def _deterministic_classify(msg: str, step: str, sub_step: str, session: dict) -
                     }
                 return {"step": "identity", "intent": "STEP_DATA", "data": {"expenses_confirmed": True}}
 
+        elif sub_step == "bureau_consent":
+            no_signals = ["no", "deny", "do not consent", "don't consent", "not consent"]
+            if any(s in msg_lower for s in no_signals):
+                return {"step": "identity", "intent": "STEP_DATA", "data": {"bureau_consent_denied": True}}
+
+            yes_signals = ["yes", "consent", "agree", "proceed", "ok", "continue"]
+            if any(s in msg_lower for s in yes_signals):
+                return {"step": "identity", "intent": "STEP_DATA", "data": {"bureau_consent_granted": True}}
+
+        elif sub_step == "eligibility_check":
+            if "eligibility_check_complete" in msg_lower or "done" in msg_lower or "continue" in msg_lower:
+                return {"step": "identity", "intent": "STEP_DATA", "data": {"eligibility_check_complete": True}}
+
     # ─── OFFER ────────────────────────────────────────
     elif step == "offer":
         if sub_step == "eligible":
@@ -383,7 +396,56 @@ def _deterministic_classify(msg: str, step: str, sub_step: str, session: dict) -
                 return {"step": "offer", "intent": "STEP_DATA",
                         "data": {"accepted_offer": True}}
 
-        elif sub_step == "slider":
+        elif sub_step == "wants_more_decision":
+            more_signals = ["want more", "higher", "more amount", "increase amount"]
+            if any(s in msg_lower for s in more_signals):
+                return {"step": "offer", "intent": "STEP_DATA", "data": {"higher_amount_requested": True}}
+
+            ok_signals = ["amount is okay", "maximum is okay", "okay", "ok", "continue", "yes"]
+            if any(s in msg_lower for s in ok_signals):
+                return {"step": "offer", "intent": "STEP_DATA", "data": {"accepted_max_offer": True}}
+
+        elif sub_step == "wants_more_open_banking":
+            linked_signals = ["open_banking_linked", "linked", "done", "completed", "continue"]
+            if any(s in msg_lower for s in linked_signals):
+                return {"step": "offer", "intent": "STEP_DATA", "data": {"open_banking_linked": True}}
+
+        elif sub_step == "wants_more_backoffice":
+            continue_signals = ["continue", "ok", "yes", "proceed", "current eligible"]
+            if any(s in msg_lower for s in continue_signals):
+                return {"step": "offer", "intent": "STEP_DATA", "data": {"accepted_max_offer": True}}
+
+    # ─── DISBURSE ────────────────────────────────────────
+    elif step == "disburse":
+        if sub_step == "account":
+            # Account selection: ACCOUNT_SELECTED::iban or IBAN_ENTERED::iban
+            if msg_lower.startswith("account_selected::"):
+                iban = msg[len("ACCOUNT_SELECTED::"):]
+                return {"step": "disburse", "intent": "STEP_DATA", "data": {"account_selected": iban}}
+            if msg_lower.startswith("iban_entered::"):
+                iban = msg[len("IBAN_ENTERED::"):]
+                return {"step": "disburse", "intent": "STEP_DATA", "data": {"iban_entered": iban}}
+        
+        elif sub_step == "iban_validation":
+            # IBAN validation: confirmation after validation widget
+            confirm_signals = ["confirm", "proceed", "correct", "yes", "okay", "ok"]
+            if any(s in msg_lower for s in confirm_signals):
+                return {"step": "disburse", "intent": "STEP_DATA", "data": {"iban_validated": True}}
+        
+        elif sub_step == "application_summary":
+            # Application summary: confirmation checkbox + button
+            confirm_signals = ["confirm", "proceed", "yes", "okay", "ok"]
+            if any(s in msg_lower for s in confirm_signals):
+                return {"step": "disburse", "intent": "STEP_DATA", "data": {"application_confirmed": True}}
+        
+        elif sub_step == "ivr_consent":
+            # IVR consent: OTP or IVR choice
+            if "otp" in msg_lower:
+                return {"step": "disburse", "intent": "STEP_DATA", "data": {"otp_method": True}}
+            if "ivr" in msg_lower or "call" in msg_lower:
+                return {"step": "disburse", "intent": "STEP_DATA", "data": {"ivr_method": True}}
+
+    # ─── TRADE ────────────────────────────────────────
             if "higher amount" in msg_lower:
                 return {"step": "offer", "intent": "STEP_DATA",
                         "data": {"higher_amount_requested": True}}
