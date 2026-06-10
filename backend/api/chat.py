@@ -15,8 +15,9 @@ import random
 import re
 import logging
 
-from db import get_customer_by_phone, get_customer_by_national_id, update_customer
+from db import get_customer_by_phone, get_customer_by_national_id, update_customer, get_etb_customer_profile, get_etb_registered_ibans
 from services.mail import send_open_banking_email
+from backend.utils.eligibility import calculate_max_eligible_amount
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -164,16 +165,159 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
             },
         }
 
+    if step == "identity" and sub_step == "bureau_consent":
+        return {"widget": "BureauConsentWidget", "data": {}}
+
+    if step == "identity" and sub_step == "eligibility_check":
+        return {"widget": "EligibilityCheckWidget", "data": {}}
+
     if step == "offer" and sub_step == "eligible":
         offer = session.get("offer", {})
+        
+        # A2c: ETB pre-approved amounts calculated via formula (not hardcoded)
+        if customer_type == "ETB" and journey_mode == "ETB_CORE":
+            customer_id = session.get("collected", {}).get("id_number", "")
+            etb_profile = get_etb_customer_profile(customer_id)
+            
+            # Use same formula as NTB eligibility calculation
+            eligibility_result = calculate_max_eligible_amount(
+                monthly_income=etb_profile.get("monthly_income", 35650),
+                monthly_obligations=etb_profile.get("monthly_obligations", 8750),
+                credit_card_limit=etb_profile.get("credit_card_limit", 20000),
+                tenure_months=etb_profile.get("preferred_tenure_months", 60),
+                region=session.get("region", "SA")
+            )
+            
+            max_amount = eligibility_result.get("estimated_amount", 350000)
+            
+            return {
+                "widget": "EligibleOfferWidget",
+                "data": {
+                    "title": "Your Pre-Approved Offer",
+                    "max_amount": max_amount,
+                    "profit_rate": eligibility_result.get("profit_rate", "12%"),
+                    "max_tenure": etb_profile.get("preferred_tenure_months", 60),
+                    "is_etb": True,
+                    "pre_approval_badge": "✓ PRE-APPROVED",
+                },
+            }
+        
+        # NTB: Use existing offer from session (already calculated)
         return {
             "widget": "EligibleOfferWidget",
             "data": {
-                "title": "Pre Approved Offer" if customer_type == "ETB" and journey_mode == "ETB_CORE" else "Eligible Finance Offer",
+                "title": "Eligible Finance Offer",
                 "max_amount": offer.get("max_amount", 350000),
                 "profit_rate": offer.get("profit_rate", "12%"),
                 "max_tenure": offer.get("max_tenure", 60),
+                "is_etb": False,
             },
+        }
+
+    if step == "offer" and sub_step == "wants_more_decision":
+        return {
+            "widget": "WantsMoreDecisionWidget",
+            "data": {
+                "maxAmount": session.get("offer", {}).get("max_amount", 0),
+            },
+        }
+
+    if step == "offer" and sub_step == "wants_more_open_banking":
+        return {
+            "widget": "LoadingWidget",
+            "data": {
+                "title": "Open Banking Verification",
+                "subtitle": "Linking your account and updating your profile...",
+                "auto_advance_ms": 4500,
+                "next_message": "open_banking_linked",
+                "silent": True,
+            },
+        }
+
+    if step == "offer" and sub_step == "wants_more_backoffice":
+        return {
+            "widget": "BackofficeWorkitemWidget",
+            "data": {
+                "workitem": session.get("backoffice_workitem", {}),
+            },
+        }
+
+    if step == "disburse" and sub_step == "account":
+        # A3: ETB gets pre-registered IBANs from IBAN Master (Excel)
+        if journey_mode == "ETB_CORE":
+            customer_id = session.get("collected", {}).get("id_number", "")
+            registered_ibans = get_etb_registered_ibans(customer_id)
+            
+            return {
+                "widget": "AccountSelectorWidget",
+                "data": {
+                    "accounts": registered_ibans,
+                    "show_manual_entry": True,
+                    "pre_select_default": True,  # Auto-select is_default=true account
+                    "is_etb": True,
+                },
+            }
+        
+        # NTB: Empty list + manual entry
+        return {
+            "widget": "AccountSelectorWidget",
+            "data": {
+                "accounts": [],
+                "show_manual_entry": True,
+                "pre_select_default": False,
+                "is_etb": False,
+            },
+        }
+    
+    if step == "disburse" and sub_step == "iban_validation":
+        from backend.utils.eligibility import validate_iban
+        iban = session.get("selected_account", {}).get("iban", "")
+        validation_result = validate_iban(iban)
+        return {
+            "widget": "IBANValidationWidget",
+            "data": {
+                "iban": iban,
+                "bank": validation_result.get("bank", "Unknown Bank"),
+                "beneficiary": validation_result.get("beneficiary", ""),
+                "valid": validation_result.get("valid", False),
+                "reason": validation_result.get("reason", "Validation failed"),
+            },
+        }
+    
+    if step == "disburse" and sub_step == "application_summary":
+        collected = session.get("collected", {})
+        finance = session.get("finance_summary", {})
+        account = session.get("selected_account", {})
+        
+        # A4b: Conditional rendering - ETB excludes income/obligations
+        return {
+            "widget": "ApplicationSummaryWidget",
+            "data": {
+                "personalDetails": {
+                    "name": collected.get("full_name", "Customer"),
+                    "idNumber": collected.get("id_number", "****"),
+                    "phone": collected.get("phone_number", "+966 ***"),
+                },
+                "financeSummary": {
+                    "amount": finance.get("amount", 0),
+                    "tenure": finance.get("tenure", 60),
+                    "profit_rate": finance.get("profit_rate", "12%"),
+                    "monthly_installment": finance.get("monthly_installment", 0),
+                    "total_payable": finance.get("total_payable", 0),
+                },
+                "account": {
+                    "bank": account.get("bank", "Unknown"),
+                    "iban": account.get("iban", ""),
+                    "beneficiary": account.get("beneficiary", ""),
+                },
+                "is_etb": journey_mode == "ETB_CORE",
+            },
+        }
+    
+    if step == "disburse" and sub_step == "ivr_consent":
+        return {
+            "widget": "FinalIVRConsentWidget",
+            "data": {},
         }
 
     if step == "offer" and sub_step == "slider":

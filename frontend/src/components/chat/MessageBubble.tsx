@@ -26,6 +26,13 @@ import { ModifyPersonalWidget } from "../widgets/ModifyPersonalWidget";
 import { ModifyAddressWidget } from "../widgets/ModifyAddressWidget";
 import { ModifyEmploymentWidget } from "../widgets/ModifyEmploymentWidget";
 import { ModifyIncomeWidget } from "../widgets/ModifyIncomeWidget";
+import { BureauConsentWidget } from "../widgets/BureauConsentWidget";
+import { EligibilityCheckWidget } from "../widgets/EligibilityCheckWidget";
+import { WantsMoreDecisionWidget } from "../widgets/WantsMoreDecisionWidget";
+import { BackofficeWorkitemWidget } from "../widgets/BackofficeWorkitemWidget";
+import { ApplicationSummaryWidget } from "../widgets/ApplicationSummaryWidget";
+import { FinalIVRConsentWidget } from "../widgets/FinalIVRConsentWidget";
+import { IBANValidationWidget } from "../widgets/IBANValidationWidget";
 
 type WidgetData = unknown;
 
@@ -69,6 +76,13 @@ const WIDGET_REGISTRY: Record<string, WidgetComponent> = {
   ModifyAddressWidget,
   ModifyEmploymentWidget,
   ModifyIncomeWidget,
+  BureauConsentWidget,
+  EligibilityCheckWidget,
+  WantsMoreDecisionWidget,
+  BackofficeWorkitemWidget,
+  ApplicationSummaryWidget,
+  FinalIVRConsentWidget,
+  IBANValidationWidget,
 };
 
 interface MessageBubbleProps {

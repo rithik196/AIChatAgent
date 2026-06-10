@@ -176,3 +176,83 @@ def update_customer(national_id: str, updated_data: dict):
     
     return True
 
+
+# ═══════════════════════════════════════════════════════════════════
+# ETB SPECIFIC FUNCTIONS (A2c: Formula-calculated + A3: IBAN Master)
+# ═══════════════════════════════════════════════════════════════════
+
+def get_etb_customer_profile(customer_id: str) -> dict:
+    """
+    Fetch ETB customer profile from Customer Master DB.
+    Returns income, obligations, credit card limit, and tenure preferences.
+    Mock data for demo; upgrade to real DB later.
+    
+    Args:
+        customer_id: National ID of ETB customer (e.g., "1046403930")
+    
+    Returns:
+        {
+            "monthly_income": 35650,
+            "monthly_obligations": 8750,
+            "credit_card_limit": 20000,
+            "preferred_tenure_months": 60,
+        }
+    """
+    ETB_CUSTOMER_MASTER = {
+        "1046403930": {  # Test ETB ID
+            "monthly_income": 35650,
+            "monthly_obligations": 8750,
+            "credit_card_limit": 20000,
+            "preferred_tenure_months": 60,
+        },
+    }
+    
+    return ETB_CUSTOMER_MASTER.get(customer_id, {
+        "monthly_income": 30000,
+        "monthly_obligations": 5000,
+        "credit_card_limit": 15000,
+        "preferred_tenure_months": 60,
+    })
+
+
+def get_etb_registered_ibans(customer_id: str) -> list:
+    """
+    Fetch pre-registered IBANs for ETB customer from IBAN Master table (Excel).
+    Each ETB customer has pre-associated accounts on file.
+    
+    Args:
+        customer_id: National ID of ETB customer (e.g., "1046403930")
+    
+    Returns:
+        [
+            {
+                "iban": "SA0230400197093922590013",
+                "bank": "Alawwal Bank",
+                "beneficiary": "Abdul Rahman",
+                "type": "Current Account",
+                "is_default": True,
+            },
+            ...
+        ]
+    """
+    IBAN_MASTER_EXTENDED = {
+        "1046403930": [  # Test ETB ID
+            {
+                "iban": "SA0230400197093922590013",
+                "bank": "Alawwal Bank",
+                "beneficiary": "Abdul Rahman",
+                "type": "Current Account",
+                "is_default": True,
+            },
+            {
+                "iban": "SA0210000011100003474306",
+                "bank": "National Commercial Bank",
+                "beneficiary": "Faisal Rahman",
+                "type": "Savings Account",
+                "is_default": False,
+            },
+        ],
+    }
+    
+    return IBAN_MASTER_EXTENDED.get(customer_id, [])
+

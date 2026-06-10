@@ -38,48 +38,13 @@ export function PersonalDetailsWidget({ data }: PersonalDetailsWidgetProps) {
         </div>
       </div>
 
-      <Section 
-        title="Personal Details" source="(Fetched from Yakeen)" 
-        onEdit={() => setEditingSection('personal')} 
-        isEditing={editingSection === 'personal'}
-        onSave={() => handleUpdateSection('personal')}
-        onCancel={() => setEditingSection(null)}
-      >
-        {editingSection === 'personal' ? (
-          <div className="col-span-2 flex flex-col gap-3">
-            <div>
-              <label className="text-[10px] text-slate-500 uppercase">Level of Education</label>
-              <select className="w-full text-sm p-2 border rounded-md" value={personalState.levelOfEducation} onChange={e=>setPersonalState({...personalState, levelOfEducation: e.target.value})}>
-                <option>Bachelor’s Degree</option>
-                <option>Master’s Degree</option>
-                <option>Secondary (High School)</option>
-              </select>
-            </div>
-            <div>
-              <label className="text-[10px] text-slate-500 uppercase">Marital Status</label>
-              <select className="w-full text-sm p-2 border rounded-md" value={personalState.maritalStatus} onChange={e=>setPersonalState({...personalState, maritalStatus: e.target.value})}>
-                <option>Married</option>
-                <option>Single</option>
-                <option>Divorced</option>
-              </select>
-            </div>
-            <div>
-              <label className="text-[10px] text-slate-500 uppercase">Dependents</label>
-              <select className="w-full text-sm p-2 border rounded-md" value={personalState.dependents} onChange={e=>setPersonalState({...personalState, dependents: e.target.value})}>
-                <option>0</option><option>1</option><option>2</option><option>3</option>
-              </select>
-            </div>
-          </div>
-        ) : (
-          <>
-            <Detail label="ID Number" value={data.personal.idNumber} />
-            <Detail label="Age & Gender" value={`${data.personal.age} / ${data.personal.gender}`} />
-            <Detail label="Nationality" value={data.personal.nationality} />
-            <Detail label="Marital Status" value={data.personal.maritalStatus} />
-            <Detail label="Dependents" value={data.personal.dependents} />
-            <Detail label="Education" value={data.personal.levelOfEducation || "Bachelor's Degree"} />
-          </>
-        )}
+      <Section title="Personal Details" source="(Fetched from Yakeen)">
+        <Detail label="ID Number" value={data.personal.idNumber} />
+        <Detail label="Age & Gender" value={`${data.personal.age} / ${data.personal.gender}`} />
+        <Detail label="Nationality" value={data.personal.nationality} />
+        <Detail label="Marital Status" value={data.personal.maritalStatus} />
+        <Detail label="Dependents" value={data.personal.dependents} />
+        <Detail label="Education" value={data.personal.levelOfEducation || "Bachelor's Degree"} />
       </Section>
 
       <Section title="Address Details" source="(Fetched from Saudi Post)">

@@ -3,6 +3,7 @@ import os
 import uuid
 from temporalio.client import Client
 from temporalio.service import RPCError
+from backend.utils.eligibility import calculate_max_eligible_amount, validate_iban
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +21,9 @@ CUSTOMER_TYPE_UNKNOWN = "UNKNOWN"
 JOURNEY_MODE_PRE_DEDUPE = "PRE_DEDUPE"
 JOURNEY_MODE_ETB_CORE = "ETB_CORE"
 JOURNEY_MODE_NTB_ENRICHMENT = "NTB_ENRICHMENT"
+
+# ETB Configuration (A1a: Bureau consent mandatory for ETB)
+ETB_REQUIRE_BUREAU_CONSENT = True
 
 MODIFY_SECTION_PERSONAL = "personal"
 MODIFY_SECTION_ADDRESS = "address"
@@ -85,8 +89,13 @@ def _set_customer_identity(session: dict, id_number: str) -> None:
 
 
 def _route_to_etb_core(session: dict, reason: str | None = None) -> None:
-    session["step"] = "offer"
-    session["sub_step"] = "eligible"
+    # A1a: ETB routes to bureau_consent as mandatory step (same as NTB)
+    if ETB_REQUIRE_BUREAU_CONSENT:
+        session["step"] = "offer"
+        session["sub_step"] = "bureau_consent"
+    else:
+        session["step"] = "offer"
+        session["sub_step"] = "eligible"  # Skip bureau if not required
     session["journeyMode"] = JOURNEY_MODE_ETB_CORE
     session["transitionReason"] = reason
 
@@ -282,7 +291,7 @@ def _advance_session_state(extract: dict, session: dict) -> None:
             customer_type = session.get("customerType", CUSTOMER_TYPE_UNKNOWN)
             if customer_type == CUSTOMER_TYPE_ETB:
                 _route_to_etb_core(session)
-                logger.info("Dedupe identified ETB. Routing directly to pre-approved offer.")
+                logger.info(f"Dedupe identified ETB. Routing to {'bureau_consent' if ETB_REQUIRE_BUREAU_CONSENT else 'pre-approved offer'}.")
             else:
                 _route_to_ntb_enrichment(session)
                 logger.info("Dedupe identified NTB. Showing journey introduction.")
@@ -376,16 +385,46 @@ def _advance_session_state(extract: dict, session: dict) -> None:
             elif session.get("expenses_prefilled"):
                 session["expenses"]["total"] = session.get("expenses_total", 7560)
 
+            session["sub_step"] = "bureau_consent"
+            logger.info("Expenses captured. Moving to mandatory bureau consent.")
+
+        elif current_sub == "bureau_consent":
+            if data.get("bureau_consent_granted"):
+                # Route based on journey mode (NTB vs ETB)
+                journey_mode = session.get("journeyMode", JOURNEY_MODE_PRE_DEDUPE)
+                if journey_mode == JOURNEY_MODE_ETB_CORE:
+                    session["sub_step"] = "eligible"  # ETB → pre-approved offer
+                    logger.info("ETB bureau consent granted. Moving to pre-approved offer.")
+                else:
+                    session["sub_step"] = "eligibility_check"  # NTB → eligibility check
+                    logger.info("NTB bureau consent granted. Starting eligibility check.")
+            elif data.get("bureau_consent_denied"):
+                # Step 8 is mandatory: re-ask consent until granted.
+                session["sub_step"] = "bureau_consent"
+                logger.info("Bureau consent denied. Re-asking mandatory consent.")
+
+        elif current_sub == "eligibility_check" and data.get("eligibility_check_complete"):
+            # Calculate eligible amount using Formula-tab logic
+            monthly_income = float(session.get("collected", {}).get("monthly_income", 35650))
+            monthly_obligations = float(session.get("collected", {}).get("monthly_obligations", 8750))
+            credit_card_limit = float(session.get("collected", {}).get("credit_card_limit", 20000))
+            region = session.get("region", "SA")
+            
+            eligibility_result = calculate_max_eligible_amount(
+                monthly_income, monthly_obligations, credit_card_limit, 60, region
+            )
+            
             session["step"] = "offer"
             session["step_number"] = 2
             session["sub_step"] = "eligible"
             session["journeyMode"] = JOURNEY_MODE_ETB_CORE if session.get("customerType") == CUSTOMER_TYPE_ETB else JOURNEY_MODE_NTB_ENRICHMENT
             session["offer"] = {
-                "max_amount": 350000,
+                "max_amount": eligibility_result["max_amount"],
                 "profit_rate": "12%",
                 "max_tenure": 60,
+                "foir_status": eligibility_result["foir_status"],
             }
-            logger.info("Expenses captured. Moving to offer step (eligible).")
+            logger.info(f"Eligibility check complete. Max eligible: {eligibility_result['max_amount']} SAR. Moving to eligible offer presentation.")
 
     # ═══════════════════════════════════════════
     # STEP 2: OFFER
@@ -393,13 +432,38 @@ def _advance_session_state(extract: dict, session: dict) -> None:
     elif current_step == "offer":
         if current_sub == "eligible":
             if data.get("accepted_offer"):
-                session["sub_step"] = "slider"
+                session["sub_step"] = "wants_more_decision"
+                logger.info("Offer viewed. Moving to mandatory wants-more decision.")
             elif data.get("higher_amount_requested"):
-                if session.get("customerType") == CUSTOMER_TYPE_ETB:
-                    _route_to_ntb_enrichment(session, reason="HIGHER_AMOUNT_REQUEST")
-                    logger.info("ETB requested higher amount. Transitioning to NTB enrichment while preserving ETB identity.")
-                else:
-                    logger.info("Higher amount requested for NTB flow; remaining within current NTB enrichment path.")
+                session["sub_step"] = "wants_more_decision"
+                logger.info("Higher amount requested early. Redirecting to mandatory wants-more decision step.")
+
+        elif current_sub == "wants_more_decision":
+            if data.get("accepted_max_offer"):
+                session["sub_step"] = "slider"
+                logger.info("Customer accepted maximum amount. Moving to slider.")
+            elif data.get("higher_amount_requested"):
+                session["sub_step"] = "wants_more_open_banking"
+                logger.info("Customer requested higher amount. Moving to open banking path.")
+
+        elif current_sub == "wants_more_open_banking" and data.get("open_banking_linked"):
+            session["sub_step"] = "wants_more_backoffice"
+            session["backoffice_workitem"] = {
+                "customerId": session.get("collected", {}).get("id_number", ""),
+                "requestedAmount": session.get("requested_amount", "above_eligible_limit"),
+                "maxEligible": session.get("offer", {}).get("max_amount", 0),
+                "updatedIncome": "41250",
+                "obligations": "8750",
+                "timestamp": str(uuid.uuid4()),
+                "branch": "Riyadh",
+                "remarks": "Dummy workitem: customer requested amount above automatic eligible limit",
+            }
+            logger.info("Open banking linked for wants-more path. Dummy backoffice workitem created.")
+
+        elif current_sub == "wants_more_backoffice" and data.get("accepted_max_offer"):
+            session["sub_step"] = "slider"
+            logger.info("Backoffice flow acknowledged. Moving to slider for current eligible amount.")
+
         elif data.get("loan_amount") and current_sub == "slider":
             amount = data["loan_amount"]
             tenure = data.get("tenure_months", 36)
@@ -458,19 +522,40 @@ def _advance_session_state(extract: dict, session: dict) -> None:
     # STEP 5: DISBURSE
     # ═══════════════════════════════════════════
     elif current_step == "disburse":
-        if data.get("account_confirmed"):
-            import datetime
-            session["disbursement"] = {
-                "reference": f"PF-2025-{str(hash(session.get('collected', {}).get('id_number', '')))[:8].upper()}",
-                "date": datetime.datetime.now().strftime("%d %B %Y"),
-                "amount": session.get("finance_summary", {}).get("amount", 250000),
-                "account": data.get("account_number", "Current Account ****1234"),
-                "tenure": f"{session.get('finance_summary', {}).get('tenure', 36)} Months",
-                "profit_rate": session.get("finance_summary", {}).get("profit_rate", "15%"),
-                "first_installment": (datetime.datetime.now() + datetime.timedelta(days=90)).strftime("%d %B %Y"),
-                "monthly_installment": session.get("finance_summary", {}).get("monthly_installment", 4638),
-                "total_payable": session.get("finance_summary", {}).get("total_payable", 277968),
-            }
-            session["step"] = "done"
-            session["sub_step"] = "complete"
-            logger.info("Disbursement confirmed, journey complete!")
+        if current_sub == "account":
+            if data.get("account_selected") or data.get("iban_entered"):
+                iban = data.get("account_selected") or data.get("iban_entered", "")
+                session["selected_account"] = {"iban": iban}
+                session["sub_step"] = "iban_validation"
+                logger.info(f"Account selected: {iban}. Moving to IBAN validation.")
+        
+        elif current_sub == "iban_validation":
+            if data.get("iban_validated"):
+                # IBAN validation passed, store bank details
+                session["selected_account"]["bank"] = data.get("bank", "")
+                session["selected_account"]["beneficiary"] = data.get("beneficiary", "")
+                session["sub_step"] = "application_summary"
+                logger.info("IBAN validation complete. Moving to application summary.")
+        
+        elif current_sub == "application_summary":
+            if data.get("application_confirmed"):
+                session["sub_step"] = "ivr_consent"
+                logger.info("Application summary confirmed. Moving to IVR consent choice.")
+        
+        elif current_sub == "ivr_consent":
+            if data.get("otp_method") or data.get("ivr_method"):
+                import datetime
+                session["disbursement"] = {
+                    "reference": f"PF-2025-{str(hash(session.get('collected', {}).get('id_number', '')))[:8].upper()}",
+                    "date": datetime.datetime.now().strftime("%d %B %Y"),
+                    "amount": session.get("finance_summary", {}).get("amount", 250000),
+                    "account": session.get("selected_account", {}).get("iban", "****1234"),
+                    "tenure": f"{session.get('finance_summary', {}).get('tenure', 36)} Months",
+                    "profit_rate": session.get("finance_summary", {}).get("profit_rate", "15%"),
+                    "first_installment": (datetime.datetime.now() + datetime.timedelta(days=90)).strftime("%d %B %Y"),
+                    "monthly_installment": session.get("finance_summary", {}).get("monthly_installment", 4638),
+                    "total_payable": session.get("finance_summary", {}).get("total_payable", 277968),
+                }
+                session["step"] = "done"
+                session["sub_step"] = "complete"
+                logger.info("IVR consent received. Disbursement confirmed, journey complete!")
