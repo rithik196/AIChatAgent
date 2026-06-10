@@ -261,6 +261,15 @@ docker-compose up -d
 
 This starts PostgreSQL, Redis, MongoDB, and Temporal. Wait for Temporal to be ready (check `http://localhost:8080` for the Temporal Web UI).
 
+###  set up local venv to install and run project
+1--- create virtual environemt 
+- python -m venv venv
+
+2--- Activate virtual env
+- venv\Scripts\activate
+
+
+
 ### Step 2: Install Python Dependencies
 
 ```bash
