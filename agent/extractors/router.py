@@ -1,9 +1,19 @@
 import logging
 import os
+import sys
 import uuid
+from pathlib import Path
 from temporalio.client import Client
 from temporalio.service import RPCError
-from backend.utils.eligibility import calculate_max_eligible_amount, validate_iban
+
+try:
+    from backend.utils.eligibility import calculate_max_eligible_amount, validate_iban
+except ModuleNotFoundError:
+    # Allow running agent from its folder without requiring PYTHONPATH.
+    repo_root = Path(__file__).resolve().parents[2]
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
+    from backend.utils.eligibility import calculate_max_eligible_amount, validate_iban
 
 logger = logging.getLogger(__name__)
 

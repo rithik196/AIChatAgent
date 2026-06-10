@@ -121,11 +121,6 @@ export function ApplicationSummaryWidget({ data }: ApplicationSummaryWidgetProps
             </div>
           </div>
         )}
-                </span>
-              </div>
-            </div>
-          </div>
-        )}
 
         {/* Account Details */}
         {data?.account && (

@@ -123,6 +123,13 @@ _ROUTING_SIGNALS = {
 }
 
 
+def _normalize_signal_text(text: str) -> str:
+    normalized = (text or "").lower().strip()
+    if normalized.startswith("__sys__"):
+        normalized = normalized[7:].strip()
+    return normalized
+
+
 def _fast_state_response(session: dict) -> str | None:
     """Deterministic response for internal routing-signal turns.
 
@@ -193,6 +200,9 @@ def _fast_state_response(session: dict) -> str | None:
         return "Please review and confirm your average monthly expenses across all categories to continue."
 
     # After personal details confirmation: fast deterministic eligible-offer summary.
+    if step == "offer" and sub_step == "bureau_consent":
+        return ""
+
     if step == "offer" and sub_step == "eligible":
         offer = session.get("offer", {})
         max_amount = offer.get("max_amount", 350000)
@@ -220,7 +230,7 @@ async def build_response(state: ConversationState) -> ConversationState:
     last_user = ""
     for m in reversed(messages_payload):
         if m.get("role") == "user":
-            last_user = m.get("content", "").lower().strip()
+            last_user = _normalize_signal_text(m.get("content", ""))
             break
     if last_user in _ROUTING_SIGNALS:
         fast = _fast_state_response(session)
@@ -241,10 +251,7 @@ async def build_response(state: ConversationState) -> ConversationState:
     oai_messages = [{"role": "system", "content": sys_prompt}]
     for m in messages_payload:
         if m["role"] == "user":
-            msg_content = m.get("content", "").lower().strip()
-            # Strip __SYS__ prefix for signal detection
-            if msg_content.startswith("__sys__"):
-                msg_content = msg_content[7:]  # Remove "__sys__" prefix (7 chars)
+            msg_content = _normalize_signal_text(m.get("content", ""))
             if msg_content in _ROUTING_SIGNALS:
                 continue  # skip — routing signal, not a real user utterance
         if m["role"] in ("user", "assistant"):
@@ -287,7 +294,7 @@ def _deterministic_classify(msg: str, step: str, sub_step: str, session: dict) -
                         "data": {"nafath_approved": True}}
 
         elif sub_step == "loading":
-            signals = ["done", "ok", "yes", "continue", "next", "proceed", "loading_complete"]
+            signals = ["done", "ok", "yes", "continue", "next", "proceed", "loading_complete", "nafath approved"]
             if any(s in msg_lower for s in signals):
                 return {"step": "identity", "intent": "STEP_DATA",
                         "data": {"loading_complete": True}}
