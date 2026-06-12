@@ -3,6 +3,8 @@ from pydantic import BaseModel
 from typing import Optional
 
 class AddressDetails(BaseModel):
+    line1: Optional[str] = None
+    line2: Optional[str] = None
     building_number: Optional[str] = None
     street: Optional[str] = None
     district: Optional[str] = None
@@ -13,6 +15,7 @@ class AddressDetails(BaseModel):
 
 class PersonalDetails(BaseModel):
     id_number: str
+    id_expiration_date: Optional[str] = None
     age: int
     gender: str
     dob_gr: str

@@ -15,11 +15,11 @@ interface FinanceSummaryWidgetProps {
 }
 
 export function FinanceSummaryWidget({ data }: FinanceSummaryWidgetProps) {
-  const amount = data?.amount || 250000;
-  const tenure = data?.tenure || 36;
-  const profitRate = data?.profit_rate || '15%';
-  const monthlyInstallment = data?.monthly_installment || 4638;
-  const totalPayable = data?.total_payable || 277968;
+  const amount = data?.amount ?? 0;
+  const tenure = data?.tenure ?? 0;
+  const profitRate = data?.profit_rate ?? '';
+  const monthlyInstallment = data?.monthly_installment ?? 0;
+  const totalPayable = data?.total_payable ?? 0;
 
   return (
     <motion.div

@@ -6,14 +6,41 @@ import { StepIndicator } from "./StepIndicator";
 
 export interface PersonalDetailsWidgetProps {
   data: {
-    sessionId?: string;
     name: string;
     phone: string;
     email: string;
-    personal: any;
-    address: any;
-    employment: any;
-    income: any;
+    personal: {
+      idNumber: string;
+      idExpirationDate?: string;
+      nationality?: string;
+      levelOfEducation?: string;
+      maritalStatus?: string;
+      dependents?: string;
+    };
+    address: {
+      line1?: string;
+      line2?: string;
+      street?: string;
+      city?: string;
+      postalCode?: string;
+      houseType?: string;
+    };
+    employment: {
+      type?: string;
+      industry?: string;
+      employer?: string;
+      experience?: string;
+      workAddress?: {
+        line1?: string;
+        city?: string;
+        postalCode?: string;
+      };
+    };
+    income: {
+      monthly?: string;
+      obligations?: string;
+      creditCardLimit?: string;
+    };
   };
 }
 
@@ -27,67 +54,44 @@ export function PersonalDetailsWidget({ data }: PersonalDetailsWidgetProps) {
     window.dispatchEvent(new CustomEvent("mock-send-message", { detail: "__SYS__Details confirmed, proceed" }));
   };
 
-  const formatAddress = (addr: any) => {
-    if (!addr) return "Not Available";
-    const parts = [
-      addr.buildingNumber,
-      addr.street,
-      addr.district,
-      addr.city,
-      addr.postalCode
-    ].filter(Boolean);
-    return parts.join(", ") + (addr.additionalNumber ? ` (Additional: ${addr.additionalNumber})` : "");
-  };
-
-  const residentialAddress = formatAddress(data.address);
-  const workAddress = formatAddress(data.employment?.workAddress);
-
   return (
     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-sm mt-3 pb-6">
       <StepIndicator currentStep={1} />
-      
-      <div className="bg-white rounded-3xl p-4 mb-4 border border-slate-200 flex items-center gap-3 shadow-sm">
-        <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center text-blue-500 text-2xl font-bold">
-          <span>{data.name?.[0]}</span>
-        </div>
-        <div>
-          <div className="font-semibold text-slate-900 text-base">{data.name}</div>
-          <div className="text-xs text-slate-500">{data.phone}</div>
-          <div className="text-xs text-slate-500">{data.email}</div>
-        </div>
-      </div>
 
       <Section title="Personal Details" source="(Fetched from Yakeen)">
         <Detail label="ID Number" value={data.personal.idNumber} />
-        <Detail label="Age & Gender" value={`${data.personal.age} / ${data.personal.gender}`} />
-        <Detail label="Nationality" value={data.personal.nationality} />
-        <Detail label="Marital Status" value={data.personal.maritalStatus} />
-        <Detail label="First Name" value={data.personal.firstName || "-"} />
-        <Detail label="Father Name" value={data.personal.fatherName || "-"} />
-        <Detail label="Grandfather Name" value={data.personal.grandfatherName || "-"} />
-        <Detail label="Last Name" value={data.personal.lastName || "-"} />
-        <Detail label="Dependents" value={data.personal.dependents} />
-        <Detail label="Education" value={data.personal.education || "-"} />
+        <Detail label="Name" value={data.name} />
+        <Detail label="Contact Number" value={data.phone} />
+        <Detail label="Email Id" value={data.email} wrap />
+        <Detail label="Nationality" value={data.personal.nationality || ""} />
+        <Detail label="ID expiration date" value={data.personal.idExpirationDate || ""} />
+        <Detail label="Level of education" value={data.personal.levelOfEducation || ""} />
+        <Detail label="Marital Status" value={data.personal.maritalStatus || ""} />
+        <Detail label="No. of dependents" value={data.personal.dependents || ""} />
       </Section>
 
       <Section title="Address Details" source="(Fetched from Saudi Post)">
+        <Detail label="Address Line 1" value={data.address?.line1 || "-"} wrap />
+        <Detail label="Address Line 2" value={data.address?.line2 || "-"} wrap />
+        <Detail label="Street" value={data.address?.street || "-"} />
         <Detail label="City" value={data.address?.city || "-"} />
+        <Detail label="Postal Code" value={data.address?.postalCode || "-"} />
         <Detail label="House Type" value={data.address?.houseType || "-"} />
-        <Detail label="Residential Address" value={residentialAddress} wrap />
       </Section>
 
       <Section title="Employment Details" source="(Fetched from GOSI)">
-        <Detail label="Employer Type" value={data.employment.type} />
-        <Detail label="Industry" value={data.employment.industry} />
-        <Detail label="Employer Name" value={data.employment.employer} />
-        <Detail label="Total Experience" value={data.employment.experience} />
-        <Detail label="Work Address" value={workAddress} wrap />
+        <Detail label="Employer type" value={data.employment.type || "-"} />
+        <Detail label="Employer name" value={data.employment.employer || "-"} />
+        <Detail label="Industry type" value={data.employment.industry || "-"} />
+        <Detail label="Total Experience" value={data.employment.experience || "-"} />
+        <Detail label="Work Address" value={data.employment.workAddress?.line1 || "-"} wrap />
+        <Detail label="Work City" value={data.employment.workAddress?.city || "-"} />
+        <Detail label="Work Post code" value={data.employment.workAddress?.postalCode || "-"} />
       </Section>
 
       <Section title="Income Details" source="(Fetched from GOSI)">
-        <Detail label="Monthly Income" value={data.income.monthly} />
-        <Detail label="Allowances" value={data.income.allowances || "0"} />
-        <Detail label="Obligations" value={data.income.obligations || "0"} />
+        <Detail label="Monthly Income" value={data.income.monthly || "-"} />
+        <Detail label="Obligations" value={data.income.obligations || "-"} />
       </Section>
 
       <div className="flex gap-2 mt-4">
@@ -134,7 +138,7 @@ function Detail({ label, value, wrap = false }: any) {
   return (
     <div className={`flex flex-col ${wrap ? 'col-span-2' : ''}`}>
       <span className="text-slate-500 font-medium text-[10px] uppercase">{label}</span>
-      <span className={`text-slate-900 font-semibold mt-0.5 ${wrap ? 'whitespace-normal' : 'truncate'}`}>{value}</span>
+      <span className={`text-slate-900 font-semibold mt-0.5 ${wrap ? 'whitespace-normal' : 'truncate'}`}>{value ?? ""}</span>
     </div>
   );
 }

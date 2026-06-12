@@ -120,9 +120,14 @@ _ROUTING_SIGNALS = {
     "continue", "dedupe_complete", "dedupe complete",
     "identity_complete", "verification_loading", "done",
     "update_complete", "open_banking_complete", "document_uploaded",
+    "update_personal", "update_address", "update_employment", "update_income",
+    "confirm_finance_plan",
     "proceed to e-sign", "esign_email_complete",
     "accepted_offer", "accepted_pre_approved_offer",
     "accepted_max_offer", "higher_amount_requested",
+    "otp_verification_complete", "ivr_verification_complete",
+    "complete_disbursement", "verification_declined",
+    "trade_certificate_ready",
 }
 
 
@@ -130,7 +135,26 @@ def _normalize_signal_text(text: str) -> str:
     normalized = (text or "").lower().strip()
     if normalized.startswith("__sys__"):
         normalized = normalized[7:].strip()
+    if ":" in normalized:
+        normalized = normalized.split(":", 1)[0].strip()
     return normalized
+
+
+def _extract_structured_update(msg: str, prefix: str) -> dict | None:
+    msg = (msg or "").strip()
+    prefixes = [prefix]
+    if prefix.upper().startswith("__SYS__"):
+        prefixes.append(prefix[7:])
+    msg_lower = msg.lower()
+    if not any(msg_lower.startswith(p.lower()) for p in prefixes):
+        return None
+    if ":" not in msg:
+        return {}
+    payload = msg.split(":", 1)[1].strip()
+    try:
+        return json.loads(payload)
+    except Exception:
+        return None
 
 
 def _fast_state_response(session: dict) -> str | None:
@@ -178,14 +202,23 @@ def _fast_state_response(session: dict) -> str | None:
         return "Please share your updated address details. You can type your full updated address in one message."
 
     if step == "identity" and sub_step == "modify_employment":
-        return "Please provide updated employment details. If required, upload a verification document using the attachment icon below."
+        return "Please provide updated employment details."
+
+    if step == "identity" and sub_step == "modify_employment_document_pending":
+        return "Please upload a document to verify your employment using the attachment icon below."
 
     if step == "identity" and sub_step == "modify_income":
+        return "Please provide your updated monthly income."
+
+    if step == "identity" and sub_step == "modify_income_proof_choice":
         return (
-            "Please provide your updated monthly income. You can also choose one of these options:\n"
+            "Please choose how you'd like to verify your income:\n"
             "1. Upload Bank Statement\n"
             "2. Open Banking"
         )
+
+    if step == "identity" and sub_step == "modify_income_upload_statement":
+        return "Please upload your bank statement using the attachment icon below."
 
     if step == "identity" and sub_step == "open_banking_email_sent":
         return "An email has been sent to your registered ID. Please link your account and reply with 'linked' once done."
@@ -227,16 +260,64 @@ def _fast_state_response(session: dict) -> str | None:
             "Would you like to proceed with this offer?"
         )
 
-    if step == "offer" and sub_step in {"wants_more_decision", "slider"}:
+    if step == "offer" and sub_step in {"wants_more_decision", "slider", "summary"}:
         return ""
 
-    if step == "trade" and sub_step in {"authorize", "loading", "success", "certificate"}:
+    if step == "trade" and sub_step == "authorize":
+        return (
+            "To complete your Islamic Murabaha finance, the bank will buy the commodity on your behalf and then sell it to you at an agreed price. "
+            "Your repayments are based on that agreed sale price over the selected tenure. "
+            "Please review and authorize the commodity trade below."
+        )
+
+    if step == "trade" and sub_step == "certificate":
+        return (
+            "The commodity transaction certificate is ready. "
+            "Please review it and tell me when you would like to proceed to the Contract & Promissory Note e-sign step."
+        )
+
+    if step == "trade" and sub_step in {"loading", "success"}:
         return ""
 
-    if step == "esign" and sub_step in {"documents", "email_sent"}:
+    if step == "esign" and sub_step == "documents":
+        return (
+            "The Contract & Promissory Note documents are ready. "
+            "Would you like to proceed with e-sign now?"
+        )
+
+    if step == "esign" and sub_step == "email_sent":
         return ""
 
-    if step == "disburse" and sub_step in {"account", "iban_validation", "application_summary", "ivr_consent"}:
+    if step == "disburse" and sub_step == "account":
+        if session.get("customerType") == "NTB" or session.get("journeyMode") == "NTB_ENRICHMENT":
+            return "No existing IBAN was found. Please add a new IBAN to proceed with disbursement."
+        return "Please select your disbursement account or add a new IBAN to proceed."
+
+    if step == "disburse" and sub_step == "iban_validation":
+        return ""
+
+    if step == "disburse" and sub_step == "application_summary":
+        return ""
+
+    if step == "disburse" and sub_step == "ivr_consent":
+        return "Please choose how you would like to complete the final verification: OTP or IVR."
+
+    if step == "disburse" and sub_step == "otp_entry":
+        return "Please enter the 6-digit OTP sent to your registered mobile number in the chat."
+
+    if step == "disburse" and sub_step == "otp_verifying":
+        return "Verifying the OTP now."
+
+    if step == "disburse" and sub_step == "ivr_requested":
+        return "The IVR request has started. Please verify the details through the call."
+
+    if step == "disburse" and sub_step == "otp_success":
+        return "OTP verification completed successfully."
+
+    if step == "disburse" and sub_step == "ivr_success":
+        return "IVR verification completed successfully."
+
+    if step == "done":
         return ""
 
     return None
@@ -366,17 +447,32 @@ def _deterministic_classify(msg: str, step: str, sub_step: str, session: dict) -
             if "income" in msg_lower:
                 return {"step": "identity", "intent": "STEP_DATA", "data": {"modify_section": "income"}}
 
-        elif sub_step in {"modify_personal", "modify_address", "modify_employment"}:
+        elif sub_step in {"modify_personal", "modify_address", "modify_employment", "modify_employment_document_pending", "modify_income_upload_statement"}:
             if "document_uploaded" in msg_lower:
                 return {"step": "identity", "intent": "STEP_DATA", "data": {"document_uploaded": True}}
+            if sub_step == "modify_personal":
+                payload = _extract_structured_update(msg, "__SYS__UPDATE_PERSONAL")
+                if payload is not None:
+                    return {"step": "identity", "intent": "STEP_DATA", "data": {"update_personal": payload}}
+            if sub_step == "modify_address":
+                payload = _extract_structured_update(msg, "__SYS__UPDATE_ADDRESS")
+                if payload is not None:
+                    return {"step": "identity", "intent": "STEP_DATA", "data": {"update_address": payload}}
+            if sub_step == "modify_employment":
+                payload = _extract_structured_update(msg, "__SYS__UPDATE_EMPLOYMENT")
+                if payload is not None:
+                    return {"step": "identity", "intent": "STEP_DATA", "data": {"update_employment": payload}}
             if msg_lower:
                 return {"step": "identity", "intent": "STEP_DATA", "data": {"update_value": msg.strip()}}
 
-        elif sub_step == "modify_income":
+        elif sub_step in {"modify_income", "modify_income_proof_choice"}:
             if "open banking" in msg_lower:
                 return {"step": "identity", "intent": "STEP_DATA", "data": {"open_banking": True}}
             if "upload" in msg_lower and "statement" in msg_lower:
                 return {"step": "identity", "intent": "STEP_DATA", "data": {"upload_statement": True}}
+            payload = _extract_structured_update(msg, "__SYS__UPDATE_INCOME")
+            if payload is not None:
+                return {"step": "identity", "intent": "STEP_DATA", "data": {"update_income": payload}}
             amount_match = re.search(r'\b(\d{4,6})\b', msg.replace(',', ''))
             if amount_match:
                 return {
@@ -481,6 +577,9 @@ def _deterministic_classify(msg: str, step: str, sub_step: str, session: dict) -
                 return {"step": "offer", "intent": "STEP_DATA", "data": {"higher_amount_requested": True}}
                 
         elif sub_step == "slider":
+            payload = _extract_structured_update(msg, "__SYS__CONFIRM_FINANCE_PLAN")
+            if payload is not None:
+                return {"step": "offer", "intent": "STEP_DATA", "data": {"confirm_finance_plan": payload}}
             if "higher amount" in msg_lower:
                 return {"step": "offer", "intent": "STEP_DATA",
                         "data": {"higher_amount_requested": True}}
@@ -529,30 +628,55 @@ def _deterministic_classify(msg: str, step: str, sub_step: str, session: dict) -
                 return {"step": "disburse", "intent": "STEP_DATA", "data": {"otp_method": True}}
             if "ivr" in msg_lower or "call" in msg_lower:
                 return {"step": "disburse", "intent": "STEP_DATA", "data": {"ivr_method": True}}
+            decline_signals = ["no", "not now", "decline", "don't consent", "do not consent", "cancel"]
+            if any(s in msg_lower for s in decline_signals):
+                return {"step": "disburse", "intent": "STEP_DATA", "data": {"verification_declined": True}}
+
+        elif sub_step == "otp_entry":
+            digits = re.sub(r"\D", "", msg)
+            if len(digits) == 6:
+                return {"step": "disburse", "intent": "STEP_DATA", "data": {"otp_code": digits}}
+
+        elif sub_step == "otp_verifying":
+            signals = ["otp_verification_complete", "loading_complete", "done"]
+            if any(s in msg_lower for s in signals):
+                return {"step": "disburse", "intent": "STEP_DATA", "data": {"otp_verification_complete": True}}
+
+        elif sub_step == "ivr_requested":
+            signals = ["ivr_verification_complete", "loading_complete", "done"]
+            if any(s in msg_lower for s in signals):
+                return {"step": "disburse", "intent": "STEP_DATA", "data": {"ivr_verification_complete": True}}
+
+        elif sub_step in {"otp_success", "ivr_success"}:
+            signals = ["complete_disbursement", "done", "confirm"]
+            if any(s in msg_lower for s in signals):
+                return {"step": "disburse", "intent": "STEP_DATA", "data": {"complete_disbursement": True}}
 
     # ─── TRADE ────────────────────────────────────────
     elif step == "trade":
         if sub_step == "authorize":
-            signals = ["authorize", "i authorize", "yes", "confirm", "proceed", "continue"]
+            signals = ["authorize", "i authorize", "yes", "confirm", "proceed"]
             if any(s in msg_lower for s in signals):
                 return {"step": "trade", "intent": "STEP_DATA",
                         "data": {"confirmed": True}}
 
         elif sub_step == "loading":
             # Only explicit confirmation should advance the loading gate
-            signals = ["loading_complete", "done", "ok", "yes", "continue", "next", "proceed"]
+            signals = ["loading_complete", "done", "ok", "yes", "next", "proceed"]
             if any(s in msg_lower for s in signals):
                 return {"step": "trade", "intent": "STEP_DATA",
                         "data": {"loading_complete": True}}
 
         elif sub_step == "success":
-            signals = ["yes", "authorize", "proceed", "confirm", "e-sign", "sign", "done", "ok", "continue"]
+            signals = ["trade_certificate_ready", "show_certificate", "certificate_ready"]
             if any(s in msg_lower for s in signals):
                 return {"step": "trade", "intent": "STEP_DATA",
-                        "data": {"continue": True}}
+                        "data": {"trade_certificate_ready": True}}
 
         elif sub_step == "certificate":
-            signals = ["proceed to e-sign", "e-sign", "esign", "sign", "proceed", "continue"]
+            if msg_lower in {"continue", "yes", "ok", "proceed", "next"}:
+                return {"step": "trade", "intent": "GENERAL_QUERY", "data": {}}
+            signals = ["proceed to e-sign", "generate contract", "contract & promissory note", "e-sign documents", "sign documents"]
             if any(s in msg_lower for s in signals):
                 return {"step": "trade", "intent": "STEP_DATA",
                         "data": {"proceed_esign": True}}
@@ -560,7 +684,19 @@ def _deterministic_classify(msg: str, step: str, sub_step: str, session: dict) -
     # ─── ESIGN ────────────────────────────────────────
     elif step == "esign":
         if sub_step == "documents":
-            signals = ["sign", "e-sign", "nafath", "proceed", "done", "continue"]
+            if msg_lower in {"continue", "yes", "ok", "proceed", "next"}:
+                return {"step": "esign", "intent": "GENERAL_QUERY", "data": {}}
+            signals = [
+                "proceed with e-sign",
+                "proceed to e-sign",
+                "generate contract",
+                "contract & promissory note",
+                "sign",
+                "e-sign",
+                "nafath",
+                "ready",
+                "confirm",
+            ]
             if any(s in msg_lower for s in signals):
                 return {"step": "esign", "intent": "STEP_DATA",
                         "data": {"esign_nafath": True}}
@@ -586,7 +722,7 @@ def _deterministic_classify(msg: str, step: str, sub_step: str, session: dict) -
                         "data": {"otp_method": "otp"}}
 
         elif sub_step == "email_sent":
-            if "esign_email_complete" in msg_lower or "done" in msg_lower or "continue" in msg_lower:
+            if "esign_email_complete" in msg_lower or "done" in msg_lower:
                 return {"step": "esign", "intent": "STEP_DATA",
                         "data": {"esign_email_complete": True}}
 
@@ -597,19 +733,48 @@ def _deterministic_classify(msg: str, step: str, sub_step: str, session: dict) -
             if msg_lower.startswith("account_selected::"):
                 iban = msg.split("::", 1)[1].strip() if "::" in msg else ""
                 return {"step": "disburse", "intent": "STEP_DATA",
-                        "data": {"account_confirmed": True, "account_number": iban or "Selected Account"}}
+                        "data": {"account_selected": iban or "Selected Account"}}
             # User types submit/confirm with valid IBAN context
             iban_match = re.search(r'(SA\d{2}\s*\d{4}\s*\d{4}\s*\d{4}\s*\d{4}\s*\d{4})', msg, re.IGNORECASE)
             if iban_match:
                 iban = re.sub(r'\s', '', iban_match.group(1))
                 if len(iban) == 24:
                     return {"step": "disburse", "intent": "STEP_DATA",
-                            "data": {"account_confirmed": True, "account_number": iban}}
+                            "data": {"account_selected": iban}}
             # Simple confirmations (user already selected via widget)
             signals = ["submit", "confirm", "done", "yes"]
             if any(s == msg_lower for s in signals):
                 return {"step": "disburse", "intent": "STEP_DATA",
-                        "data": {"account_confirmed": True, "account_number": "Current Account ****1234"}}
+                        "data": {"account_selected": "Current Account ****1234"}}
+
+        elif sub_step == "ivr_consent":
+            if msg_lower in {"otp verification", "otp"} or "otp" in msg_lower:
+                return {"step": "disburse", "intent": "STEP_DATA", "data": {"otp_method": True}}
+            if msg_lower in {"ivr verification", "ivr", "call"} or "call me" in msg_lower:
+                return {"step": "disburse", "intent": "STEP_DATA", "data": {"ivr_method": True}}
+            decline_signals = ["no", "not now", "decline", "don't consent", "do not consent", "cancel"]
+            if any(s in msg_lower for s in decline_signals):
+                return {"step": "disburse", "intent": "STEP_DATA", "data": {"verification_declined": True}}
+
+        elif sub_step == "otp_entry":
+            digits = re.sub(r"\D", "", msg)
+            if len(digits) == 6:
+                return {"step": "disburse", "intent": "STEP_DATA", "data": {"otp_code": digits}}
+
+        elif sub_step == "otp_verifying":
+            signals = ["otp_verification_complete", "loading_complete", "done"]
+            if any(s in msg_lower for s in signals):
+                return {"step": "disburse", "intent": "STEP_DATA", "data": {"otp_verification_complete": True}}
+
+        elif sub_step == "ivr_requested":
+            signals = ["ivr_verification_complete", "loading_complete", "done"]
+            if any(s in msg_lower for s in signals):
+                return {"step": "disburse", "intent": "STEP_DATA", "data": {"ivr_verification_complete": True}}
+
+        elif sub_step in {"otp_success", "ivr_success"}:
+            signals = ["complete_disbursement", "done", "confirm"]
+            if any(s in msg_lower for s in signals):
+                return {"step": "disburse", "intent": "STEP_DATA", "data": {"complete_disbursement": True}}
 
     return None
 

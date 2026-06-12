@@ -11,14 +11,6 @@ interface ApplicationSummaryWidgetProps {
       idNumber: string;
       phone: string;
     };
-    employmentDetails?: {
-      employer: string;
-      type: string;
-    };
-    incomeDetails?: {
-      monthly: string;
-      obligations: string;
-    };
     financeSummary?: {
       amount: number;
       tenure: number;
@@ -124,25 +116,6 @@ export function ApplicationSummaryWidget({ data }: ApplicationSummaryWidgetProps
                   <div className="flex justify-between items-center">
                     <span className="text-xs text-blue-200/70 font-medium">Monthly Installment</span>
                     <span className="text-xs font-bold text-teal-400">{data.financeSummary.monthly_installment?.toLocaleString("en-IN")} SAR</span>
-                  </div>
-                </div>
-              </motion.div>
-            )}
-
-            {/* Income Details (NTB only) */}
-            {!data?.is_etb && data?.incomeDetails && (
-              <motion.div variants={itemVariants} className="bg-slate-800/50 rounded-2xl p-4 border border-slate-700/50 backdrop-blur-sm">
-                <p className="text-[10px] font-bold text-slate-400 mb-3 uppercase tracking-wider flex items-center gap-2">
-                  <span className="w-1.5 h-1.5 rounded-full bg-blue-500" /> Income & Obligations
-                </p>
-                <div className="space-y-2">
-                  <div className="flex justify-between items-center border-b border-slate-700/50 pb-2">
-                    <span className="text-xs text-slate-400 font-medium">Monthly Income</span>
-                    <span className="text-xs font-semibold text-slate-200">{data.incomeDetails.monthly}</span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-xs text-slate-400 font-medium">Monthly Obligations</span>
-                    <span className="text-xs font-semibold text-slate-200">{data.incomeDetails.obligations}</span>
                   </div>
                 </div>
               </motion.div>

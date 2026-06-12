@@ -4,13 +4,24 @@ import React, { useState } from "react";
 import { motion } from "framer-motion";
 
 export function ModifyAddressWidget({ data }: any) {
+  const [line1, setLine1] = useState(data?.address?.line1 || "");
+  const [line2, setLine2] = useState(data?.address?.line2 || "");
+  const [street, setStreet] = useState(data?.address?.street || "Al Jamiah Street");
   const [city, setCity] = useState(data?.address?.city || "Riyadh");
-  const [houseType, setHouseType] = useState(data?.address?.houseType || "Owned Villa");
+  const [postalCode, setPostalCode] = useState(data?.address?.postalCode || "12836");
+  const [houseType, setHouseType] = useState(data?.address?.houseType || "Villa");
 
   const handleSubmit = () => {
     window.dispatchEvent(
       new CustomEvent("mock-send-message", {
-        detail: `__SYS__UPDATE_ADDRESS: {"city": "${city}", "house_type": "${houseType}"}`
+        detail: `__SYS__UPDATE_ADDRESS: ${JSON.stringify({
+          line1,
+          line2,
+          street,
+          city,
+          postalCode,
+          houseType,
+        })}`
       })
     );
   };
@@ -19,12 +30,42 @@ export function ModifyAddressWidget({ data }: any) {
     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-sm mt-3">
       <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
         <h3 className="text-sm font-semibold text-slate-800 mb-4">Update Address Details</h3>
-        
+
         <div className="flex flex-col gap-4">
           <div>
+            <label className="text-xs font-semibold text-slate-600 mb-2 block">Address Line 1</label>
+            <input
+              type="text"
+              value={line1}
+              onChange={(e) => setLine1(e.target.value)}
+              className="w-full p-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-blue-400"
+            />
+          </div>
+
+          <div>
+            <label className="text-xs font-semibold text-slate-600 mb-2 block">Address Line 2</label>
+            <input
+              type="text"
+              value={line2}
+              onChange={(e) => setLine2(e.target.value)}
+              className="w-full p-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-blue-400"
+            />
+          </div>
+
+          <div>
+            <label className="text-xs font-semibold text-slate-600 mb-2 block">Street</label>
+            <input
+              type="text"
+              value={street}
+              onChange={(e) => setStreet(e.target.value)}
+              className="w-full p-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-blue-400"
+            />
+          </div>
+
+          <div>
             <label className="text-xs font-semibold text-slate-600 mb-2 block">City</label>
-            <select 
-              value={city} 
+            <select
+              value={city}
               onChange={(e) => setCity(e.target.value)}
               className="w-full p-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-blue-400"
             >
@@ -38,12 +79,23 @@ export function ModifyAddressWidget({ data }: any) {
           </div>
 
           <div>
+            <label className="text-xs font-semibold text-slate-600 mb-2 block">Postal Code</label>
+            <input
+              type="text"
+              value={postalCode}
+              onChange={(e) => setPostalCode(e.target.value)}
+              className="w-full p-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-blue-400"
+            />
+          </div>
+
+          <div>
             <label className="text-xs font-semibold text-slate-600 mb-2 block">House Type</label>
-            <select 
-              value={houseType} 
+            <select
+              value={houseType}
               onChange={(e) => setHouseType(e.target.value)}
               className="w-full p-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-blue-400"
             >
+              <option>Villa</option>
               <option>Owned Villa</option>
               <option>Owned Apartment</option>
               <option>Owned Traditional House</option>

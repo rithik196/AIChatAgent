@@ -121,11 +121,32 @@ Collect updated Employment Details from the customer.
 - Once details are provided, ask them to upload a document verifying their employment in the chat using the attachment icon.
 - Extract any provided value as: {"update_value": "..."}
 """,
+        ("identity", "modify_employment_document_pending"): """
+Employment details have been captured and the customer must now upload proof.
+- Ask them to upload a document verifying their employment using the attachment icon.
+- Do not show any upload widget inside the chat body.
+- Wait for the document upload signal.
+""",
         ("identity", "modify_income"): """
 Collect updated Income Details.
-- Present two options for income proof: 1. Upload Bank Statement, 2. Open Banking.
+- Ask the customer to enter their updated monthly income first.
+- After they provide it, present two options for proof:
+  1. Upload Bank Statement
+  2. Open Banking
 - Extract: {"upload_statement": true} for upload path.
 - Extract: {"open_banking": true} for Open Banking path.
+""",
+        ("identity", "modify_income_proof_choice"): """
+The customer has entered updated income and now needs to choose the proof method.
+- Present two options for income proof:
+  1. Upload Bank Statement
+  2. Open Banking
+- Extract: {"upload_statement": true} or {"open_banking": true}
+""",
+        ("identity", "modify_income_upload_statement"): """
+The customer chose the bank statement path.
+- Ask them to upload the bank statement using the attachment icon.
+- Wait for the upload signal before showing the updating loader.
 """,
         ("identity", "open_banking_email_sent"): """
 Open Banking email has been sent.
@@ -181,31 +202,44 @@ Backoffice workitem has been created for higher amount request.
         ("offer", "slider"): """
 The customer has accepted the offer. Now let them configure the exact amount and tenure.
 - Tell them to adjust the amount and tenure sliders to their preference.
-- Extract: {"loan_amount": number, "tenure_months": number}
+- Extract: {"confirm_finance_plan": {"amount": number, "tenure": number, "profitRate": string or null, "monthlyInstallment": number or null}}
 """,
         ("offer", "summary"): """
 Show the complete finance summary with all calculated values.
 - Present: Finance Amount, Repayment Period, Annual Profit Rate, Monthly Installment, Total Amount Payable
 - Ask if they want to proceed to commodity trade or modify
+- Do NOT explain Murabaha or the commodity trade at this step
 - Extract: {"proceed_trade": true} when they proceed
 """,
+        ("trade", "authorize"): """
+The customer is about to authorize the commodity trade.
+- Explain the Murabaha structure briefly and naturally.
+- Then ask the customer to review and authorize the trade.
+- Extract: {"confirmed": true} when they authorize
+""",
         ("trade", "loading"): """
-The commodity trade (Murabaha) is being executed.
-- Explain that the commodity trade ensures Shariah compliance.
+- The commodity trade is being executed.
 - The system will show a loading widget.
 - Extract: {"trade_executing": true}
 """,
         ("trade", "success"): """
 The commodity trade was successful!
 - Inform the customer the trade is complete.
-- Ask for their authorization to proceed.
-- Extract: {"confirmed": true} when they authorize
+- Ask if they would like to proceed to generate the Contract & Promissory Note for e-sign.
+- Extract: {"trade_certificate_ready": true} when they proceed
+""",
+        ("trade", "certificate"): """
+The commodity transaction certificate is ready.
+- Ask the customer to review the certificate and ask whether they want to proceed to the Contract & Promissory Note e-sign step.
+- Keep the question short and conversational.
+- Extract: {"proceed_esign": true} only when they explicitly mention proceeding to e-sign or generating the contract.
 """,
         ("esign", "documents"): """
-Present the documents for digital signing.
-- Mention the Contract Letter and Promissory Note
-- Tell customer signed copies will be sent to their email
-- Extract: {"esign_nafath": true} when they click E-Sign via Nafath
+Present the Contract & Promissory Note documents for digital signing.
+- Ask the customer whether they would like to proceed with e-sign of the documents.
+- Mention that the signed copies will be sent to their email.
+- Extract: {"esign_nafath": true} only when they explicitly confirm e-sign or signing the documents.
+- If they say "proceed with e-sign now" or similar, treat that as confirmation.
 """,
         ("esign", "otp_ivr"): """
 E-Sign is successful! Now ask for final verification method.
@@ -214,7 +248,8 @@ E-Sign is successful! Now ask for final verification method.
 """,
         ("disburse", "account"): """
 Ask the customer to select their bank account for disbursement.
-- Present available accounts or option to enter IBAN manually.
+- If there are no accounts, say no existing IBAN was found and ask them to add a new IBAN.
+- Present available accounts or the manual IBAN option.
 - Extract: {"account_selected": "iban"} or {"iban_entered": "iban"}
 """,
         ("disburse", "iban_validation"): """
@@ -225,15 +260,40 @@ IBAN has been submitted. Validate and show bank details.
 """,
         ("disburse", "application_summary"): """
 Present complete application summary for final review.
-- Display: Customer Name, ID, Monthly Income, Obligations, Eligible Amount, Selected Amount, Tenure, Monthly Installment, Profit Rate, Bank, IBAN, Beneficiary
-- Ask customer to review all details carefully.
+- Display: Customer Name, ID, Employment, Monthly Income, Obligations, Selected Amount, Tenure, Monthly Installment, Profit Rate, Bank, IBAN, Beneficiary.
+- Ask the customer to review all details carefully and confirm to continue.
 - Extract: {"application_confirmed": true} when they confirm via checkbox and button.
 """,
         ("disburse", "ivr_consent"): """
 Final verification step before disbursement.
 - Explain the importance of identity verification via OTP or IVR.
-- Ask customer to choose: OTP via SMS or IVR phone call.
-- Extract: {"otp_method": true} or {"ivr_method": true} based on choice.
+- Ask customer to choose: OTP via SMS, IVR phone call, or decline if they do not consent.
+- Extract: {"otp_method": true} or {"ivr_method": true} or {"verification_declined": true} based on choice.
+""",
+        ("disburse", "otp_entry"): """
+The customer chose OTP verification.
+- Ask them to enter the 6-digit OTP sent to their registered mobile number in the chat bar.
+- Extract: {"otp_code": "123456"} when they send the 6-digit code.
+""",
+        ("disburse", "otp_verifying"): """
+OTP verification is in progress.
+- Keep the response short while the loader runs.
+- Do not ask for any new action.
+""",
+        ("disburse", "ivr_requested"): """
+IVR verification has been requested.
+- Tell the customer the IVR request has started and they should verify the details through the call.
+- Keep the response short while the loader runs.
+""",
+        ("disburse", "otp_success"): """
+OTP verification is successful.
+- Let the customer know their verification completed successfully.
+- Tell them the final disbursement summary will appear next.
+""",
+        ("disburse", "ivr_success"): """
+IVR verification is successful.
+- Let the customer know their verification completed successfully.
+- Tell them the final disbursement summary will appear next.
 """,
         ("done", "complete"): """
 Journey is complete! Congratulate the customer.

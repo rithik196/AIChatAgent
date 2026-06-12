@@ -235,12 +235,14 @@ Workflow:
 2. Ask the customer to review the details and confirm they are correct, or inform them they can update any section.
 3. DO NOT ask "Which section do you want to modify?" or present an ordered list of sections. The user will select the section using the widget.
 4. If updating Address: Instruct the agent to ask for the new full address in the chat text.
-5. If updating Employment: After they provide the new employment details, you MUST ask them to "Please upload a document to verify your employment" using the chat upload icon. Wait for them to upload (extract `document_uploaded: true`).
-6. If updating Income, you MUST present the two choices as an ORDERED LIST for verification:
-   1. Upload a Bank Statement
-   2. Link via Open Banking
+5. If updating Employment: After they provide the new employment details, ask them to upload a document to verify their employment using the chat attachment icon. Do not show a separate uploader inside the widget.
+6. If updating Income:
+   - First ask them to provide their updated monthly income.
+   - Then present the two verification choices as an ordered list:
+     1. Upload a Bank Statement
+     2. Link via Open Banking
    - If they select Bank Statement: extract `upload_statement: true`, then ask them to upload the document using the attachment icon. Wait for them to upload (extract `document_uploaded: true`).
-   - If they select Open Banking: extract `open_banking: true`, then say "An email has been sent to your registered ID. Please click the link to link your account." Then wait for them to say it's linked, and extract `open_banking_linked: true`.
+   - If they select Open Banking: extract `open_banking: true`, then say "An email has been sent to your registered ID. Please link your account." Then wait for them to say it's linked, and extract `open_banking_linked: true`.
 7. Once you receive the system message "__SYS__update_complete" or "__SYS__open_banking_complete", extract `update_complete: true` or `open_banking_complete: true`, say "Details updated" and ask them to confirm the remaining details.
 8. DO NOT present any offers until they explicitly confirm all details are correct.
 

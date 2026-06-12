@@ -2,6 +2,8 @@ import logging
 import os
 import sys
 import uuid
+import json
+import re
 from pathlib import Path
 from temporalio.client import Client
 from temporalio.service import RPCError
@@ -136,6 +138,124 @@ def _can_enter_ntb_enrichment(session: dict) -> bool:
     customer_type = session.get("customerType", CUSTOMER_TYPE_UNKNOWN)
     journey_mode = session.get("journeyMode", JOURNEY_MODE_PRE_DEDUPE)
     return customer_type == CUSTOMER_TYPE_NTB or journey_mode == JOURNEY_MODE_NTB_ENRICHMENT
+
+
+def _ensure_customer_profile(session: dict) -> dict:
+    profile = session.get("customer_profile")
+    if not isinstance(profile, dict):
+        profile = {}
+    profile.setdefault("personal", {})
+    profile.setdefault("address", {})
+    profile.setdefault("employment", {})
+    profile.setdefault("income", {})
+    session["customer_profile"] = profile
+    return profile
+
+
+def _merge_profile_update(session: dict, section: str, update: dict) -> None:
+    profile = _ensure_customer_profile(session)
+
+    if section == "personal":
+        personal = profile.setdefault("personal", {})
+        for key in ("idExpirationDate", "levelOfEducation", "maritalStatus", "dependents"):
+            if key in update and update[key] is not None:
+                personal[key] = update[key]
+
+    elif section == "address":
+        address = profile.setdefault("address", {})
+        for key in ("line1", "line2", "street", "city", "postalCode", "houseType"):
+            if key in update and update[key] is not None:
+                address[key] = update[key]
+
+    elif section == "employment":
+        employment = profile.setdefault("employment", {})
+        for key in ("type", "industry", "employer", "experience"):
+            if key in update and update[key] is not None:
+                employment[key] = update[key]
+        work_address = update.get("workAddress")
+        if isinstance(work_address, dict):
+            current = employment.setdefault("workAddress", {})
+            for key in ("line1", "city", "postalCode"):
+                if key in work_address and work_address[key] is not None:
+                    current[key] = work_address[key]
+
+    elif section == "income":
+        income = profile.setdefault("income", {})
+        for key in ("monthly", "obligations", "creditCardLimit"):
+            if key in update and update[key] is not None:
+                income[key] = update[key]
+
+
+def _persist_profile_update(session: dict, section: str, update: dict) -> None:
+    """Persist profile changes into the live session and backing DB."""
+    _ensure_customer_profile(session)
+    _merge_profile_update(session, section, update)
+
+    national_id = session.get("collected", {}).get("id_number", "")
+    if national_id:
+        try:
+            from backend.db import update_customer
+            update_customer(national_id, {section: update})
+        except Exception as exc:
+            logger.warning("Failed to persist %s update for %s: %s", section, national_id, exc)
+
+
+def _store_pending_profile_update(session: dict, section: str, update: dict) -> None:
+    pending = session.setdefault("pending_profile_updates", {})
+    if not isinstance(pending, dict):
+        pending = {}
+        session["pending_profile_updates"] = pending
+    pending[section] = update
+
+
+def _consume_pending_profile_update(session: dict, section: str) -> dict | None:
+    pending = session.get("pending_profile_updates")
+    if not isinstance(pending, dict):
+        return None
+    update = pending.pop(section, None)
+    if not pending:
+        session.pop("pending_profile_updates", None)
+    return update if isinstance(update, dict) else None
+
+
+def _parse_structured_update_value(raw_value: object, prefix: str) -> dict | None:
+    if not isinstance(raw_value, str):
+        return None
+    text = raw_value.strip()
+    prefixes = [prefix]
+    if prefix.upper().startswith("__SYS__"):
+        prefixes.append(prefix[7:])
+    text_lower = text.lower()
+    if not any(text_lower.startswith(p.lower()) for p in prefixes):
+        return None
+    payload = text.split(":", 1)[1].strip() if ":" in text else ""
+    if not payload:
+        return {}
+    try:
+        parsed = json.loads(payload)
+    except Exception:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _finance_summary(amount: int, tenure: int, profit_rate_text: str | None = None) -> dict:
+    rate_text = str(profit_rate_text or "15%").strip() or "15%"
+    rate_match = re.search(r"([\d.]+)", rate_text)
+    annual_rate = float(rate_match.group(1)) / 100 if rate_match else 0.15
+    monthly_rate = annual_rate / 12
+    if tenure <= 0:
+        tenure = 1
+    if monthly_rate > 0:
+        emi = (amount * monthly_rate * (1 + monthly_rate) ** tenure) / ((1 + monthly_rate) ** tenure - 1)
+    else:
+        emi = amount / tenure
+    return {
+        "amount": amount,
+        "tenure": tenure,
+        "profit_rate": rate_text,
+        "monthly_installment": round(emi),
+        "total_payable": round(emi * tenure),
+    }
 
 
 async def _get_or_start_workflow(client: Client, session: dict):
@@ -349,30 +469,68 @@ def _advance_session_state(extract: dict, session: dict) -> None:
                 session["sub_step"] = f"modify_{selected}"
                 logger.info("Customer selected modification section: %s", selected)
 
-        elif current_sub in {"modify_personal", "modify_address"} and data.get("update_value"):
-            section = "Personal details" if current_sub == "modify_personal" else "Address details"
-            _begin_updating(session, section)
-            logger.info("Captured %s update. Showing updating loader.", section)
+        elif current_sub == "modify_personal":
+            update = data.get("update_personal")
+            if not isinstance(update, dict):
+                update = _parse_structured_update_value(data.get("update_value"), "__SYS__UPDATE_PERSONAL")
+            if isinstance(update, dict):
+                _persist_profile_update(session, "personal", update)
+                _begin_updating(session, "Personal details")
+                logger.info("Personal details update received and persisted.")
+            elif data.get("update_value"):
+                _begin_updating(session, "Personal details")
+                logger.info("Captured personal details update. Showing updating loader.")
+
+        elif current_sub == "modify_address":
+            update = data.get("update_address")
+            if not isinstance(update, dict):
+                update = _parse_structured_update_value(data.get("update_value"), "__SYS__UPDATE_ADDRESS")
+            if isinstance(update, dict):
+                _persist_profile_update(session, "address", update)
+                _begin_updating(session, "Address details")
+                logger.info("Address update received and persisted.")
+            elif data.get("update_value"):
+                _begin_updating(session, "Address details")
+                logger.info("Captured address update. Showing updating loader.")
 
         elif current_sub == "modify_employment":
-            if data.get("document_uploaded") or data.get("update_value"):
+            update = data.get("update_employment")
+            if not isinstance(update, dict):
+                update = _parse_structured_update_value(data.get("update_value"), "__SYS__UPDATE_EMPLOYMENT")
+            if isinstance(update, dict):
+                _store_pending_profile_update(session, "employment", update)
+                session["sub_step"] = "modify_employment_document_pending"
+                logger.info("Employment details captured. Waiting for verification document.")
+
+        elif current_sub == "modify_employment_document_pending":
+            if data.get("document_uploaded"):
                 _begin_updating(session, "Employment details")
-                logger.info("Employment details update received.")
+                logger.info("Employment verification document received. Showing updating loader.")
 
         elif current_sub == "modify_income":
+            update = data.get("update_income")
+            if not isinstance(update, dict):
+                update = _parse_structured_update_value(data.get("update_value"), "__SYS__UPDATE_INCOME")
+            if isinstance(update, dict):
+                _store_pending_profile_update(session, "income", update)
+                session["sub_step"] = "modify_income_proof_choice"
+                logger.info("Income details captured. Waiting for proof method selection.")
+            elif data.get("income_value"):
+                _store_pending_profile_update(
+                    session,
+                    "income",
+                    {"monthly": f"SAR {int(data.get('income_value')):,}"},
+                )
+                session["sub_step"] = "modify_income_proof_choice"
+                logger.info("Income updated manually. Waiting for proof method selection.")
+
+        elif current_sub == "modify_income_proof_choice":
             if data.get("open_banking"):
                 session["sub_step"] = "open_banking_email_sent"
                 logger.info("Open Banking selected. Email step started.")
-            elif data.get("upload_statement") and data.get("document_uploaded"):
-                _begin_updating(session, "Income details", next_sub_step="expenses")
-                logger.info("Income statement uploaded. Returning to expenses.")
-            elif data.get("document_uploaded"):
-                _begin_updating(session, "Income details", next_sub_step="expenses")
-                logger.info("Income statement uploaded. Returning to expenses.")
-            elif data.get("income_value"):
-                session["pending_income"] = f"SAR {int(data.get('income_value')):,}"
-                session["sub_step"] = "open_banking_email_sent"
-                logger.info("Income updated manually. Starting OB verification flow.")
+            elif data.get("upload_statement"):
+                session["sub_step"] = "modify_income_upload_statement"
+                logger.info("Bank statement upload path selected. Waiting for document upload.")
 
         elif current_sub == "open_banking_email_sent" and data.get("open_banking_linked"):
             _begin_updating(
@@ -387,29 +545,25 @@ def _advance_session_state(extract: dict, session: dict) -> None:
         elif current_sub == "updating_details" and (data.get("update_complete") or data.get("open_banking_complete")):
             updating = session.get("updating") or {}
             next_sub_step = updating.get("next_sub_step", "personal_details")
+            if updating.get("section") == "Employment details":
+                pending_employment = _consume_pending_profile_update(session, "employment")
+                if pending_employment:
+                    _persist_profile_update(session, "employment", pending_employment)
+            elif updating.get("section") == "Income details":
+                pending_income = _consume_pending_profile_update(session, "income")
+                if pending_income:
+                    _persist_profile_update(session, "income", pending_income)
             if data.get("open_banking_complete"):
-                customer_profile = session.get("customer_profile") or {}
-                income = customer_profile.get("income") if isinstance(customer_profile, dict) else None
-                if isinstance(income, dict):
-                    pending = session.get("pending_income")
-                    if pending:
-                        income["monthly"] = pending
-                    else:
-                        income["monthly"] = "SAR 41,250"
-                        income["obligations"] = "8750"
-                        
                 session["expenses_prefilled"] = True
                 session["expenses_total"] = 7560
-                
-                # Update DB
-                national_id = session.get("collected", {}).get("id_number")
-                if national_id and income:
-                    from backend.db import update_customer
-                    update_customer(national_id, {"income": income})
 
             session["sub_step"] = next_sub_step
             session.pop("updating", None)
             logger.info("Update completed. Transitioned to %s.", next_sub_step)
+
+        elif current_sub == "modify_income_upload_statement" and data.get("document_uploaded"):
+            _begin_updating(session, "Income details", next_sub_step="personal_details")
+            logger.info("Income statement uploaded. Showing updating loader.")
 
         elif current_sub == "expenses" and data.get("expenses_confirmed"):
             total_expenses = data.get("total_expenses")
@@ -421,6 +575,25 @@ def _advance_session_state(extract: dict, session: dict) -> None:
 
             session["sub_step"] = "bureau_consent"
             logger.info("Expenses captured. Moving to mandatory bureau consent.")
+
+        elif current_sub == "slider":
+            confirm_plan = data.get("confirm_finance_plan")
+            if isinstance(confirm_plan, dict):
+                amount = int(confirm_plan.get("amount") or confirm_plan.get("loan_amount") or 0)
+                tenure = int(confirm_plan.get("tenure") or confirm_plan.get("tenure_months") or 36)
+                offer_rate = session.get("offer", {}).get("profit_rate")
+                summary = _finance_summary(amount, tenure, confirm_plan.get("profitRate") or offer_rate)
+                session["finance_summary"] = summary
+                session["sub_step"] = "summary"
+                logger.info("Finance plan confirmed. Summary computed for %s SAR over %s months.", amount, tenure)
+            elif data.get("loan_amount"):
+                amount = int(data.get("loan_amount") or 0)
+                tenure = int(data.get("tenure_months") or 36)
+                offer_rate = session.get("offer", {}).get("profit_rate")
+                summary = _finance_summary(amount, tenure, offer_rate)
+                session["finance_summary"] = summary
+                session["sub_step"] = "summary"
+                logger.info("Finance plan confirmed from legacy payload. Summary computed for %s SAR over %s months.", amount, tenure)
 
         elif current_sub == "bureau_consent":
             if data.get("bureau_consent_granted"):
@@ -507,25 +680,24 @@ def _advance_session_state(extract: dict, session: dict) -> None:
             session["sub_step"] = "slider"
             logger.info("Backoffice flow acknowledged. Moving to slider for current eligible amount.")
 
-        elif data.get("loan_amount") and current_sub == "slider":
-            amount = data["loan_amount"]
-            tenure = data.get("tenure_months", 36)
-            profit_rate = 0.15
-            monthly_rate = profit_rate / 12
-            if monthly_rate > 0:
-                emi = (amount * monthly_rate * (1 + monthly_rate) ** tenure) / ((1 + monthly_rate) ** tenure - 1)
-            else:
-                emi = amount / tenure
-            
-            session["finance_summary"] = {
-                "amount": amount,
-                "tenure": tenure,
-                "profit_rate": "15%",
-                "monthly_installment": round(emi),
-                "total_payable": round(emi * tenure),
-            }
-            session["sub_step"] = "summary"
-            logger.info(f"Loan configured: {amount} SAR, {tenure} months")
+        elif current_sub == "slider":
+            confirm_plan = data.get("confirm_finance_plan")
+            if isinstance(confirm_plan, dict):
+                amount = int(confirm_plan.get("amount") or confirm_plan.get("loan_amount") or 0)
+                tenure = int(confirm_plan.get("tenure") or confirm_plan.get("tenure_months") or 36)
+                offer_rate = session.get("offer", {}).get("profit_rate")
+                summary = _finance_summary(amount, tenure, confirm_plan.get("profitRate") or offer_rate)
+                session["finance_summary"] = summary
+                session["sub_step"] = "summary"
+                logger.info("Finance plan confirmed. Summary computed for %s SAR over %s months.", amount, tenure)
+            elif data.get("loan_amount"):
+                amount = int(data.get("loan_amount") or 0)
+                tenure = int(data.get("tenure_months") or 36)
+                offer_rate = session.get("offer", {}).get("profit_rate")
+                summary = _finance_summary(amount, tenure, offer_rate)
+                session["finance_summary"] = summary
+                session["sub_step"] = "summary"
+                logger.info("Loan configured from legacy payload. Summary computed for %s SAR over %s months.", amount, tenure)
 
         elif data.get("proceed_trade") and current_sub == "summary":
             session["step"] = "trade"
@@ -548,7 +720,7 @@ def _advance_session_state(extract: dict, session: dict) -> None:
             session["sub_step"] = "success"
             logger.info("Trade execution complete")
         
-        elif (data.get("continue") or data.get("confirmed")) and current_sub == "success":
+        elif (data.get("trade_certificate_ready") or data.get("confirmed")) and current_sub == "success":
             session["sub_step"] = "certificate"
             logger.info("Showing commodity transaction certificate")
 
@@ -562,7 +734,7 @@ def _advance_session_state(extract: dict, session: dict) -> None:
     # STEP 4: E-SIGN
     # ═══════════════════════════════════════════
     elif current_step == "esign":
-        if (data.get("signed") or data.get("esign_nafath")) and current_sub == "documents":
+        if (data.get("signed") or data.get("esign_nafath") or data.get("proceed_esign")) and current_sub == "documents":
             session["sub_step"] = "email_sent"
             logger.info("E-Sign email sent, starting wait loader")
 
@@ -577,8 +749,8 @@ def _advance_session_state(extract: dict, session: dict) -> None:
     # ═══════════════════════════════════════════
     elif current_step == "disburse":
         if current_sub == "account":
-            if data.get("account_selected") or data.get("iban_entered"):
-                iban = data.get("account_selected") or data.get("iban_entered", "")
+            if data.get("account_selected") or data.get("iban_entered") or data.get("account_confirmed"):
+                iban = data.get("account_selected") or data.get("iban_entered") or data.get("account_number", "")
                 session["selected_account"] = {"iban": iban}
                 session["sub_step"] = "iban_validation"
                 logger.info(f"Account selected: {iban}. Moving to IBAN validation.")
@@ -586,8 +758,20 @@ def _advance_session_state(extract: dict, session: dict) -> None:
         elif current_sub == "iban_validation":
             if data.get("iban_validated"):
                 # IBAN validation passed, store bank details
-                session["selected_account"]["bank"] = data.get("bank", "")
-                session["selected_account"]["beneficiary"] = data.get("beneficiary", "")
+                session.setdefault("selected_account", {})
+                session["selected_account"]["bank"] = data.get("bank", "") or session["selected_account"].get("bank", "")
+                session["selected_account"]["beneficiary"] = data.get("beneficiary", "") or session["selected_account"].get("beneficiary", "")
+                if session["selected_account"].get("iban") and (
+                    not session["selected_account"].get("bank") or not session["selected_account"].get("beneficiary")
+                ):
+                    try:
+                        from backend.utils.eligibility import validate_iban
+                        iban_lookup = validate_iban(session["selected_account"].get("iban", ""))
+                        if iban_lookup.get("valid"):
+                            session["selected_account"]["bank"] = session["selected_account"].get("bank") or iban_lookup.get("bank", "")
+                            session["selected_account"]["beneficiary"] = session["selected_account"].get("beneficiary") or iban_lookup.get("beneficiary", "")
+                    except Exception:
+                        logger.exception("Failed to derive bank details from IBAN during validation transition.")
                 session["sub_step"] = "application_summary"
                 logger.info("IBAN validation complete. Moving to application summary.")
         
@@ -597,19 +781,56 @@ def _advance_session_state(extract: dict, session: dict) -> None:
                 logger.info("Application summary confirmed. Moving to IVR consent choice.")
         
         elif current_sub == "ivr_consent":
-            if data.get("otp_method") or data.get("ivr_method"):
+            if data.get("otp_method"):
+                session["sub_step"] = "otp_entry"
+                logger.info("OTP verification selected. Waiting for 6-digit OTP in chat.")
+            elif data.get("ivr_method"):
+                session["sub_step"] = "ivr_requested"
+                logger.info("IVR verification selected. Starting IVR request loader.")
+            elif data.get("verification_declined"):
+                session["step"] = "offer"
+                session["sub_step"] = "wants_more_backoffice"
+                session["backoffice_workitem"] = {
+                    "customerId": session.get("collected", {}).get("id_number", ""),
+                    "remarks": "Customer did not consent to final verification. Route to RM review.",
+                    "timestamp": str(uuid.uuid4()),
+                }
+                logger.info("Final verification declined. Routing to backoffice review.")
+
+        elif current_sub == "otp_entry":
+            otp_code = data.get("otp_code")
+            if otp_code and len(str(otp_code)) == 6:
+                session["sub_step"] = "otp_verifying"
+                logger.info("OTP received. Starting verification loader.")
+
+        elif current_sub == "otp_verifying":
+            if data.get("otp_verification_complete") or data.get("loading_complete"):
+                session["sub_step"] = "otp_success"
+                session["step"] = "disburse"
+                logger.info("OTP verified successfully.")
+
+        elif current_sub == "ivr_requested":
+            if data.get("ivr_verification_complete") or data.get("loading_complete"):
+                session["sub_step"] = "ivr_success"
+                session["step"] = "disburse"
+                logger.info("IVR verification completed.")
+
+        elif current_sub in {"otp_success", "ivr_success"}:
+            if data.get("complete_disbursement") or data.get("continue") or data.get("confirmed"):
                 import datetime
+                selected_account = session.get("selected_account", {})
+                finance_summary = session.get("finance_summary", {})
                 session["disbursement"] = {
                     "reference": f"PF-2025-{str(hash(session.get('collected', {}).get('id_number', '')))[:8].upper()}",
                     "date": datetime.datetime.now().strftime("%d %B %Y"),
-                    "amount": session.get("finance_summary", {}).get("amount", 250000),
-                    "account": session.get("selected_account", {}).get("iban", "****1234"),
-                    "tenure": f"{session.get('finance_summary', {}).get('tenure', 36)} Months",
-                    "profit_rate": session.get("finance_summary", {}).get("profit_rate", "15%"),
+                    "amount": finance_summary.get("amount", 0),
+                    "account": selected_account.get("iban", "****1234"),
+                    "tenure": f"{finance_summary.get('tenure', 0)} Months",
+                    "profit_rate": finance_summary.get("profit_rate", ""),
                     "first_installment": (datetime.datetime.now() + datetime.timedelta(days=90)).strftime("%d %B %Y"),
-                    "monthly_installment": session.get("finance_summary", {}).get("monthly_installment", 4638),
-                    "total_payable": session.get("finance_summary", {}).get("total_payable", 277968),
+                    "monthly_installment": finance_summary.get("monthly_installment", 0),
+                    "total_payable": finance_summary.get("total_payable", 0),
                 }
                 session["step"] = "done"
                 session["sub_step"] = "complete"
-                logger.info("IVR consent received. Disbursement confirmed, journey complete!")
+                logger.info("Final verification complete. Showing disbursement success screen.")

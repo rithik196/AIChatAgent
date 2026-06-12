@@ -35,34 +35,131 @@ def _get_phone_from_session_id(session_id: str) -> str:
 
 def _customer_to_widget_data(customer: Any) -> dict:
     """Map backend CustomerProfile model into the widget's expected payload shape."""
+    def _address_to_widget_data(address: Any) -> dict:
+        if not address:
+            return {}
+        return {
+            "line1": address.line1,
+            "line2": address.line2,
+            "street": address.street,
+            "city": address.city,
+            "postalCode": address.postal_code,
+            "houseType": address.house_type,
+        }
+
     return {
         "name": customer.name,
         "phone": customer.phone,
         "email": customer.email,
         "personal": {
             "idNumber": customer.personal.id_number,
-            "age": customer.personal.age,
-            "gender": customer.personal.gender,
-            "dobGR": customer.personal.dob_gr,
-            "dobHJ": customer.personal.dob_hj,
-            "address": customer.personal.address,
-            "maritalStatus": customer.personal.marital_status,
+            "idExpirationDate": customer.personal.id_expiration_date or "26/08/2027",
             "nationality": customer.personal.nationality,
-            "fatherName": customer.personal.father_name,
-            "grandfatherName": customer.personal.grandfather_name,
+            "levelOfEducation": customer.personal.education,
+            "maritalStatus": customer.personal.marital_status,
             "dependents": customer.personal.dependents,
-            "incomeType": customer.personal.income_type,
         },
+        "address": _address_to_widget_data(customer.address),
         "employment": {
             "type": customer.employment.type,
             "industry": customer.employment.industry,
             "employer": customer.employment.employer,
             "experience": customer.employment.experience,
-            "address": customer.employment.address,
+            "workAddress": _address_to_widget_data(customer.employment.work_address),
         },
         "income": {
             "monthly": customer.income.monthly,
+            "obligations": customer.income.obligations,
+            "creditCardLimit": customer.income.credit_card_limit,
         },
+    }
+
+
+def _merge_widget_profile(base: Any, overlay: Any) -> dict:
+    """Merge session profile data over a complete customer snapshot without dropping untouched fields."""
+    def _clone(value: Any):
+        if isinstance(value, dict):
+            return {k: _clone(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [_clone(v) for v in value]
+        return value
+
+    def _merge_dicts(left: dict, right: dict) -> dict:
+        result = {k: _clone(v) for k, v in left.items()}
+        for key, value in right.items():
+            if isinstance(value, dict):
+                existing = result.get(key)
+                if isinstance(existing, dict):
+                    result[key] = _merge_dicts(existing, value)
+                elif value:
+                    result[key] = _merge_dicts({}, value)
+            elif value not in (None, ""):
+                result[key] = value
+        return result
+
+    base_dict = base if isinstance(base, dict) else {}
+    overlay_dict = overlay if isinstance(overlay, dict) else {}
+    return _merge_dicts(base_dict, overlay_dict)
+
+
+def _build_personal_widget_data(session: dict) -> dict:
+    """Build a full personal-details payload by combining the live session with persisted customer data."""
+    complete_profile: dict[str, Any] = {}
+    national_id = session.get("collected", {}).get("id_number", "")
+    if national_id:
+        customer = get_customer_by_national_id(national_id)
+        if customer:
+            complete_profile = _customer_to_widget_data(customer)
+
+    return _merge_widget_profile(complete_profile, session.get("customer_profile"))
+
+
+def _build_application_summary_data(session: dict) -> dict:
+    profile = _build_personal_widget_data(session)
+    collected = session.get("collected", {})
+    finance = session.get("finance_summary", {})
+    account = session.get("selected_account", {})
+    customer_type = session.get("customerType") or ("ETB" if session.get("user_type") == "existing" else "NTB")
+
+    if customer_type == "ETB" and not account.get("iban"):
+        national_id = collected.get("id_number", "")
+        registered_ibans = get_etb_registered_ibans(national_id) if national_id else []
+        if registered_ibans:
+            account = registered_ibans[0]
+
+    # Ensure bank/beneficiary are populated from IBAN master when only IBAN is present.
+    if account.get("iban") and (not account.get("bank") or not account.get("beneficiary")):
+        try:
+            from backend.utils.eligibility import validate_iban
+            iban_lookup = validate_iban(account.get("iban", ""))
+            if iban_lookup.get("valid"):
+                if not account.get("bank"):
+                    account["bank"] = iban_lookup.get("bank", "")
+                if not account.get("beneficiary"):
+                    account["beneficiary"] = iban_lookup.get("beneficiary", "")
+        except Exception:
+            logger.exception("Failed to derive account details from IBAN for application summary.")
+
+    personal = profile.get("personal", {})
+    return {
+        "personalDetails": {
+            "name": profile.get("name") or collected.get("full_name") or "Customer",
+            "idNumber": personal.get("idNumber") or collected.get("id_number", "****"),
+            "phone": profile.get("phone") or collected.get("phone_number") or "+966 ***",
+        },
+        "financeSummary": {
+            "amount": finance.get("amount", 0),
+            "tenure": finance.get("tenure", 60),
+            "profit_rate": finance.get("profit_rate", "12%"),
+            "monthly_installment": finance.get("monthly_installment", 0),
+            "total_payable": finance.get("total_payable", 0),
+        },
+        "account": {
+            "bank": account.get("bank", "Unknown"),
+            "iban": account.get("iban", ""),
+            "beneficiary": account.get("beneficiary", ""),
+        },
+        "is_etb": customer_type == "ETB",
     }
 
 
@@ -95,36 +192,45 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
     if step == "identity" and sub_step == "personal_details":
         if customer_type == "ETB" and journey_mode != "NTB_ENRICHMENT":
             return None
-        customer = session.get("customer_profile")
         return {
             "widget": "PersonalDetailsWidget",
-            "data": customer or {
+            "data": _build_personal_widget_data(session) or {
                 "name": "Customer",
                 "phone": "",
                 "email": "",
                 "personal": {
                     "idNumber": session.get("collected", {}).get("id_number", ""),
-                    "age": 0,
-                    "gender": "",
-                    "dobGR": "",
-                    "dobHJ": "",
-                    "address": "",
+                    "idExpirationDate": "26/08/2027",
+                    "nationality": "KSA",
+                    "levelOfEducation": "",
                     "maritalStatus": "",
-                    "nationality": "",
-                    "fatherName": "",
-                    "grandfatherName": "",
                     "dependents": "",
-                    "incomeType": ""
+                },
+                "address": {
+                    "line1": "",
+                    "line2": "",
+                    "street": "",
+                    "city": "",
+                    "postalCode": "",
+                    "houseType": ""
                 },
                 "employment": {
                     "type": "",
                     "industry": "",
                     "employer": "",
                     "experience": "",
-                    "address": ""
+                    "workAddress": {
+                        "line1": "",
+                        "street": "",
+                        "city": "",
+                        "postalCode": "",
+                        "houseType": ""
+                    }
                 },
                 "income": {
-                    "monthly": ""
+                    "monthly": "",
+                    "obligations": "",
+                    "creditCardLimit": ""
                 }
             }
         }
@@ -133,16 +239,16 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
         return {"widget": "ModifySectionWidget", "data": {}}
 
     if step == "identity" and sub_step == "modify_personal":
-        return {"widget": "ModifyPersonalWidget", "data": {}}
+        return {"widget": "ModifyPersonalWidget", "data": session.get("customer_profile") or {}}
 
     if step == "identity" and sub_step == "modify_address":
-        return {"widget": "ModifyAddressWidget", "data": {}}
+        return {"widget": "ModifyAddressWidget", "data": session.get("customer_profile") or {}}
 
     if step == "identity" and sub_step == "modify_employment":
-        return {"widget": "ModifyEmploymentWidget", "data": {}}
+        return {"widget": "ModifyEmploymentWidget", "data": session.get("customer_profile") or {}}
 
     if step == "identity" and sub_step == "modify_income":
-        return {"widget": "ModifyIncomeWidget", "data": {}}
+        return {"widget": "ModifyIncomeWidget", "data": session.get("customer_profile") or {}}
 
     if step == "identity" and sub_step == "updating_details":
         updating = session.get("updating", {})
@@ -298,7 +404,7 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
                 "is_etb": False,
             },
         }
-    
+
     if step == "disburse" and sub_step == "iban_validation":
         from backend.utils.eligibility import validate_iban
         iban = session.get("selected_account", {}).get("iban", "")
@@ -313,41 +419,53 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
                 "reason": validation_result.get("reason", "Validation failed"),
             },
         }
-    
+
     if step == "disburse" and sub_step == "application_summary":
-        collected = session.get("collected", {})
-        finance = session.get("finance_summary", {})
-        account = session.get("selected_account", {})
-        
-        # A4b: Conditional rendering - ETB excludes income/obligations
         return {
             "widget": "ApplicationSummaryWidget",
-            "data": {
-                "personalDetails": {
-                    "name": collected.get("full_name", "Customer"),
-                    "idNumber": collected.get("id_number", "****"),
-                    "phone": collected.get("phone_number", "+966 ***"),
-                },
-                "financeSummary": {
-                    "amount": finance.get("amount", 0),
-                    "tenure": finance.get("tenure", 60),
-                    "profit_rate": finance.get("profit_rate", "12%"),
-                    "monthly_installment": finance.get("monthly_installment", 0),
-                    "total_payable": finance.get("total_payable", 0),
-                },
-                "account": {
-                    "bank": account.get("bank", "Unknown"),
-                    "iban": account.get("iban", ""),
-                    "beneficiary": account.get("beneficiary", ""),
-                },
-                "is_etb": journey_mode == "ETB_CORE",
-            },
+            "data": _build_application_summary_data(session),
         }
-    
-    if step == "disburse" and sub_step == "ivr_consent":
+
+    if step == "disburse" and sub_step in {"ivr_consent", "otp_entry"}:
         return {
             "widget": "FinalIVRConsentWidget",
             "data": {},
+        }
+
+    if step == "disburse" and sub_step == "otp_verifying":
+        return {
+            "widget": "LoadingWidget",
+            "data": {
+                "title": "Verifying OTP...",
+                "subtitle": "Checking the 6-digit code you entered in chat.",
+                "auto_advance_ms": 3000,
+                "next_message": "otp_verification_complete",
+                "silent": True,
+            },
+        }
+
+    if step == "disburse" and sub_step == "ivr_requested":
+        return {
+            "widget": "LoadingWidget",
+            "data": {
+                "title": "IVR Request Started",
+                "subtitle": "Please verify the details through the incoming call.",
+                "auto_advance_ms": 10000,
+                "next_message": "ivr_verification_complete",
+                "silent": True,
+            },
+        }
+
+    if step == "disburse" and sub_step in {"otp_success", "ivr_success"}:
+        return {
+            "widget": "VerificationSuccessWidget",
+            "data": {
+                "title": "OTP Verification Successful" if sub_step == "otp_success" else "IVR Verification Successful",
+                "subtitle": "Your identity verification is complete. We are preparing the final disbursement screen.",
+                "auto_advance_ms": 3000,
+                "next_message": "complete_disbursement",
+                "silent": True,
+            },
         }
 
     if step == "offer" and sub_step == "slider":
@@ -365,23 +483,17 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
     if step == "offer" and sub_step == "summary":
         return {
             "widget": "FinanceSummaryWidget",
-            "data": session.get("finance_summary", {
-                "amount": 250000,
-                "tenure": 36,
-                "profit_rate": "15%",
-                "monthly_installment": 4638,
-                "total_payable": 277968,
-            }),
+            "data": session.get("finance_summary") or {},
         }
 
     if step == "trade" and sub_step == "authorize":
-        return {"widget": "CommodityTradeAuthorizationWidget", "data": session.get("finance_summary", {})}
+        return {"widget": "CommodityTradeAuthorizationWidget", "data": {}}
 
     if step == "trade" and sub_step == "loading":
         return {"widget": "LoadingWidget", "data": {"title": "Executing Commodity Trade...", "subtitle": "Processing your Murabaha transaction", "auto_advance_ms": 3000, "next_message": "loading_complete", "silent": True}}
 
     if step == "trade" and sub_step == "success":
-        return {"widget": "VerificationSuccessWidget", "data": {"title": "Commodity Trade Successful", "subtitle": "Your Murabaha transaction has been completed.", "auto_advance_ms": 3000, "next_message": "continue", "silent": True}}
+        return {"widget": "VerificationSuccessWidget", "data": {"title": "Commodity Trade Successful", "subtitle": "Your Murabaha transaction has been completed.", "auto_advance_ms": 3000, "next_message": "trade_certificate_ready", "silent": True}}
 
     if step == "trade" and sub_step == "certificate":
         return {
@@ -390,9 +502,8 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
                 "title": "Commodity Transaction Certificate",
                 "subtitle": "Generated and ready to download",
                 "current_step": 3,
-                "button_label": "Proceed to E-Sign",
-                "next_message": "Proceed to E-Sign",
-                "documents": [{"name": "Commodity Transaction Certificate", "type": "pdf"}],
+                # UI no longer shows an in-widget proceed button; chat will prompt the user.
+                "documents": [{"name": "Commodity Transaction Certificate", "type": "pdf", "url": "/assets/Letter.pdf"}],
             },
         }
 
@@ -401,14 +512,13 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
             "widget": "DocumentPreviewWidget",
             "data": {
                 "documents": [
-                    {"name": "Contract Letter", "type": "pdf"},
-                    {"name": "Promissory Note", "type": "pdf"},
+                    {"name": "Contract Letter", "type": "pdf", "url": "/assets/Letter.pdf"},
+                    {"name": "Promissory Note", "type": "pdf", "url": "/assets/Letter.pdf"},
                 ],
                 "title": "Contract & Promissory Note",
                 "subtitle": "Ready for E-Sign",
                 "current_step": 4,
-                "button_label": "Send E-Sign Email",
-                "next_message": "Send E-Sign Email",
+                # proceed/send actions are handled by chat confirmations
             },
         }
 
@@ -439,18 +549,25 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
         }
 
     if step == "done":
+        finance = session.get("finance_summary") or {}
+        profile = _build_personal_widget_data(session)
+        selected_account = session.get("selected_account", {})
+        customer_name = profile.get("name") or session.get("collected", {}).get("full_name") or "Customer"
         return {
             "widget": "DisbursementWidget",
             "data": session.get("disbursement", {
+                "customer_name": customer_name,
                 "reference": "PF-2025-XXXXXXXX",
                 "date": time.strftime("%d %B %Y"),
-                "amount": 250000,
-                "account": "Current Account ****1234",
-                "tenure": "36 Months",
-                "profit_rate": "15%",
+                "amount": finance.get("amount", 0),
+                "account": selected_account.get("iban", "Current Account ****1234"),
+                "tenure": f"{finance.get('tenure', 0)} Months",
+                "profit_rate": finance.get("profit_rate", ""),
                 "first_installment": "03 July 2025",
-                "monthly_installment": 4638,
-                "total_payable": 277968,
+                "monthly_installment": finance.get("monthly_installment", 0),
+                "total_payable": finance.get("total_payable", 0),
+                "bank": selected_account.get("bank", ""),
+                "beneficiary": selected_account.get("beneficiary", ""),
             }),
         }
 
@@ -543,6 +660,28 @@ async def chat(request: ChatRequest):
         }
         SESSION_STORE[session_id] = current_session
 
+    # Quick-path: accept any 6-digit OTP during esign otp step and advance to disbursement account
+    if last_user_msg and re.fullmatch(r"\d{6}", last_user_msg):
+        sub = current_session.get("sub_step", "")
+        if current_session.get("step") == "esign" and sub == "otp_ivr":
+            # Treat entered 6-digit as successful verification (no real-time backend OTP required)
+            current_session["step"] = "disburse"
+            current_session["sub_step"] = "account"
+            SESSION_STORE[session_id] = current_session
+
+            # Return an immediate SSE response with the account selector widget
+            widget_spec = resolve_widget(current_session, None)
+            response_text = "OTP verification successful. Proceeding to disbursement account selection."
+            return StreamingResponse(
+                _build_sse_stream(response_text, widget_spec),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "x-vercel-ai-ui-message-stream": "v1",
+                },
+            )
+
     # Call agent
     async with httpx.AsyncClient(timeout=60.0) as client:
         resp = await client.post(
@@ -586,9 +725,12 @@ async def chat(request: ChatRequest):
     # This is restart-safe: no stale in-memory _lastWidgetState involved.
     prev_step = current_session.get("step", "identity")
     prev_sub  = current_session.get("sub_step", "awaiting_id")
+    prev_profile = current_session.get("customer_profile")
     new_step  = updated_session.get("step", "identity")
     new_sub   = updated_session.get("sub_step", "awaiting_id")
-    state_changed = (prev_step != new_step) or (prev_sub != new_sub)
+    new_profile = updated_session.get("customer_profile")
+    profile_changed = prev_profile != new_profile
+    state_changed = (prev_step != new_step) or (prev_sub != new_sub) or profile_changed
 
     if state_changed and new_step == "identity" and new_sub == "open_banking_email_sent":
         profile = updated_session.get("customer_profile") or {}
@@ -627,9 +769,18 @@ async def chat(request: ChatRequest):
     response_text = data.get("response", "No response generated.")
     response_text = re.sub(r"<WIDGET_DATA>[\s\S]*?</WIDGET_DATA>", "", response_text).strip()
 
+    if prev_sub == "updating_details" and new_step == "identity" and new_sub == "personal_details":
+        response_text = (
+            "Your details have been successfully updated. "
+            "Would you like to update any other details, or should we confirm and proceed?"
+        )
+
     allow_upload = (
         updated_session.get("step") == "identity"
-        and updated_session.get("sub_step") in {"modify_employment", "modify_income"}
+        and updated_session.get("sub_step") in {
+            "modify_employment_document_pending",
+            "modify_income_upload_statement",
+        }
     )
 
     return StreamingResponse(

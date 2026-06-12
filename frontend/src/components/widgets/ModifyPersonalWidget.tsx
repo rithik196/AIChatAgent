@@ -3,15 +3,19 @@
 import React, { useState } from "react";
 import { motion } from "framer-motion";
 
-export function ModifyPersonalWidget() {
-  const [education, setEducation] = useState("Bachelor's Degree");
-  const [marital, setMarital] = useState("Single");
-  const [dependents, setDependents] = useState("0");
+export function ModifyPersonalWidget({ data }: any) {
+  const [education, setEducation] = useState(data?.personal?.levelOfEducation || data?.personal?.education || "");
+  const [marital, setMarital] = useState(data?.personal?.maritalStatus || "");
+  const [dependents, setDependents] = useState(data?.personal?.dependents || "");
 
   const handleSubmit = () => {
     window.dispatchEvent(
       new CustomEvent("mock-send-message", {
-        detail: `I've updated: Education to ${education}, Marital Status to ${marital}, Dependents to ${dependents}`
+        detail: `__SYS__UPDATE_PERSONAL: ${JSON.stringify({
+          levelOfEducation: education,
+          maritalStatus: marital,
+          dependents: dependents,
+        })}`
       })
     );
   };
@@ -29,6 +33,8 @@ export function ModifyPersonalWidget() {
               onChange={(e) => setEducation(e.target.value)}
               className="w-full p-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-blue-400"
             >
+              <option></option>
+              <option>Graduation</option>
               <option>Primary Education</option>
               <option>Intermediate (Middle School)</option>
               <option>Secondary (High School)</option>
@@ -46,6 +52,7 @@ export function ModifyPersonalWidget() {
               onChange={(e) => setMarital(e.target.value)}
               className="w-full p-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-blue-400"
             >
+              <option></option>
               <option>Single</option>
               <option>Married</option>
               <option>Divorced</option>
@@ -62,6 +69,7 @@ export function ModifyPersonalWidget() {
               onChange={(e) => setDependents(e.target.value)}
               className="w-full p-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-blue-400"
             >
+              <option></option>
               <option>0</option>
               <option>1</option>
               <option>2</option>

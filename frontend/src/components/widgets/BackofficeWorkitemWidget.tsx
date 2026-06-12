@@ -3,13 +3,7 @@
 import React from "react";
 import { motion } from "framer-motion";
 
-interface BackofficeWorkitemWidgetProps {
-  data?: {
-    workitem?: Record<string, unknown>;
-  };
-}
-
-export function BackofficeWorkitemWidget({ data }: BackofficeWorkitemWidgetProps) {
+export function BackofficeWorkitemWidget() {
   return (
     <motion.div
       initial={{ opacity: 0, scale: 0.95, y: 20 }}

@@ -54,27 +54,23 @@ export function FinalIVRConsentWidget() {
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
               onClick={() => {
-                window.dispatchEvent(
-                  new CustomEvent("mock-send-message", { detail: "Send me an OTP" })
-                );
+                window.dispatchEvent(new CustomEvent("mock-send-message", { detail: "Send me an OTP" }));
               }}
               className="w-full relative group overflow-hidden py-4 rounded-2xl border border-rose-500/30 bg-slate-800/80 hover:bg-slate-800 transition-all duration-300 shadow-lg flex items-center justify-center gap-3"
             >
               <div className="absolute inset-0 bg-gradient-to-r from-rose-500/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
               <svg className="w-5 h-5 text-rose-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
               </svg>
               <span className="text-sm font-semibold text-white">OTP Verification</span>
             </motion.button>
-            
+
             <motion.button
               variants={itemVariants}
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
               onClick={() => {
-                window.dispatchEvent(
-                  new CustomEvent("mock-send-message", { detail: "Call me for IVR verification" })
-                );
+                window.dispatchEvent(new CustomEvent("mock-send-message", { detail: "Call me for IVR verification" }));
               }}
               className="w-full relative group overflow-hidden py-4 rounded-2xl border border-pink-500/30 bg-slate-800/80 hover:bg-slate-800 transition-all duration-300 shadow-lg flex items-center justify-center gap-3"
             >
@@ -83,6 +79,18 @@ export function FinalIVRConsentWidget() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
               </svg>
               <span className="text-sm font-semibold text-white">IVR Call Verification</span>
+            </motion.button>
+
+            <motion.button
+              variants={itemVariants}
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              onClick={() => {
+                window.dispatchEvent(new CustomEvent("mock-send-message", { detail: "I do not consent" }));
+              }}
+              className="w-full py-4 rounded-2xl border border-slate-600/40 bg-slate-800/80 hover:bg-slate-800 transition-all duration-300 shadow-lg flex items-center justify-center"
+            >
+              <span className="text-sm font-semibold text-slate-300">I do not consent</span>
             </motion.button>
           </div>
         </div>

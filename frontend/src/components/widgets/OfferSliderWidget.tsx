@@ -70,7 +70,7 @@ export function OfferSliderWidget({ data }: OfferSliderWidgetProps) {
               type="range"
               min={minAmount}
               max={maxAmount}
-              step={1000}
+              step={1}
               value={amount}
               onChange={(e) => setAmount(Number(e.target.value))}
               className="w-full h-1.5 rounded-full appearance-none cursor-pointer focus:outline-none"
@@ -154,7 +154,12 @@ export function OfferSliderWidget({ data }: OfferSliderWidgetProps) {
               whileTap={{ scale: 0.98 }}
               onClick={() => {
                 window.dispatchEvent(new CustomEvent('mock-send-message', {
-                  detail: `Proceed to next step`
+                  detail: `__SYS__CONFIRM_FINANCE_PLAN: ${JSON.stringify({
+                    amount,
+                    tenure,
+                    profitRate: profitRateStr,
+                    monthlyInstallment,
+                  })}`
                 }));
               }}
               className="w-full py-3.5 bg-slate-900 text-white text-[14px] font-semibold rounded-2xl shadow-md hover:bg-slate-800 transition-all duration-300"

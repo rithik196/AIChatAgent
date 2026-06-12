@@ -38,9 +38,6 @@ export function CommodityTradeAuthorizationWidget() {
           </div>
 
           <div className="bg-slate-800/50 rounded-2xl p-4 border border-slate-700/50 backdrop-blur-sm mb-6">
-            <p className="text-xs text-slate-300 leading-relaxed mb-4">
-              To proceed with your Islamic Murabaha financing, we will execute a commodity trade on your behalf. Please authorize the transaction below.
-            </p>
             <div className="flex items-start gap-3 bg-slate-800/80 p-3 rounded-xl border border-slate-700">
               <div className="relative flex items-center justify-center mt-0.5">
                 <input
@@ -55,7 +52,7 @@ export function CommodityTradeAuthorizationWidget() {
                 </svg>
               </div>
               <label htmlFor="trade-auth" className="text-xs text-slate-300 leading-relaxed cursor-pointer select-none">
-                I hereby appoint the bank as my agent to purchase and sell commodities in the local market to complete this Murabaha transaction.
+                I authorize the bank to complete the commodity trade required for my finance plan.
               </label>
             </div>
           </div>

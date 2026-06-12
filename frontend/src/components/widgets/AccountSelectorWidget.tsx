@@ -22,10 +22,8 @@ interface AccountSelectorWidgetProps {
 }
 
 export function AccountSelectorWidget({ data }: AccountSelectorWidgetProps) {
-  const accounts = data?.accounts || [
-    { type: 'Current Account', iban: 'SA89 2980 0000 9090 5454 5001', bank: 'FIRST ABU DHABI BANK' },
-    { type: 'Savings Account', iban: 'SA89 2980 0000 9090 5454 5002', bank: 'FIRST ABU DHABI BANK' },
-  ];
+  // If no accounts provided, treat as empty (NTB)
+  const accounts = data?.accounts || [];
 
   const defaultIndex = data?.pre_select_default 
     ? accounts.findIndex(a => a.is_default) 
@@ -88,46 +86,56 @@ export function AccountSelectorWidget({ data }: AccountSelectorWidgetProps) {
                     {data?.is_etb ? "Your Registered Accounts" : "Existing Accounts"}
                   </p>
                   <div className="space-y-2">
-                    {accounts.map((account, idx) => (
-                      <motion.button
-                        key={idx}
-                        variants={itemVariants}
-                        onClick={() => setSelected(idx)}
-                        className={`w-full text-left p-4 rounded-2xl border transition-all duration-300 relative overflow-hidden ${
-                          selected === idx
-                            ? 'border-emerald-500/50 bg-emerald-900/20'
-                            : 'border-slate-700/50 bg-slate-800/50 hover:bg-slate-700/50 hover:border-slate-600'
-                        }`}
-                      >
-                        {selected === idx && (
-                          <div className="absolute inset-0 bg-gradient-to-r from-emerald-500/5 to-transparent pointer-events-none" />
-                        )}
-                        <div className="flex items-start justify-between relative z-10">
-                          <div>
-                            <p className="text-[13px] font-semibold text-slate-200">{account.type}</p>
-                            <p className="text-[11px] text-slate-400 mt-1 font-mono tracking-wide">{account.iban}</p>
-                            <p className="text-[10px] text-slate-500 mt-1 uppercase tracking-wider">{account.bank}</p>
-                            {account.beneficiary && (
-                              <p className="text-[10px] text-emerald-400/80 mt-1 font-medium">{account.beneficiary}</p>
-                            )}
-                            {account.is_default && (
-                              <div className="inline-flex items-center gap-1 mt-2 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20">
-                                <span className="text-[9px] text-emerald-400 uppercase font-bold tracking-wider">Default</span>
-                              </div>
-                            )}
-                          </div>
-                          <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center mt-1 transition-colors ${
-                            selected === idx ? 'border-emerald-500' : 'border-slate-600'
-                          }`}>
-                            <motion.div
-                              initial={false}
-                              animate={{ scale: selected === idx ? 1 : 0 }}
-                              className="w-2.5 h-2.5 rounded-full bg-emerald-500"
-                            />
-                          </div>
+                    {accounts.length === 0 ? (
+                      <div className="rounded-2xl p-4 border border-slate-700/50 bg-slate-800/50">
+                        <p className="text-sm font-semibold text-slate-200">No existing IBAN found</p>
+                        <p className="text-[11px] text-slate-400 mt-2">Add a new IBAN to proceed with disbursement.</p>
+                        <div className="mt-4 flex gap-2">
+                          <button onClick={() => window.dispatchEvent(new CustomEvent('mock-send-message', { detail: 'ADD_NEW_IBAN' }))} className="py-2 px-3 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-400 text-white font-semibold">Add New IBAN</button>
                         </div>
-                      </motion.button>
-                    ))}
+                      </div>
+                    ) : (
+                      accounts.map((account, idx) => (
+                        <motion.button
+                          key={idx}
+                          variants={itemVariants}
+                          onClick={() => setSelected(idx)}
+                          className={`w-full text-left p-4 rounded-2xl border transition-all duration-300 relative overflow-hidden ${
+                            selected === idx
+                              ? 'border-emerald-500/50 bg-emerald-900/20'
+                              : 'border-slate-700/50 bg-slate-800/50 hover:bg-slate-700/50 hover:border-slate-600'
+                          }`}
+                        >
+                          {selected === idx && (
+                            <div className="absolute inset-0 bg-gradient-to-r from-emerald-500/5 to-transparent pointer-events-none" />
+                          )}
+                          <div className="flex items-start justify-between relative z-10">
+                            <div>
+                              <p className="text-[13px] font-semibold text-slate-200">{account.type}</p>
+                              <p className="text-[11px] text-slate-400 mt-1 font-mono tracking-wide">{account.iban}</p>
+                              <p className="text-[10px] text-slate-500 mt-1 uppercase tracking-wider">{account.bank}</p>
+                              {account.beneficiary && (
+                                <p className="text-[10px] text-emerald-400/80 mt-1 font-medium">{account.beneficiary}</p>
+                              )}
+                              {account.is_default && (
+                                <div className="inline-flex items-center gap-1 mt-2 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20">
+                                  <span className="text-[9px] text-emerald-400 uppercase font-bold tracking-wider">Default</span>
+                                </div>
+                              )}
+                            </div>
+                            <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center mt-1 transition-colors ${
+                              selected === idx ? 'border-emerald-500' : 'border-slate-600'
+                            }`}>
+                              <motion.div
+                                initial={false}
+                                animate={{ scale: selected === idx ? 1 : 0 }}
+                                className="w-2.5 h-2.5 rounded-full bg-emerald-500"
+                              />
+                            </div>
+                          </div>
+                        </motion.button>
+                      ))
+                    )}
                   </div>
                 </div>
 

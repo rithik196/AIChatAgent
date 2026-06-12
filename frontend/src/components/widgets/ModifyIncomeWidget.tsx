@@ -1,15 +1,21 @@
 "use client";
 
-import React from "react";
+import React, { useState } from "react";
 import { motion } from "framer-motion";
 
 export function ModifyIncomeWidget({ data }: any) {
-  const currentIncome = data?.income?.monthly || "Not available";
+  const [monthlyIncome, setMonthlyIncome] = useState(data?.income?.monthly || "SAR 35650");
+  const [obligations, setObligations] = useState(data?.income?.obligations || "8750");
+  const creditCardLimit = data?.income?.creditCardLimit || "SAR 20000";
 
-  const handleUpdateClick = () => {
+  const handleSubmit = () => {
     window.dispatchEvent(
       new CustomEvent("mock-send-message", {
-        detail: "I would like to update my income."
+        detail: `__SYS__UPDATE_INCOME: ${JSON.stringify({
+          monthly: monthlyIncome,
+          obligations,
+          creditCardLimit,
+        })}`
       })
     );
   };
@@ -17,24 +23,35 @@ export function ModifyIncomeWidget({ data }: any) {
   return (
     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-sm mt-3">
       <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
-        <h3 className="text-sm font-semibold text-slate-800 mb-4">Current Income Details</h3>
-        
+        <h3 className="text-sm font-semibold text-slate-800 mb-4">Update Income Details</h3>
+
         <div className="flex flex-col gap-4">
-          <div className="bg-slate-50 rounded-xl p-4 border border-slate-100 flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500">Monthly Income</span>
-            <span className="text-sm font-bold text-slate-800">{currentIncome}</span>
+          <div>
+            <label className="text-xs font-semibold text-slate-600 mb-2 block">Monthly Income</label>
+            <input
+              type="text"
+              value={monthlyIncome}
+              onChange={(e) => setMonthlyIncome(e.target.value)}
+              className="w-full p-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-blue-400"
+            />
           </div>
 
-          <div className="text-xs text-slate-600 text-center leading-relaxed">
-            To update your income, please tell the assistant your new monthly income in the chat below.
+          <div>
+            <label className="text-xs font-semibold text-slate-600 mb-2 block">Obligations</label>
+            <input
+              type="text"
+              value={obligations}
+              onChange={(e) => setObligations(e.target.value)}
+              className="w-full p-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-blue-400"
+            />
           </div>
 
           <button
-            onClick={handleUpdateClick}
+            onClick={handleSubmit}
             className="w-full mt-2 py-2.5 text-white font-semibold rounded-full hover:opacity-90 transition-all"
             style={{ background: "linear-gradient(90deg, #1B6A8A 0%, #4BA3C7 100%)" }}
           >
-            Update Income
+            Save Changes
           </button>
         </div>
       </div>

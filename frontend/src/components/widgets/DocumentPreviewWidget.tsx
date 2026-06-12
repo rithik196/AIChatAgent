@@ -7,6 +7,7 @@ import { StepIndicator } from './StepIndicator';
 interface Document {
   name: string;
   type: string;
+  url?: string;
 }
 
 interface DocumentPreviewWidgetProps {
@@ -15,21 +16,32 @@ interface DocumentPreviewWidgetProps {
     title?: string;
     subtitle?: string;
     current_step?: number;
-    button_label?: string;
-    next_message?: string;
   };
 }
 
 export function DocumentPreviewWidget({ data }: DocumentPreviewWidgetProps) {
   const documents = data?.documents || [
-    { name: 'Contract Letter', type: 'pdf' },
-    { name: 'Promissory Note', type: 'pdf' },
+    { name: 'Contract Letter', type: 'pdf', url: '/assets/Letter.pdf' },
+    { name: 'Promissory Note', type: 'pdf', url: '/assets/Letter.pdf' },
   ];
   const title = data?.title || 'Digital Documents';
   const subtitle = data?.subtitle || 'Ready for E-Sign';
   const currentStep = data?.current_step || 4;
-  const buttonLabel = data?.button_label || 'E-Sign via Nafath';
-  const nextMessage = data?.next_message || 'E-Sign via Nafath';
+
+  const openDocument = (doc: Document) => {
+    const url = doc.url || '/assets/Letter.pdf';
+    window.open(url, '_blank', 'noopener,noreferrer');
+  };
+
+  const downloadDocument = (doc: Document) => {
+    const url = doc.url || '/assets/Letter.pdf';
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${doc.name.replace(/\s+/g, '_')}.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  };
 
   const containerVariants = {
     hidden: { opacity: 0, y: 20 },
@@ -71,11 +83,12 @@ export function DocumentPreviewWidget({ data }: DocumentPreviewWidgetProps) {
           </div>
 
           <div className="grid grid-cols-2 gap-3 mb-6">
-            {documents.map((doc, idx) => (
+            {documents.map((doc) => (
               <motion.div
                 key={doc.name}
                 variants={itemVariants}
-                className="bg-slate-800/60 border border-slate-700/50 rounded-2xl p-3 relative group hover:bg-slate-700/50 transition-colors backdrop-blur-sm"
+                onClick={() => openDocument(doc)}
+                className="bg-slate-800/60 border border-slate-700/50 rounded-2xl p-3 relative group hover:bg-slate-700/50 transition-colors backdrop-blur-sm cursor-pointer"
               >
                 <div className="bg-slate-900/50 rounded-xl p-2 mb-3 h-[70px] flex flex-col gap-1.5 justify-center items-center relative overflow-hidden border border-slate-800">
                   <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/5 to-blue-500/5" />
@@ -85,7 +98,7 @@ export function DocumentPreviewWidget({ data }: DocumentPreviewWidgetProps) {
                   <span className="absolute bottom-1 right-1.5 text-[8px] font-bold text-slate-500 uppercase">{doc.type}</span>
                 </div>
                 
-                <button className="absolute top-2 right-2 p-1.5 bg-slate-800/80 rounded-lg text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity hover:text-white hover:bg-slate-700 border border-slate-600/50">
+                <button onClick={(e) => { e.stopPropagation(); downloadDocument(doc); }} className="absolute top-2 right-2 p-1.5 bg-slate-800/80 rounded-lg text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity hover:text-white hover:bg-slate-700 border border-slate-600/50">
                   <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
                   </svg>
@@ -96,17 +109,7 @@ export function DocumentPreviewWidget({ data }: DocumentPreviewWidgetProps) {
             ))}
           </div>
 
-          <motion.button
-            variants={itemVariants}
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-            onClick={() => {
-              window.dispatchEvent(new CustomEvent('mock-send-message', { detail: nextMessage }));
-            }}
-            className="w-full py-4 text-[14px] font-semibold rounded-2xl shadow-lg transition-all duration-300 bg-gradient-to-r from-indigo-500 to-blue-500 text-white shadow-indigo-500/25 hover:shadow-indigo-500/40"
-          >
-            {buttonLabel}
-          </motion.button>
+          {/* Removed in-widget "Proceed to e-sign" button. Proceed action will be asked via chat. */}
         </div>
       </div>
     </motion.div>
