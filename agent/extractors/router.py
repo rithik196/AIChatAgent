@@ -8,12 +8,14 @@ from temporalio.service import RPCError
 
 try:
     from backend.utils.eligibility import calculate_max_eligible_amount, validate_iban
+    from backend.db import get_etb_customer_profile
 except ModuleNotFoundError:
     # Allow running agent from its folder without requiring PYTHONPATH.
     repo_root = Path(__file__).resolve().parents[2]
     if str(repo_root) not in sys.path:
         sys.path.insert(0, str(repo_root))
     from backend.utils.eligibility import calculate_max_eligible_amount, validate_iban
+    from backend.db import get_etb_customer_profile
 
 logger = logging.getLogger(__name__)
 
@@ -99,15 +101,28 @@ def _set_customer_identity(session: dict, id_number: str) -> None:
 
 
 def _route_to_etb_core(session: dict, reason: str | None = None) -> None:
-    # A1a: ETB routes to bureau_consent as mandatory step (same as NTB)
-    if ETB_REQUIRE_BUREAU_CONSENT:
-        session["step"] = "offer"
-        session["sub_step"] = "bureau_consent"
-    else:
-        session["step"] = "offer"
-        session["sub_step"] = "eligible"  # Skip bureau if not required
+    session["step"] = "offer"
+    session["sub_step"] = "pre_approved_offer"
+    session["step_number"] = 2
     session["journeyMode"] = JOURNEY_MODE_ETB_CORE
     session["transitionReason"] = reason
+
+    customer_id = session.get("collected", {}).get("id_number", "")
+    etb_profile = get_etb_customer_profile(customer_id)
+    eligibility_result = calculate_max_eligible_amount(
+        monthly_income=etb_profile.get("monthly_income", 35650),
+        monthly_obligations=etb_profile.get("monthly_obligations", 8750),
+        credit_card_limit=etb_profile.get("credit_card_limit", 20000),
+        tenure_months=etb_profile.get("preferred_tenure_months", 60),
+        region=session.get("region", "SA"),
+    )
+
+    session["offer"] = {
+        "max_amount": eligibility_result.get("max_amount") or eligibility_result.get("estimated_amount", 0),
+        "profit_rate": "12%",
+        "max_tenure": etb_profile.get("preferred_tenure_months", 60),
+        "foir_status": eligibility_result.get("foir_status"),
+    }
 
 
 def _route_to_ntb_enrichment(session: dict, reason: str | None = None) -> None:
@@ -301,7 +316,7 @@ def _advance_session_state(extract: dict, session: dict) -> None:
             customer_type = session.get("customerType", CUSTOMER_TYPE_UNKNOWN)
             if customer_type == CUSTOMER_TYPE_ETB:
                 _route_to_etb_core(session)
-                logger.info(f"Dedupe identified ETB. Routing to {'bureau_consent' if ETB_REQUIRE_BUREAU_CONSENT else 'pre-approved offer'}.")
+                logger.info("Dedupe identified ETB. Routing to pre-approved offer.")
             else:
                 _route_to_ntb_enrichment(session)
                 logger.info("Dedupe identified NTB. Showing journey introduction.")
@@ -355,22 +370,19 @@ def _advance_session_state(extract: dict, session: dict) -> None:
                 _begin_updating(session, "Income details", next_sub_step="expenses")
                 logger.info("Income statement uploaded. Returning to expenses.")
             elif data.get("income_value"):
-                customer_profile = session.get("customer_profile") or {}
-                income = customer_profile.get("income") if isinstance(customer_profile, dict) else None
-                if isinstance(income, dict):
-                    income["monthly"] = f"SAR {int(data.get('income_value')):,}"
-                _begin_updating(session, "Income details", next_sub_step="expenses")
-                logger.info("Income updated manually. Returning to expenses.")
+                session["pending_income"] = f"SAR {int(data.get('income_value')):,}"
+                session["sub_step"] = "open_banking_email_sent"
+                logger.info("Income updated manually. Starting OB verification flow.")
 
         elif current_sub == "open_banking_email_sent" and data.get("open_banking_linked"):
             _begin_updating(
                 session,
                 "Income details",
-                auto_advance_ms=10000,
+                auto_advance_ms=3000,
                 next_signal="open_banking_complete",
                 next_sub_step="expenses",
             )
-            logger.info("Open Banking linked. Starting 10-second update loader.")
+            logger.info("Open Banking linked. Starting 3-second update loader.")
 
         elif current_sub == "updating_details" and (data.get("update_complete") or data.get("open_banking_complete")):
             updating = session.get("updating") or {}
@@ -379,10 +391,22 @@ def _advance_session_state(extract: dict, session: dict) -> None:
                 customer_profile = session.get("customer_profile") or {}
                 income = customer_profile.get("income") if isinstance(customer_profile, dict) else None
                 if isinstance(income, dict):
-                    income["monthly"] = "SAR 41,250"
-                    income["obligations"] = "8750"
+                    pending = session.get("pending_income")
+                    if pending:
+                        income["monthly"] = pending
+                    else:
+                        income["monthly"] = "SAR 41,250"
+                        income["obligations"] = "8750"
+                        
                 session["expenses_prefilled"] = True
                 session["expenses_total"] = 7560
+                
+                # Update DB
+                national_id = session.get("collected", {}).get("id_number")
+                if national_id and income:
+                    from backend.db import update_customer
+                    update_customer(national_id, {"income": income})
+
             session["sub_step"] = next_sub_step
             session.pop("updating", None)
             logger.info("Update completed. Transitioned to %s.", next_sub_step)
@@ -402,12 +426,8 @@ def _advance_session_state(extract: dict, session: dict) -> None:
             if data.get("bureau_consent_granted"):
                 # Route based on journey mode (NTB vs ETB)
                 journey_mode = session.get("journeyMode", JOURNEY_MODE_PRE_DEDUPE)
-                if journey_mode == JOURNEY_MODE_ETB_CORE:
-                    session["sub_step"] = "eligible"  # ETB → pre-approved offer
-                    logger.info("ETB bureau consent granted. Moving to pre-approved offer.")
-                else:
-                    session["sub_step"] = "eligibility_check"  # NTB → eligibility check
-                    logger.info("NTB bureau consent granted. Starting eligibility check.")
+                session["sub_step"] = "eligibility_check"  
+                logger.info("Bureau consent granted. Starting eligibility check.")
             elif data.get("bureau_consent_denied"):
                 # Step 8 is mandatory: re-ask consent until granted.
                 session["sub_step"] = "bureau_consent"
@@ -420,6 +440,7 @@ def _advance_session_state(extract: dict, session: dict) -> None:
             credit_card_limit = float(session.get("collected", {}).get("credit_card_limit", 20000))
             region = session.get("region", "SA")
             
+            from backend.utils.eligibility import calculate_max_eligible_amount
             eligibility_result = calculate_max_eligible_amount(
                 monthly_income, monthly_obligations, credit_card_limit, 60, region
             )
@@ -440,8 +461,20 @@ def _advance_session_state(extract: dict, session: dict) -> None:
     # STEP 2: OFFER
     # ═══════════════════════════════════════════
     elif current_step == "offer":
-        if current_sub == "eligible":
+        if current_sub == "pre_approved_offer":
+            if data.get("accepted_pre_approved_offer") or data.get("accepted_offer"):
+                session["suppress_offer_text"] = True
+                session["step"] = "identity"
+                session["sub_step"] = "bureau_consent"
+                logger.info("ETB accepted pre-approved offer. Moving to SIMAH consent.")
+            elif data.get("higher_amount_requested"):
+                session["wants_more"] = True
+                _route_to_ntb_enrichment(session, "Customer requested higher amount than pre-approved ETB offer")
+                logger.info("ETB requested higher amount. Redirecting to NTB 5-step flow.")
+
+        elif current_sub == "eligible":
             if data.get("accepted_offer"):
+                session["suppress_offer_text"] = True
                 session["sub_step"] = "wants_more_decision"
                 logger.info("Offer viewed. Moving to mandatory wants-more decision.")
             elif data.get("higher_amount_requested"):
@@ -497,18 +530,29 @@ def _advance_session_state(extract: dict, session: dict) -> None:
         elif data.get("proceed_trade") and current_sub == "summary":
             session["step"] = "trade"
             session["step_number"] = 3
-            session["sub_step"] = "loading"
-            logger.info("Moving to trade step")
+            session["sub_step"] = "authorize"
+            logger.info("Moving to commodity trade authorization")
+        elif data.get("higher_amount_requested") and current_sub == "summary":
+            session["sub_step"] = "slider"
+            logger.info("Customer wants to modify amount/tenure. Returning to slider.")
 
     # ═══════════════════════════════════════════
     # STEP 3: TRADE
     # ═══════════════════════════════════════════
     elif current_step == "trade":
-        if current_sub == "loading" and (data.get("loading_complete") or data.get("confirmed")):
+        if current_sub == "authorize" and data.get("confirmed"):
+            session["sub_step"] = "loading"
+            logger.info("Trade authorized. Starting execution loader.")
+
+        elif current_sub == "loading" and (data.get("loading_complete") or data.get("confirmed")):
             session["sub_step"] = "success"
             logger.info("Trade execution complete")
         
-        elif data.get("confirmed") and current_sub == "success":
+        elif (data.get("continue") or data.get("confirmed")) and current_sub == "success":
+            session["sub_step"] = "certificate"
+            logger.info("Showing commodity transaction certificate")
+
+        elif data.get("proceed_esign") and current_sub == "certificate":
             session["step"] = "esign"
             session["step_number"] = 4
             session["sub_step"] = "documents"
@@ -519,10 +563,10 @@ def _advance_session_state(extract: dict, session: dict) -> None:
     # ═══════════════════════════════════════════
     elif current_step == "esign":
         if (data.get("signed") or data.get("esign_nafath")) and current_sub == "documents":
-            session["sub_step"] = "otp_ivr"
-            logger.info("E-Sign complete, showing OTP/IVR choice")
+            session["sub_step"] = "email_sent"
+            logger.info("E-Sign email sent, starting wait loader")
 
-        elif data.get("otp_method") and current_sub == "otp_ivr":
+        elif data.get("esign_email_complete") and current_sub == "email_sent":
             session["step"] = "disburse"
             session["step_number"] = 5
             session["sub_step"] = "account"

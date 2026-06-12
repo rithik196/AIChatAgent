@@ -120,6 +120,9 @@ _ROUTING_SIGNALS = {
     "continue", "dedupe_complete", "dedupe complete",
     "identity_complete", "verification_loading", "done",
     "update_complete", "open_banking_complete", "document_uploaded",
+    "proceed to e-sign", "esign_email_complete",
+    "accepted_offer", "accepted_pre_approved_offer",
+    "accepted_max_offer", "higher_amount_requested",
 }
 
 
@@ -166,13 +169,7 @@ def _fast_state_response(session: dict) -> str | None:
         return "I have retrieved your current profile details. Please review them to make sure everything is correct to proceed."
 
     if step == "identity" and sub_step == "modify_section":
-        return (
-            "Which details would you like to modify? Please choose one:\n"
-            "1. Personal Details\n"
-            "2. Address Details\n"
-            "3. Employment Details\n"
-            "4. Income Details"
-        )
+        return ""
 
     if step == "identity" and sub_step == "modify_personal":
         return "Please provide the updated Personal Details fields you want to change (for example: marital status, dependents, education)."
@@ -199,9 +196,25 @@ def _fast_state_response(session: dict) -> str | None:
     if step == "identity" and sub_step == "expenses":
         return "Please review and confirm your average monthly expenses across all categories to continue."
 
+    if step == "identity" and sub_step in {"bureau_consent", "eligibility_check"}:
+        return ""
+
     # After personal details confirmation: fast deterministic eligible-offer summary.
     if step == "offer" and sub_step == "bureau_consent":
         return ""
+
+    if step == "offer" and sub_step == "pre_approved_offer":
+        offer = session.get("offer", {})
+        max_amount = offer.get("max_amount")
+        if max_amount is None:
+            return ""
+        profit_rate = offer.get("profit_rate", "12%")
+        max_tenure = offer.get("max_tenure", 60)
+        return (
+            f"Great news! You are pre-approved for up to **SAR {max_amount:,}** "
+            f"at a profit rate of **{profit_rate}** for a maximum tenure of **{max_tenure} months**.\n\n"
+            "Would you like to go ahead with this offer, or would you like to explore a higher amount?"
+        )
 
     if step == "offer" and sub_step == "eligible":
         offer = session.get("offer", {})
@@ -213,6 +226,18 @@ def _fast_state_response(session: dict) -> str | None:
             f"at a profit rate of **{profit_rate}** for a maximum tenure of **{max_tenure} months**.\n\n"
             "Would you like to proceed with this offer?"
         )
+
+    if step == "offer" and sub_step in {"wants_more_decision", "slider"}:
+        return ""
+
+    if step == "trade" and sub_step in {"authorize", "loading", "success", "certificate"}:
+        return ""
+
+    if step == "esign" and sub_step in {"documents", "email_sent"}:
+        return ""
+
+    if step == "disburse" and sub_step in {"account", "iban_validation", "application_summary", "ivr_consent"}:
+        return ""
 
     return None
 
@@ -233,6 +258,9 @@ async def build_response(state: ConversationState) -> ConversationState:
             last_user = _normalize_signal_text(m.get("content", ""))
             break
     if last_user in _ROUTING_SIGNALS:
+        if last_user in {"accepted_offer", "accepted_pre_approved_offer"} and session.get("suppress_offer_text"):
+            session.pop("suppress_offer_text", None)
+            return {"last_response": ""}
         fast = _fast_state_response(session)
         if fast is not None:
             return {"last_response": fast}
@@ -301,7 +329,7 @@ def _deterministic_classify(msg: str, step: str, sub_step: str, session: dict) -
 
         elif sub_step == "verified":
             # VerificationSuccessWidget auto-sends __SYS__continue internally
-            signals = ["done", "ok", "yes", "continue", "next", "proceed"]
+            signals = ["loading_complete", "done", "ok", "yes", "continue", "next", "proceed"]
             if any(s in msg_lower for s in signals):
                 return {"step": "identity", "intent": "STEP_DATA",
                         "data": {"identity_complete": True}}
@@ -394,16 +422,19 @@ def _deterministic_classify(msg: str, step: str, sub_step: str, session: dict) -
 
     # ─── OFFER ────────────────────────────────────────
     elif step == "offer":
-        if sub_step == "eligible":
+        if sub_step == "pre_approved_offer":
+            if "higher amount" in msg_lower or "need more" in msg_lower:
+                return {"step": "offer", "intent": "STEP_DATA", "data": {"higher_amount_requested": True}}
+            signals = ["accept", "yes", "proceed", "go with offer", "ok", "sure", "continue"]
+            if any(s in msg_lower for s in signals):
+                return {"step": "offer", "intent": "STEP_DATA", "data": {"accepted_pre_approved_offer": True}}
+
+        elif sub_step == "eligible":
             if "higher amount" in msg_lower:
-                return {"step": "offer", "intent": "STEP_DATA",
-                        "data": {"higher_amount_requested": True}}
+                return {"step": "offer", "intent": "STEP_DATA", "data": {"higher_amount_requested": True}}
             signals = ["accept", "yes", "proceed", "ok", "sure", "go ahead", "done", "continue"]
             if any(s in msg_lower for s in signals):
-                return {"step": "offer", "intent": "STEP_DATA",
-                        "data": {"accepted_offer": True}}
-
-        elif sub_step == "wants_more_decision":
+                return {"step": "offer", "intent": "STEP_DATA", "data": {"accepted_offer": True}}
             more_signals = ["want more", "higher", "more amount", "increase amount"]
             if any(s in msg_lower for s in more_signals):
                 return {"step": "offer", "intent": "STEP_DATA", "data": {"higher_amount_requested": True}}
@@ -421,6 +452,53 @@ def _deterministic_classify(msg: str, step: str, sub_step: str, session: dict) -
             continue_signals = ["continue", "ok", "yes", "proceed", "current eligible"]
             if any(s in msg_lower for s in continue_signals):
                 return {"step": "offer", "intent": "STEP_DATA", "data": {"accepted_max_offer": True}}
+
+        elif sub_step == "wants_more_decision":
+            ok_signals = [
+                "accepted_max_offer",
+                "amount is okay",
+                "amount okay",
+                "maximum amount is okay",
+                "maximum is okay",
+                "ok",
+                "okay",
+                "yes",
+                "continue",
+                "proceed",
+            ]
+            if any(s in msg_lower for s in ok_signals):
+                return {"step": "offer", "intent": "STEP_DATA", "data": {"accepted_max_offer": True}}
+
+            more_signals = [
+                "higher_amount_requested",
+                "want more",
+                "need more",
+                "higher amount",
+                "more amount",
+                "increase amount",
+            ]
+            if any(s in msg_lower for s in more_signals):
+                return {"step": "offer", "intent": "STEP_DATA", "data": {"higher_amount_requested": True}}
+                
+        elif sub_step == "slider":
+            if "higher amount" in msg_lower:
+                return {"step": "offer", "intent": "STEP_DATA",
+                        "data": {"higher_amount_requested": True}}
+            signals = ["proceed", "next", "continue", "confirm", "done"]
+            if any(s in msg_lower for s in signals):
+                amount_match = re.search(r'(\d{4,6})', msg.replace(",", ""))
+                amount = int(amount_match.group(1)) if amount_match else 250000
+                return {"step": "offer", "intent": "STEP_DATA",
+                        "data": {"loan_amount": amount, "tenure_months": 36}}
+
+        elif sub_step == "summary":
+            if "modify" in msg_lower or "higher amount" in msg_lower or "change" in msg_lower:
+                return {"step": "offer", "intent": "STEP_DATA",
+                        "data": {"higher_amount_requested": True}}
+            signals = ["proceed", "trade", "commodity", "yes", "confirm", "done", "continue"]
+            if any(s in msg_lower for s in signals):
+                return {"step": "offer", "intent": "STEP_DATA",
+                        "data": {"proceed_trade": True}}
 
     # ─── DISBURSE ────────────────────────────────────────
     elif step == "disburse":
@@ -453,27 +531,16 @@ def _deterministic_classify(msg: str, step: str, sub_step: str, session: dict) -
                 return {"step": "disburse", "intent": "STEP_DATA", "data": {"ivr_method": True}}
 
     # ─── TRADE ────────────────────────────────────────
-            if "higher amount" in msg_lower:
-                return {"step": "offer", "intent": "STEP_DATA",
-                        "data": {"higher_amount_requested": True}}
-            signals = ["proceed", "next", "continue", "confirm", "done"]
-            if any(s in msg_lower for s in signals):
-                amount_match = re.search(r'(\d{4,6})', msg.replace(",", ""))
-                amount = int(amount_match.group(1)) if amount_match else 250000
-                return {"step": "offer", "intent": "STEP_DATA",
-                        "data": {"loan_amount": amount, "tenure_months": 36}}
-
-        elif sub_step == "summary":
-            signals = ["proceed", "trade", "commodity", "yes", "confirm", "done", "continue"]
-            if any(s in msg_lower for s in signals):
-                return {"step": "offer", "intent": "STEP_DATA",
-                        "data": {"proceed_trade": True}}
-
-    # ─── TRADE ────────────────────────────────────────
     elif step == "trade":
-        if sub_step == "loading":
+        if sub_step == "authorize":
+            signals = ["authorize", "i authorize", "yes", "confirm", "proceed", "continue"]
+            if any(s in msg_lower for s in signals):
+                return {"step": "trade", "intent": "STEP_DATA",
+                        "data": {"confirmed": True}}
+
+        elif sub_step == "loading":
             # Only explicit confirmation should advance the loading gate
-            signals = ["done", "ok", "yes", "continue", "next", "proceed"]
+            signals = ["loading_complete", "done", "ok", "yes", "continue", "next", "proceed"]
             if any(s in msg_lower for s in signals):
                 return {"step": "trade", "intent": "STEP_DATA",
                         "data": {"loading_complete": True}}
@@ -482,7 +549,13 @@ def _deterministic_classify(msg: str, step: str, sub_step: str, session: dict) -
             signals = ["yes", "authorize", "proceed", "confirm", "e-sign", "sign", "done", "ok", "continue"]
             if any(s in msg_lower for s in signals):
                 return {"step": "trade", "intent": "STEP_DATA",
-                        "data": {"confirmed": True}}
+                        "data": {"continue": True}}
+
+        elif sub_step == "certificate":
+            signals = ["proceed to e-sign", "e-sign", "esign", "sign", "proceed", "continue"]
+            if any(s in msg_lower for s in signals):
+                return {"step": "trade", "intent": "STEP_DATA",
+                        "data": {"proceed_esign": True}}
 
     # ─── ESIGN ────────────────────────────────────────
     elif step == "esign":
@@ -511,6 +584,11 @@ def _deterministic_classify(msg: str, step: str, sub_step: str, session: dict) -
             if any(s == msg_lower for s in generic):
                 return {"step": "esign", "intent": "STEP_DATA",
                         "data": {"otp_method": "otp"}}
+
+        elif sub_step == "email_sent":
+            if "esign_email_complete" in msg_lower or "done" in msg_lower or "continue" in msg_lower:
+                return {"step": "esign", "intent": "STEP_DATA",
+                        "data": {"esign_email_complete": True}}
 
     # ─── DISBURSE ─────────────────────────────────────
     elif step == "disburse":

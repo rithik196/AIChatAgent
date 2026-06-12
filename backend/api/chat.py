@@ -169,7 +169,37 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
         return {"widget": "BureauConsentWidget", "data": {}}
 
     if step == "identity" and sub_step == "eligibility_check":
-        return {"widget": "EligibilityCheckWidget", "data": {}}
+        return {"widget": "LoadingWidget", "data": {"title": "Initiating eligibility check for you", "subtitle": "Running due diligence and regulatory checks", "auto_advance_ms": 3000, "next_message": "eligibility_check_complete", "silent": True}}
+
+    if step == "offer" and sub_step == "pre_approved_offer":
+        offer = session.get("offer", {})
+        customer_id = session.get("collected", {}).get("id_number", "")
+        etb_profile = get_etb_customer_profile(customer_id)
+        max_amount = offer.get("max_amount")
+        if max_amount is None:
+            eligibility_result = calculate_max_eligible_amount(
+                monthly_income=etb_profile.get("monthly_income", 35650),
+                monthly_obligations=etb_profile.get("monthly_obligations", 8750),
+                credit_card_limit=etb_profile.get("credit_card_limit", 20000),
+                tenure_months=etb_profile.get("preferred_tenure_months", 60),
+                region=session.get("region", "SA"),
+            )
+            max_amount = eligibility_result.get("max_amount") or eligibility_result.get("estimated_amount", 0)
+            session.setdefault("offer", {})
+            session["offer"].update({
+                "max_amount": max_amount,
+                "profit_rate": "12%",
+                "max_tenure": etb_profile.get("preferred_tenure_months", 60),
+            })
+        return {
+            "widget": "PreApprovedOfferWidget",
+            "data": {
+                "title": "Your Pre-Approved Offer",
+                "max_amount": max_amount,
+                "profit_rate": "12%",
+                "max_tenure": offer.get("max_tenure", etb_profile.get("preferred_tenure_months", 60)),
+            },
+        }
 
     if step == "offer" and sub_step == "eligible":
         offer = session.get("offer", {})
@@ -188,7 +218,7 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
                 region=session.get("region", "SA")
             )
             
-            max_amount = eligibility_result.get("estimated_amount", 350000)
+            max_amount = offer.get("max_amount") or eligibility_result.get("estimated_amount", 0)
             
             return {
                 "widget": "EligibleOfferWidget",
@@ -344,11 +374,27 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
             }),
         }
 
+    if step == "trade" and sub_step == "authorize":
+        return {"widget": "CommodityTradeAuthorizationWidget", "data": session.get("finance_summary", {})}
+
     if step == "trade" and sub_step == "loading":
-        return {"widget": "LoadingWidget", "data": {"title": "Executing Commodity Trade...", "subtitle": "Processing your Murabaha transaction"}}
+        return {"widget": "LoadingWidget", "data": {"title": "Executing Commodity Trade...", "subtitle": "Processing your Murabaha transaction", "auto_advance_ms": 3000, "next_message": "loading_complete", "silent": True}}
 
     if step == "trade" and sub_step == "success":
-        return {"widget": "VerificationSuccessWidget", "data": {"title": "Commodity Trade Successful", "subtitle": "Your Murabaha transaction has been completed."}}
+        return {"widget": "VerificationSuccessWidget", "data": {"title": "Commodity Trade Successful", "subtitle": "Your Murabaha transaction has been completed.", "auto_advance_ms": 3000, "next_message": "continue", "silent": True}}
+
+    if step == "trade" and sub_step == "certificate":
+        return {
+            "widget": "DocumentPreviewWidget",
+            "data": {
+                "title": "Commodity Transaction Certificate",
+                "subtitle": "Generated and ready to download",
+                "current_step": 3,
+                "button_label": "Proceed to E-Sign",
+                "next_message": "Proceed to E-Sign",
+                "documents": [{"name": "Commodity Transaction Certificate", "type": "pdf"}],
+            },
+        }
 
     if step == "esign" and sub_step == "documents":
         return {
@@ -358,6 +404,23 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
                     {"name": "Contract Letter", "type": "pdf"},
                     {"name": "Promissory Note", "type": "pdf"},
                 ],
+                "title": "Contract & Promissory Note",
+                "subtitle": "Ready for E-Sign",
+                "current_step": 4,
+                "button_label": "Send E-Sign Email",
+                "next_message": "Send E-Sign Email",
+            },
+        }
+
+    if step == "esign" and sub_step == "email_sent":
+        return {
+            "widget": "LoadingWidget",
+            "data": {
+                "title": "E-Sign Email Sent",
+                "subtitle": "Please complete the signature from your email. We will continue once it is verified.",
+                "auto_advance_ms": 5000,
+                "next_message": "esign_email_complete",
+                "silent": True,
             },
         }
 

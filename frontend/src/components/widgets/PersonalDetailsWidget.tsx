@@ -2,6 +2,7 @@
 
 import React from "react";
 import { motion } from "framer-motion";
+import { StepIndicator } from "./StepIndicator";
 
 export interface PersonalDetailsWidgetProps {
   data: {
@@ -10,6 +11,7 @@ export interface PersonalDetailsWidgetProps {
     phone: string;
     email: string;
     personal: any;
+    address: any;
     employment: any;
     income: any;
   };
@@ -25,8 +27,25 @@ export function PersonalDetailsWidget({ data }: PersonalDetailsWidgetProps) {
     window.dispatchEvent(new CustomEvent("mock-send-message", { detail: "__SYS__Details confirmed, proceed" }));
   };
 
+  const formatAddress = (addr: any) => {
+    if (!addr) return "Not Available";
+    const parts = [
+      addr.buildingNumber,
+      addr.street,
+      addr.district,
+      addr.city,
+      addr.postalCode
+    ].filter(Boolean);
+    return parts.join(", ") + (addr.additionalNumber ? ` (Additional: ${addr.additionalNumber})` : "");
+  };
+
+  const residentialAddress = formatAddress(data.address);
+  const workAddress = formatAddress(data.employment?.workAddress);
+
   return (
     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-sm mt-3 pb-6">
+      <StepIndicator currentStep={1} />
+      
       <div className="bg-white rounded-3xl p-4 mb-4 border border-slate-200 flex items-center gap-3 shadow-sm">
         <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center text-blue-500 text-2xl font-bold">
           <span>{data.name?.[0]}</span>
@@ -43,12 +62,18 @@ export function PersonalDetailsWidget({ data }: PersonalDetailsWidgetProps) {
         <Detail label="Age & Gender" value={`${data.personal.age} / ${data.personal.gender}`} />
         <Detail label="Nationality" value={data.personal.nationality} />
         <Detail label="Marital Status" value={data.personal.maritalStatus} />
+        <Detail label="First Name" value={data.personal.firstName || "-"} />
+        <Detail label="Father Name" value={data.personal.fatherName || "-"} />
+        <Detail label="Grandfather Name" value={data.personal.grandfatherName || "-"} />
+        <Detail label="Last Name" value={data.personal.lastName || "-"} />
         <Detail label="Dependents" value={data.personal.dependents} />
-        <Detail label="Education" value={data.personal.levelOfEducation || "Bachelor's Degree"} />
+        <Detail label="Education" value={data.personal.education || "-"} />
       </Section>
 
       <Section title="Address Details" source="(Fetched from Saudi Post)">
-        <Detail label="Residential Address" value={data.personal.address} wrap />
+        <Detail label="City" value={data.address?.city || "-"} />
+        <Detail label="House Type" value={data.address?.houseType || "-"} />
+        <Detail label="Residential Address" value={residentialAddress} wrap />
       </Section>
 
       <Section title="Employment Details" source="(Fetched from GOSI)">
@@ -56,10 +81,12 @@ export function PersonalDetailsWidget({ data }: PersonalDetailsWidgetProps) {
         <Detail label="Industry" value={data.employment.industry} />
         <Detail label="Employer Name" value={data.employment.employer} />
         <Detail label="Total Experience" value={data.employment.experience} />
+        <Detail label="Work Address" value={workAddress} wrap />
       </Section>
 
       <Section title="Income Details" source="(Fetched from GOSI)">
         <Detail label="Monthly Income" value={data.income.monthly} />
+        <Detail label="Allowances" value={data.income.allowances || "0"} />
         <Detail label="Obligations" value={data.income.obligations || "0"} />
       </Section>
 

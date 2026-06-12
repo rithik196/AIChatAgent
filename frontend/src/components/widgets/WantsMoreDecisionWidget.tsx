@@ -39,7 +39,7 @@ export function WantsMoreDecisionWidget({ data }: WantsMoreDecisionWidgetProps) 
           <button
             onClick={() => {
               window.dispatchEvent(
-                new CustomEvent("mock-send-message", { detail: "Maximum amount is okay" })
+                new CustomEvent("mock-send-message", { detail: "__SYS__accepted_max_offer" })
               );
             }}
             className="w-full py-3 text-white font-semibold rounded-full shadow-md hover:opacity-90 transition-all"
@@ -50,7 +50,7 @@ export function WantsMoreDecisionWidget({ data }: WantsMoreDecisionWidgetProps) 
           <button
             onClick={() => {
               window.dispatchEvent(
-                new CustomEvent("mock-send-message", { detail: "I want a higher amount" })
+                new CustomEvent("mock-send-message", { detail: "__SYS__higher_amount_requested" })
               );
             }}
             className="w-full py-3 text-slate-600 font-semibold rounded-full border-2 border-slate-200 hover:bg-slate-50 transition-all"

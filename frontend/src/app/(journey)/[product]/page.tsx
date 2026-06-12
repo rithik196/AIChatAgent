@@ -201,21 +201,23 @@ function ChatView({ product, sessionId, initialMessages }: {
   return (
     <SpeakContext.Provider value={speak}>
     <div className="flex flex-col h-full bg-white relative">
-      {/* Header */}
-      <div className="absolute top-0 left-0 w-full p-4 bg-white/80 backdrop-blur-xl border-b-2 border-orange-500 z-10 flex justify-between items-center shadow-sm">
-        <div>
-          <h2 className="text-lg font-bold text-slate-900 capitalize">
-            {product.replace('_', ' ')}
-          </h2>
-          <p className="text-xs text-slate-500">Finance Agent</p>
-        </div>
-        <div className="flex gap-2">
-          <div className="w-8 h-8 bg-slate-100 rounded-lg"></div>
-          <div className="w-8 h-8 bg-slate-100 rounded-lg"></div>
+      <div className="absolute top-0 left-0 w-full bg-white/80 backdrop-blur-xl border-b border-slate-200 z-10 shadow-sm">
+        <div className="p-4 flex justify-between items-center">
+          <div>
+            <h2 className="text-lg font-bold text-slate-900 capitalize">
+              {product.replace('_', ' ')}
+            </h2>
+            <p className="text-[11px] font-semibold text-blue-600 uppercase tracking-wider">Agentic Finance Advisor</p>
+          </div>
+          <div className="flex gap-2">
+            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-100 to-teal-100 border border-blue-200 flex items-center justify-center shadow-sm">
+              <span className="text-xs font-bold text-blue-700">R</span>
+            </div>
+          </div>
         </div>
       </div>
 
-      <div className="flex-1 overflow-hidden pt-20 pb-24">
+      <div className="flex-1 overflow-hidden pt-[72px] pb-24">
         <ChatWindow
           messages={messages as unknown as { id: string; role: 'user' | 'assistant'; content?: string; parts?: unknown[]; annotations?: unknown[] }[]}
           isLoading={isLoading}

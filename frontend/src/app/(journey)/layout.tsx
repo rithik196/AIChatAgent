@@ -8,8 +8,7 @@ import { SummaryBar } from '@/components/journey/SummaryBar';
 export default function JourneyLayout({ children }: { children: React.ReactNode }) {
   const journeyPanel = (
     <div className="flex flex-col h-full bg-white relative">
-      {/* Tracker at top */}
-      <StepTracker currentStep={1} totalSteps={5} />
+      {/* Tracker removed as per user request to move to top left of widgets */}
       
       {/* Scrollable steps */}
       <div className="flex-1 overflow-y-auto pb-20">

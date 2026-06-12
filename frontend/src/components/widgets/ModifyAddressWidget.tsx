@@ -3,19 +3,14 @@
 import React, { useState } from "react";
 import { motion } from "framer-motion";
 
-export function ModifyAddressWidget() {
-  const [city, setCity] = useState("Riyadh");
-  const [houseType, setHouseType] = useState("Owned Villa");
-  const [address, setAddress] = useState("");
+export function ModifyAddressWidget({ data }: any) {
+  const [city, setCity] = useState(data?.address?.city || "Riyadh");
+  const [houseType, setHouseType] = useState(data?.address?.houseType || "Owned Villa");
 
   const handleSubmit = () => {
-    if (!address.trim()) {
-      alert("Please enter your address");
-      return;
-    }
     window.dispatchEvent(
       new CustomEvent("mock-send-message", {
-        detail: `I've updated my address. City: ${city}, House Type: ${houseType}, Address: ${address}`
+        detail: `__SYS__UPDATE_ADDRESS: {"city": "${city}", "house_type": "${houseType}"}`
       })
     );
   };
@@ -38,6 +33,7 @@ export function ModifyAddressWidget() {
               <option>Dammam</option>
               <option>Mecca</option>
               <option>Medina</option>
+              <option>Al Khobar</option>
             </select>
           </div>
 
@@ -58,17 +54,6 @@ export function ModifyAddressWidget() {
               <option>Family Owned (Not in applicant name)</option>
               <option>Government Housing</option>
             </select>
-          </div>
-
-          <div>
-            <label className="text-xs font-semibold text-slate-600 mb-2 block">Residential Address</label>
-            <textarea 
-              value={address} 
-              onChange={(e) => setAddress(e.target.value)}
-              placeholder="Enter your full residential address..."
-              rows={4}
-              className="w-full p-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-blue-400"
-            />
           </div>
 
           <button

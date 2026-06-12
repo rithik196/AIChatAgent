@@ -33,6 +33,8 @@ import { BackofficeWorkitemWidget } from "../widgets/BackofficeWorkitemWidget";
 import { ApplicationSummaryWidget } from "../widgets/ApplicationSummaryWidget";
 import { FinalIVRConsentWidget } from "../widgets/FinalIVRConsentWidget";
 import { IBANValidationWidget } from "../widgets/IBANValidationWidget";
+import { CommodityTradeAuthorizationWidget } from "../widgets/CommodityTradeAuthorizationWidget";
+import { PreApprovedOfferWidget } from "../widgets/PreApprovedOfferWidget";
 
 type WidgetData = unknown;
 
@@ -83,6 +85,8 @@ const WIDGET_REGISTRY: Record<string, WidgetComponent> = {
   ApplicationSummaryWidget,
   FinalIVRConsentWidget,
   IBANValidationWidget,
+  CommodityTradeAuthorizationWidget,
+  PreApprovedOfferWidget,
 };
 
 interface MessageBubbleProps {

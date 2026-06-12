@@ -103,9 +103,9 @@ DO NOT present any finance offers yet! You must wait for the customer to confirm
 - Extract: {"identity_complete": true} when they confirm the details are correct.
 """,
         ("identity", "modify_section"): """
-The customer asked to modify details.
-- Ask which section they want to modify: Personal, Address, Employment, or Income.
-- Extract: {"modify_section": "personal|address|employment|income"}
+The customer initiated a modification.
+- Wait for them to provide the new details via the chat or widget.
+- DO NOT ask "Which section do you want to modify?"
 """,
         ("identity", "modify_personal"): """
 Collect updated Personal Details fields from the customer.
@@ -113,17 +113,17 @@ Collect updated Personal Details fields from the customer.
 """,
         ("identity", "modify_address"): """
 Collect updated Address Details from the customer.
+- IMPORTANT: Ask the customer to type their new full address directly in this chat.
 - Extract any provided value as: {"update_value": "..."}
 """,
         ("identity", "modify_employment"): """
 Collect updated Employment Details from the customer.
-- Ask for document upload if needed.
+- Once details are provided, ask them to upload a document verifying their employment in the chat using the attachment icon.
 - Extract any provided value as: {"update_value": "..."}
 """,
         ("identity", "modify_income"): """
 Collect updated Income Details.
-- Offer 3 options: manual income update, upload bank statement, or Open Banking.
-- Extract: {"income_value": number} for manual updates.
+- Present two options for income proof: 1. Upload Bank Statement, 2. Open Banking.
 - Extract: {"upload_statement": true} for upload path.
 - Extract: {"open_banking": true} for Open Banking path.
 """,
@@ -156,8 +156,9 @@ This is Step 9 due diligence check.
         ("offer", "eligible"): f"""
 Present the pre-approved/eligible finance offer.
 - {"This is an EXISTING customer — present as 'Pre Approved Offer'" if user_type == 'existing' else "This is a NEW customer — present as 'Eligible Finance Offer'"}
-- Mention the maximum eligible amount, profit rate, and tenure
-- Ask customer to continue for the next mandatory decision step.
+- Mention only the maximum eligible amount, profit rate, and tenure.
+- Do NOT explain Murabaha or the financing structure at this step.
+- Ask customer to continue for the next mandatory decision step; the next widget will handle the confirmation flow.
 - If they continue/accept: Extract: {{"accepted_offer": true}}
 """,
         ("offer", "wants_more_decision"): """

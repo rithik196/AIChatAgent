@@ -1,6 +1,9 @@
 # backend/db.py
 # Simple in-memory DB for demo. Replace with real DB in production.
-from models.customer import CustomerProfile, PersonalDetails, EmploymentDetails, IncomeDetails
+try:
+    from backend.models.customer import CustomerProfile, PersonalDetails, EmploymentDetails, IncomeDetails, AddressDetails
+except ModuleNotFoundError:
+    from models.customer import CustomerProfile, PersonalDetails, EmploymentDetails, IncomeDetails, AddressDetails
 
 try:
     from shared.db.mssql import get_customer_profile_by_phone
@@ -20,24 +23,45 @@ CUSTOMER_DB = {
             gender="Male",
             dob_gr="15/05/1988",
             dob_hj="1408",
-            address="Villa 12, Al Malaz Residential Compound, Near Prince Faisal Bin Fahd Stadium, Al Jamiah Street",
             marital_status="Married",
             nationality="Saudi",
+            first_name="Abdul",
             father_name="Mohammed",
             grandfather_name="Ali",
+            last_name="Rahman",
             dependents="3",
+            education="Bachelor",
             income_type="Salaried"
+        ),
+        address=AddressDetails(
+            building_number="12",
+            street="Al Jamiah Street",
+            district="Al Malaz Residential Compound",
+            city="Riyadh",
+            postal_code="12836",
+            additional_number="0000",
+            house_type="Villa"
         ),
         employment=EmploymentDetails(
             type="Salaried",
             industry="Software",
             employer="Newgen Software",
             experience="5",
-            address="Kingdom Tower, Office 1205, Riyadh, 12214"
+            work_address=AddressDetails(
+                building_number="1205",
+                street="Kingdom Tower",
+                district="Al Olaya",
+                city="Riyadh",
+                postal_code="12214",
+                additional_number="0000",
+                house_type="Office"
+            )
         ),
         income=IncomeDetails(
             monthly="SAR 25,000",
-            obligations="8750"
+            allowances="SAR 5,000",
+            obligations="8750",
+            credit_card_limit="10000"
         )
     ),
     "5114886789": CustomerProfile(
@@ -50,24 +74,45 @@ CUSTOMER_DB = {
             gender="Male",
             dob_gr="10/10/1993",
             dob_hj="1413",
-            address="Villa 13, Al Malaz Residential Compound, Near Prince Faisal Bin Fahd Stadium, Al Jamiah Street",
             marital_status="Single",
             nationality="Saudi",
+            first_name="Faisal",
             father_name="Ahmed",
             grandfather_name="Omar",
+            last_name="Rahman",
             dependents="0",
+            education="Master",
             income_type="Salaried"
+        ),
+        address=AddressDetails(
+            building_number="13",
+            street="Al Jamiah Street",
+            district="Al Malaz Residential Compound",
+            city="Riyadh",
+            postal_code="12836",
+            additional_number="0000",
+            house_type="Villa"
         ),
         employment=EmploymentDetails(
             type="Salaried",
             industry="Software",
             employer="Newgen Software",
             experience="3",
-            address="Kingdom Tower, Office 1205, Riyadh, 12214"
+            work_address=AddressDetails(
+                building_number="1205",
+                street="Kingdom Tower",
+                district="Al Olaya",
+                city="Riyadh",
+                postal_code="12214",
+                additional_number="0000",
+                house_type="Office"
+            )
         ),
         income=IncomeDetails(
             monthly="SAR 20,000",
-            obligations="8750"
+            allowances="SAR 2,000",
+            obligations="8750",
+            credit_card_limit="10000"
         )
     )
 }
@@ -84,23 +129,28 @@ def _row_to_profile(row: dict):
             gender=row.get("gender") or "",
             dob_gr=row.get("dob_gr") or "",
             dob_hj=row.get("dob_hj") or "",
-            address=row.get("personal_address") or "",
             marital_status=row.get("marital_status") or "",
             nationality=row.get("nationality") or "",
+            first_name=row.get("first_name") or "",
             father_name=row.get("father_name") or "",
             grandfather_name=row.get("grandfather_name") or "",
+            last_name=row.get("last_name") or "",
             dependents=row.get("dependents") or "",
+            education=row.get("education") or "",
             income_type=row.get("income_type") or "",
+        ),
+        address=AddressDetails(
+            city="Unknown", house_type="Unknown"
         ),
         employment=EmploymentDetails(
             type=row.get("employment_type") or "",
             industry=row.get("industry") or "",
             employer=row.get("employer") or "",
             experience=row.get("experience") or "",
-            address=row.get("employment_address") or "",
         ),
         income=IncomeDetails(
             monthly=row.get("monthly") or "",
+            allowances=row.get("allowances") or "",
             obligations=str(row.get("obligations") or "8750"),
         ),
     )
@@ -151,10 +201,19 @@ def update_customer(national_id: str, updated_data: dict):
         p_data = updated_data["personal"]
         customer.personal.marital_status = p_data.get("maritalStatus", customer.personal.marital_status)
         customer.personal.dependents = str(p_data.get("dependents", customer.personal.dependents))
-        customer.personal.address = p_data.get("address", customer.personal.address)
-        
-        # Education wasn't in PersonalDetails originally but user might update it, 
-        # normally we would map it. If it exists in model we'd update.
+        customer.personal.education = p_data.get("education", customer.personal.education)
+
+    # Update address details
+    if "address" in updated_data:
+        if not customer.address:
+            customer.address = AddressDetails()
+        a_data = updated_data["address"]
+        customer.address.city = a_data.get("city", customer.address.city)
+        customer.address.house_type = a_data.get("house_type", customer.address.house_type)
+        customer.address.building_number = a_data.get("building_number", customer.address.building_number)
+        customer.address.street = a_data.get("street", customer.address.street)
+        customer.address.district = a_data.get("district", customer.address.district)
+        customer.address.postal_code = a_data.get("postal_code", customer.address.postal_code)
 
     # Update employment details
     if "employment" in updated_data:
@@ -163,7 +222,13 @@ def update_customer(national_id: str, updated_data: dict):
         customer.employment.industry = e_data.get("industry", customer.employment.industry)
         customer.employment.employer = e_data.get("employer", customer.employment.employer)
         customer.employment.experience = str(e_data.get("experience", customer.employment.experience))
-        customer.employment.address = e_data.get("address", customer.employment.address)
+        # if there are work address updates:
+        if "work_address" in e_data:
+            if not customer.employment.work_address:
+                customer.employment.work_address = AddressDetails()
+            wa_data = e_data["work_address"]
+            customer.employment.work_address.city = wa_data.get("city", customer.employment.work_address.city)
+            customer.employment.work_address.street = wa_data.get("street", customer.employment.work_address.street)
 
     # Update income details
     if "income" in updated_data:

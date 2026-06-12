@@ -88,6 +88,7 @@ async def invoke_agent(req: InvokeRequest):
             "nafath approved", "loading_complete", "loading complete",
             "continue", "dedupe_complete", "dedupe complete",
             "identity_complete", "verification_loading", "done",
+            "accepted_max_offer", "higher_amount_requested",
         }
 
         # Save conversation: user message + assistant response
