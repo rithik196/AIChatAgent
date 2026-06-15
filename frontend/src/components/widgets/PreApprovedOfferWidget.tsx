@@ -78,7 +78,12 @@ export function PreApprovedOfferWidget({ data }: PreApprovedOfferWidgetProps) {
         <div className="flex flex-col gap-3">
           <button
             onClick={() => {
-              const event = new CustomEvent('mock-send-message', { detail: '__SYS__accepted_pre_approved_offer' });
+              const event = new CustomEvent('mock-send-message', {
+                detail: {
+                  visibleText: 'Go with offer',
+                  systemText: '__SYS__accepted_pre_approved_offer',
+                },
+              });
               window.dispatchEvent(event);
             }}
             className="w-full py-3 text-white font-semibold rounded-full shadow-md hover:opacity-90 transition-all"

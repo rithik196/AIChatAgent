@@ -11,11 +11,14 @@ export function ModifyIncomeWidget({ data }: any) {
   const handleSubmit = () => {
     window.dispatchEvent(
       new CustomEvent("mock-send-message", {
-        detail: `__SYS__UPDATE_INCOME: ${JSON.stringify({
-          monthly: monthlyIncome,
-          obligations,
-          creditCardLimit,
-        })}`
+        detail: {
+          visibleText: "Save updated income details",
+          systemText: `__SYS__UPDATE_INCOME: ${JSON.stringify({
+            monthly: monthlyIncome,
+            obligations,
+            creditCardLimit,
+          })}`,
+        },
       })
     );
   };

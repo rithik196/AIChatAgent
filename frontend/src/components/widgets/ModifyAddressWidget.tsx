@@ -14,14 +14,17 @@ export function ModifyAddressWidget({ data }: any) {
   const handleSubmit = () => {
     window.dispatchEvent(
       new CustomEvent("mock-send-message", {
-        detail: `__SYS__UPDATE_ADDRESS: ${JSON.stringify({
-          line1,
-          line2,
-          street,
-          city,
-          postalCode,
-          houseType,
-        })}`
+        detail: {
+          visibleText: "Save updated address details",
+          systemText: `__SYS__UPDATE_ADDRESS: ${JSON.stringify({
+            line1,
+            line2,
+            street,
+            city,
+            postalCode,
+            houseType,
+          })}`,
+        },
       })
     );
   };

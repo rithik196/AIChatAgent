@@ -108,7 +108,7 @@ function ChatView({ product, sessionId, initialMessages }: {
   const [input, setInput] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const { messages, status, sendMessage } = useChat({
+  const { messages, status, sendMessage, setMessages } = useChat({
     id: sessionId,
     messages: initialMessages,
     transport: new DefaultChatTransport({
@@ -173,11 +173,42 @@ function ChatView({ product, sessionId, initialMessages }: {
 
   useEffect(() => {
     const handleMockMessage = (e: Event) => {
-      sendMessage({ text: (e as CustomEvent).detail });
+      const detail = (e as CustomEvent).detail;
+
+      if (typeof detail === "string") {
+        sendMessage({ text: detail });
+        return;
+      }
+
+      if (detail && typeof detail === "object") {
+        const visibleText =
+          typeof (detail as { visibleText?: unknown }).visibleText === "string"
+            ? ((detail as { visibleText: string }).visibleText || "").trim()
+            : "";
+        const systemText =
+          typeof (detail as { systemText?: unknown }).systemText === "string"
+            ? ((detail as { systemText: string }).systemText || "").trim()
+            : "";
+
+        if (visibleText) {
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+              role: "user",
+              parts: [{ type: "text", text: visibleText }],
+            } as UIMessage,
+          ]);
+        }
+
+        if (systemText) {
+          sendMessage({ text: systemText });
+        }
+      }
     };
     window.addEventListener('mock-send-message', handleMockMessage);
     return () => window.removeEventListener('mock-send-message', handleMockMessage);
-  }, [sendMessage]);
+  }, [sendMessage, setMessages]);
 
   const lastAssistant = [...messages].reverse().find((m) => m.role === 'assistant') as
     | (UIMessage & { metadata?: { allow_upload?: boolean } })

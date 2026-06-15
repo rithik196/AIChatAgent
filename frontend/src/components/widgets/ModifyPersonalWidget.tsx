@@ -11,11 +11,14 @@ export function ModifyPersonalWidget({ data }: any) {
   const handleSubmit = () => {
     window.dispatchEvent(
       new CustomEvent("mock-send-message", {
-        detail: `__SYS__UPDATE_PERSONAL: ${JSON.stringify({
-          levelOfEducation: education,
-          maritalStatus: marital,
-          dependents: dependents,
-        })}`
+        detail: {
+          visibleText: "Save updated personal details",
+          systemText: `__SYS__UPDATE_PERSONAL: ${JSON.stringify({
+            levelOfEducation: education,
+            maritalStatus: marital,
+            dependents: dependents,
+          })}`,
+        },
       })
     );
   };

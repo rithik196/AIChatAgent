@@ -51,7 +51,14 @@ export function PersonalDetailsWidget({ data }: PersonalDetailsWidgetProps) {
   };
 
   const handleConfirm = () => {
-    window.dispatchEvent(new CustomEvent("mock-send-message", { detail: "__SYS__Details confirmed, proceed" }));
+    window.dispatchEvent(
+      new CustomEvent("mock-send-message", {
+        detail: {
+          visibleText: "Details confirmed, proceed",
+          systemText: "__SYS__Details confirmed, proceed",
+        },
+      })
+    );
   };
 
   return (

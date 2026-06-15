@@ -154,12 +154,15 @@ export function OfferSliderWidget({ data }: OfferSliderWidgetProps) {
               whileTap={{ scale: 0.98 }}
               onClick={() => {
                 window.dispatchEvent(new CustomEvent('mock-send-message', {
-                  detail: `__SYS__CONFIRM_FINANCE_PLAN: ${JSON.stringify({
-                    amount,
-                    tenure,
-                    profitRate: profitRateStr,
-                    monthlyInstallment,
-                  })}`
+                  detail: {
+                    visibleText: 'I confirm this finance plan',
+                    systemText: `__SYS__CONFIRM_FINANCE_PLAN: ${JSON.stringify({
+                      amount,
+                      tenure,
+                      profitRate: profitRateStr,
+                      monthlyInstallment,
+                    })}`,
+                  },
                 }));
               }}
               className="w-full py-3.5 bg-slate-900 text-white text-[14px] font-semibold rounded-2xl shadow-md hover:bg-slate-800 transition-all duration-300"

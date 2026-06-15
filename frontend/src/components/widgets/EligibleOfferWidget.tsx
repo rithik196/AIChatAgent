@@ -89,7 +89,12 @@ export function EligibleOfferWidget({ data }: EligibleOfferWidgetProps) {
             whileHover={{ scale: 1.01 }}
             whileTap={{ scale: 0.98 }}
             onClick={() => {
-              const event = new CustomEvent('mock-send-message', { detail: '__SYS__accepted_offer' });
+              const event = new CustomEvent('mock-send-message', {
+                detail: {
+                  visibleText: 'Continue',
+                  systemText: '__SYS__accepted_offer',
+                },
+              });
               window.dispatchEvent(event);
             }}
             className="w-full py-3.5 text-white text-[14px] font-semibold rounded-2xl shadow-lg shadow-blue-500/25 transition-all"

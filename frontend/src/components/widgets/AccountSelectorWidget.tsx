@@ -88,11 +88,7 @@ export function AccountSelectorWidget({ data }: AccountSelectorWidgetProps) {
                   <div className="space-y-2">
                     {accounts.length === 0 ? (
                       <div className="rounded-2xl p-4 border border-slate-700/50 bg-slate-800/50">
-                        <p className="text-sm font-semibold text-slate-200">No existing IBAN found</p>
-                        <p className="text-[11px] text-slate-400 mt-2">Add a new IBAN to proceed with disbursement.</p>
-                        <div className="mt-4 flex gap-2">
-                          <button onClick={() => window.dispatchEvent(new CustomEvent('mock-send-message', { detail: 'ADD_NEW_IBAN' }))} className="py-2 px-3 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-400 text-white font-semibold">Add New IBAN</button>
-                        </div>
+                        <p className="text-[11px] text-slate-400">Add a new IBAN manually below</p>
                       </div>
                     ) : (
                       accounts.map((account, idx) => (

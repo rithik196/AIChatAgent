@@ -10,10 +10,13 @@ export function ModifyEmploymentWidget({ data }: any) {
   const handleSubmit = () => {
     window.dispatchEvent(
       new CustomEvent("mock-send-message", {
-        detail: `__SYS__UPDATE_EMPLOYMENT: ${JSON.stringify({
-          type: employerType,
-          industry,
-        })}`
+        detail: {
+          visibleText: "Save updated employment details",
+          systemText: `__SYS__UPDATE_EMPLOYMENT: ${JSON.stringify({
+            type: employerType,
+            industry,
+          })}`,
+        },
       })
     );
   };

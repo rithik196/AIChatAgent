@@ -7,6 +7,7 @@ from prompts.builder import build_system_prompt
 from extractors.parser import parse_agent_response
 from extractors.router import route_to_temporal
 from graph.state import ConversationState
+from knowledge.faq_engine import answer_general_query
 
 logger = logging.getLogger(__name__)
 
@@ -174,26 +175,26 @@ def _fast_state_response(session: dict) -> str | None:
 
     # After Nafath approval: show loader only (no text).
     if step == "identity" and sub_step == "loading":
-        return ""
+        return "Your identity is being verified now. Please wait while we complete this step."
 
     # After OTP loader completion: show OTP verified widget only.
     if step == "identity" and sub_step == "verified":
-        return ""
+        return "Your identity has been verified. Shall we continue to the dedupe check?"
 
     # After verified auto-continue: dedupe loader widget carries the message; return empty text.
     if step == "identity" and sub_step == "dedupe_check":
-        return ""
+        return "We are running a dedupe check to verify your records. Please wait a moment while we continue."
 
     # After dedupe completion: widget (Journey Overview) carries the content.
     if step == "identity" and sub_step == "identify_yourself":
-        return ""
+        return "Your journey overview is ready. Would you like to proceed with the next step?"
 
     # After Journey Overview "Yes/proceed": show profile-review text only.
     if step == "identity" and sub_step == "personal_details":
         return "I have retrieved your current profile details. Please review them to make sure everything is correct to proceed."
 
     if step == "identity" and sub_step == "modify_section":
-        return ""
+        return "Which section would you like to update: Personal Details, Address Details, Employment Details, or Income Details?"
 
     if step == "identity" and sub_step == "modify_personal":
         return "Please provide the updated Personal Details fields you want to change (for example: marital status, dependents, education)."
@@ -224,13 +225,16 @@ def _fast_state_response(session: dict) -> str | None:
         return "An email has been sent to your registered ID. Please link your account and reply with 'linked' once done."
 
     if step == "identity" and sub_step == "updating_details":
-        return ""
+        return "We are updating your details now. Please wait while we save the changes."
 
     if step == "identity" and sub_step == "expenses":
         return "Please review and confirm your average monthly expenses across all categories to continue."
 
-    if step == "identity" and sub_step in {"bureau_consent", "eligibility_check"}:
-        return ""
+    if step == "identity" and sub_step == "bureau_consent":
+        return "We need your consent to fetch bureau records. Would you like to proceed?"
+
+    if step == "identity" and sub_step == "eligibility_check":
+        return "We are running your eligibility and due diligence checks now. Please wait while we continue."
 
     # After personal details confirmation: fast deterministic eligible-offer summary.
     if step == "offer" and sub_step == "bureau_consent":
@@ -260,8 +264,20 @@ def _fast_state_response(session: dict) -> str | None:
             "Would you like to proceed with this offer?"
         )
 
-    if step == "offer" and sub_step in {"wants_more_decision", "slider", "summary"}:
-        return ""
+    if step == "offer" and sub_step == "wants_more_decision":
+        return "Is this maximum amount okay, or would you like to explore a higher amount?"
+
+    if step == "offer" and sub_step == "wants_more_open_banking":
+        return "We are refreshing your offer through Open Banking. Please link your account and let me know once it is complete."
+
+    if step == "offer" and sub_step == "wants_more_backoffice":
+        return "A Relationship Manager will review your request. Would you like to continue with the current eligible amount for now?"
+
+    if step == "offer" and sub_step == "slider":
+        return "Please adjust the amount and tenure to your preference, then confirm to continue."
+
+    if step == "offer" and sub_step == "summary":
+        return "Your finance summary is ready. Would you like to proceed to commodity trade or modify the amount and tenure?"
 
     if step == "trade" and sub_step == "authorize":
         return (
@@ -273,31 +289,34 @@ def _fast_state_response(session: dict) -> str | None:
     if step == "trade" and sub_step == "certificate":
         return (
             "The commodity transaction certificate is ready. "
-            "Please review it and tell me when you would like to proceed to the Contract & Promissory Note e-sign step."
+            "Please review it. Would you like to proceed to generate the Contract & Promissory Note?"
         )
 
-    if step == "trade" and sub_step in {"loading", "success"}:
-        return ""
+    if step == "trade" and sub_step == "loading":
+        return "The commodity trade is being executed now. Please wait while we complete it."
+
+    if step == "trade" and sub_step == "success":
+        return "The commodity trade was successful. Would you like to proceed to the Contract & Promissory Note e-sign step?"
 
     if step == "esign" and sub_step == "documents":
         return (
             "The Contract & Promissory Note documents are ready. "
-            "Would you like to proceed with e-sign now?"
+            "Would you like to proceed with e-signing the documents?"
         )
 
     if step == "esign" and sub_step == "email_sent":
-        return ""
+        return "Your e-sign request has been sent. Please complete the signature from your email and let me know once it is done."
 
     if step == "disburse" and sub_step == "account":
         if session.get("customerType") == "NTB" or session.get("journeyMode") == "NTB_ENRICHMENT":
-            return "No existing IBAN was found. Please add a new IBAN to proceed with disbursement."
+            return "Please add a new IBAN manually below to proceed with disbursement."
         return "Please select your disbursement account or add a new IBAN to proceed."
 
     if step == "disburse" and sub_step == "iban_validation":
-        return ""
+        return "Your IBAN has been submitted for validation. Please confirm the details to continue."
 
     if step == "disburse" and sub_step == "application_summary":
-        return ""
+        return "Please review the application summary carefully and confirm to continue."
 
     if step == "disburse" and sub_step == "ivr_consent":
         return "Please choose how you would like to complete the final verification: OTP or IVR."
@@ -331,12 +350,15 @@ async def build_response(state: ConversationState) -> ConversationState:
     session = state.get("session", {})
     messages_payload = state.get("messages", [])
     extract = state.get("extract") or {}
+    intent = state.get("intent", "GENERAL_QUERY")
 
     # If the latest user turn is an internal routing signal, skip LLM entirely.
     last_user = ""
+    last_user_raw = ""
     for m in reversed(messages_payload):
         if m.get("role") == "user":
-            last_user = _normalize_signal_text(m.get("content", ""))
+            last_user_raw = m.get("content", "")
+            last_user = _normalize_signal_text(last_user_raw)
             break
     if last_user in _ROUTING_SIGNALS:
         if last_user in {"accepted_offer", "accepted_pre_approved_offer"} and session.get("suppress_offer_text"):
@@ -351,6 +373,17 @@ async def build_response(state: ConversationState) -> ConversationState:
         fast = _fast_state_response(session)
         if fast is not None:
             return {"last_response": fast}
+
+    if intent == "GENERAL_QUERY" and last_user_raw:
+        faq = answer_general_query(last_user_raw, session)
+        if faq:
+            logger.info(
+                "[faq] Matched domain=%s score=%s for message=%r",
+                faq.get("domain"),
+                faq.get("score"),
+                last_user_raw,
+            )
+            return {"last_response": faq["text"]}
 
     # Build system prompt with UPDATED session (post-extraction)
     sys_prompt = build_system_prompt(session)
@@ -675,8 +708,14 @@ def _deterministic_classify(msg: str, step: str, sub_step: str, session: dict) -
 
         elif sub_step == "certificate":
             if msg_lower in {"continue", "yes", "ok", "proceed", "next"}:
-                return {"step": "trade", "intent": "GENERAL_QUERY", "data": {}}
-            signals = ["proceed to e-sign", "generate contract", "contract & promissory note", "e-sign documents", "sign documents"]
+                return {"step": "trade", "intent": "STEP_DATA", "data": {"proceed_esign": True}}
+            signals = [
+                "proceed to e-sign",
+                "generate contract",
+                "contract & promissory note",
+                "e-sign documents",
+                "sign documents",
+            ]
             if any(s in msg_lower for s in signals):
                 return {"step": "trade", "intent": "STEP_DATA",
                         "data": {"proceed_esign": True}}
@@ -685,7 +724,7 @@ def _deterministic_classify(msg: str, step: str, sub_step: str, session: dict) -
     elif step == "esign":
         if sub_step == "documents":
             if msg_lower in {"continue", "yes", "ok", "proceed", "next"}:
-                return {"step": "esign", "intent": "GENERAL_QUERY", "data": {}}
+                return {"step": "esign", "intent": "STEP_DATA", "data": {"esign_nafath": True}}
             signals = [
                 "proceed with e-sign",
                 "proceed to e-sign",

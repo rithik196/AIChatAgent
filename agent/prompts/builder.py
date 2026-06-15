@@ -104,8 +104,8 @@ DO NOT present any finance offers yet! You must wait for the customer to confirm
 """,
         ("identity", "modify_section"): """
 The customer initiated a modification.
-- Wait for them to provide the new details via the chat or widget.
-- DO NOT ask "Which section do you want to modify?"
+- Ask which section they want to update: Personal Details, Address Details, Employment Details, or Income Details.
+- Wait for them to choose before opening the section widget.
 """,
         ("identity", "modify_personal"): """
 Collect updated Personal Details fields from the customer.
@@ -155,7 +155,7 @@ Open Banking email has been sent.
 """,
         ("identity", "updating_details"): """
 System is updating customer details.
-- Keep response minimal.
+- Keep response minimal and reassuring.
 - Extract: {"update_complete": true} when update completion signal arrives.
 """,
         ("identity", "expenses"): """
@@ -248,7 +248,7 @@ E-Sign is successful! Now ask for final verification method.
 """,
         ("disburse", "account"): """
 Ask the customer to select their bank account for disbursement.
-- If there are no accounts, say no existing IBAN was found and ask them to add a new IBAN.
+- If there are no accounts, ask them to add a new IBAN manually below.
 - Present available accounts or the manual IBAN option.
 - Extract: {"account_selected": "iban"} or {"iban_entered": "iban"}
 """,
@@ -260,7 +260,7 @@ IBAN has been submitted. Validate and show bank details.
 """,
         ("disburse", "application_summary"): """
 Present complete application summary for final review.
-- Display: Customer Name, ID, Employment, Monthly Income, Obligations, Selected Amount, Tenure, Monthly Installment, Profit Rate, Bank, IBAN, Beneficiary.
+- Display: Customer Name, ID, Selected Amount, Tenure, Monthly Installment, Profit Rate, Bank, IBAN, Beneficiary.
 - Ask the customer to review all details carefully and confirm to continue.
 - Extract: {"application_confirmed": true} when they confirm via checkbox and button.
 """,
