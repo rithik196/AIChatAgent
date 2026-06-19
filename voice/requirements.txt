@@ -1,5 +1,0 @@
-fastapi==0.109.2
-uvicorn==0.27.1
-openai==1.12.0
-pyaudio==0.2.14
-websockets==12.0

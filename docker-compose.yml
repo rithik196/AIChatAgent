@@ -140,17 +140,6 @@ services:
     networks:
       - rlos-network
 
-  voice:
-    build:
-      context: .
-      dockerfile: voice/Dockerfile
-    restart: unless-stopped
-    env_file:
-      - .env
-    ports:
-      - "8002:8002"
-    networks:
-      - rlos-network
 
   frontend:
     build:
