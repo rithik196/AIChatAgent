@@ -3,6 +3,7 @@ version: '3.8'
 services:
   postgres:
     image: postgres:15
+    restart: unless-stopped
     environment:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
@@ -16,6 +17,7 @@ services:
 
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
     ports:
       - "6379:6379"
     volumes:
@@ -25,6 +27,7 @@ services:
 
   mongodb:
     image: mongo:7
+    restart: unless-stopped
     ports:
       - "27017:27017"
     volumes:
@@ -34,10 +37,11 @@ services:
 
   sqlserver:
     image: mcr.microsoft.com/mssql/server:2022-latest
+    restart: unless-stopped
     environment:
       - ACCEPT_EULA=Y
       - MSSQL_PID=Developer
-      - SA_PASSWORD=YourStrong!Passw0rd
+      - SA_PASSWORD=${MSSQL_PASSWORD:-YourStrong!Passw0rd}
     ports:
       - "1433:1433"
     volumes:
@@ -47,6 +51,7 @@ services:
 
   temporal:
     image: temporalio/auto-setup:latest
+    restart: unless-stopped
     environment:
       - DB=postgres12
       - DB_PORT=5432
@@ -61,6 +66,108 @@ services:
     networks:
       - rlos-network
 
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - AGENT_URL=${AGENT_URL:-http://agent:8001}
+      - TEMPORAL_ADDRESS=${TEMPORAL_ADDRESS:-temporal:7233}
+      - MSSQL_SERVER=${MSSQL_SERVER:-sqlserver}
+      - MSSQL_PORT=${MSSQL_PORT:-1433}
+      - MSSQL_DATABASE=${MSSQL_DATABASE:-sacom}
+      - MSSQL_USERNAME=${MSSQL_USERNAME:-sa}
+      - MSSQL_PASSWORD=${MSSQL_PASSWORD:-YourStrong!Passw0rd}
+      - MSSQL_DRIVER=${MSSQL_DRIVER:-ODBC Driver 17 for SQL Server}
+      - MSSQL_ENCRYPT=${MSSQL_ENCRYPT:-no}
+      - MSSQL_TRUST_SERVER_CERTIFICATE=${MSSQL_TRUST_SERVER_CERTIFICATE:-yes}
+      - MSSQL_BYPASS_SSL=${MSSQL_BYPASS_SSL:-true}
+    ports:
+      - "8000:8000"
+    depends_on:
+      - redis
+      - mongodb
+      - sqlserver
+      - temporal
+      - agent
+    networks:
+      - rlos-network
+
+  agent:
+    build:
+      context: .
+      dockerfile: agent/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - TEMPORAL_ADDRESS=${TEMPORAL_ADDRESS:-temporal:7233}
+      - RLOS_ENABLE_TEMPORAL=${RLOS_ENABLE_TEMPORAL:-false}
+      - MSSQL_SERVER=${MSSQL_SERVER:-sqlserver}
+      - MSSQL_PORT=${MSSQL_PORT:-1433}
+      - MSSQL_DATABASE=${MSSQL_DATABASE:-sacom}
+      - MSSQL_USERNAME=${MSSQL_USERNAME:-sa}
+      - MSSQL_PASSWORD=${MSSQL_PASSWORD:-YourStrong!Passw0rd}
+      - MSSQL_DRIVER=${MSSQL_DRIVER:-ODBC Driver 17 for SQL Server}
+      - MSSQL_ENCRYPT=${MSSQL_ENCRYPT:-no}
+      - MSSQL_TRUST_SERVER_CERTIFICATE=${MSSQL_TRUST_SERVER_CERTIFICATE:-yes}
+      - MSSQL_BYPASS_SSL=${MSSQL_BYPASS_SSL:-true}
+    ports:
+      - "8001:8001"
+    volumes:
+      - agent-data:/app/.data
+    depends_on:
+      - sqlserver
+      - temporal
+    networks:
+      - rlos-network
+
+  workflow:
+    build:
+      context: .
+      dockerfile: workflow/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - TEMPORAL_ADDRESS=${TEMPORAL_ADDRESS:-temporal:7233}
+    depends_on:
+      - temporal
+    networks:
+      - rlos-network
+
+  voice:
+    build:
+      context: .
+      dockerfile: voice/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "8002:8002"
+    networks:
+      - rlos-network
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - BACKEND_URL=${BACKEND_URL:-http://backend:8000}
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    networks:
+      - rlos-network
+
 networks:
   rlos-network:
     driver: bridge
@@ -70,3 +177,4 @@ volumes:
   redis-data:
   mongo-data:
   mssql-data:
+  agent-data:

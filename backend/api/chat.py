@@ -17,6 +17,7 @@ import math
 import random
 import re
 import logging
+import os
 import string
 import sys
 import textwrap
@@ -30,7 +31,7 @@ from utils.eligibility import calculate_max_eligible_amount
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-AGENT_URL = "http://localhost:8001"
+AGENT_URL = os.getenv("AGENT_URL", "http://localhost:8001")
 REPO_ROOT = Path(__file__).resolve().parents[2]
 AGENT_DIR = REPO_ROOT / "agent"
 if str(AGENT_DIR) not in sys.path:
