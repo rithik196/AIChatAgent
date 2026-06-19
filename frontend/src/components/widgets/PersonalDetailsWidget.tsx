@@ -76,7 +76,7 @@ export function PersonalDetailsWidget({ data }: PersonalDetailsWidgetProps) {
 
   return (
     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-sm mt-3 pb-6">
-      <Section title="Personal Details" source="(Fetched from Yakeen)" icon="/assets/personal_details_logo.png">
+      <Section title="Personal Details" source="(Fetched from Yakeen)" icon="/customer_agent/assets/personal_details_logo.png">
         <Detail label="ID Number" value={data.personal.idNumber} />
         <Detail label="Name" value={data.name} />
         <Detail label="Contact Number" value={data.phone} />
@@ -88,7 +88,7 @@ export function PersonalDetailsWidget({ data }: PersonalDetailsWidgetProps) {
         <Detail label="No. of dependents" value={data.personal.dependents || "-"} />
       </Section>
 
-      <Section title="Address Details" source="(Fetched from Saudi Post)" icon="/assets/address_details_logo.png">
+      <Section title="Address Details" source="(Fetched from Saudi Post)" icon="/customer_agent/assets/address_details_logo.png">
         <Detail label="Address Line 1" value={data.address?.line1 || "-"} wrap />
         <Detail label="Address Line 2" value={data.address?.line2 || "-"} wrap />
         <Detail label="Street" value={data.address?.street || "-"} />
@@ -97,7 +97,7 @@ export function PersonalDetailsWidget({ data }: PersonalDetailsWidgetProps) {
         <Detail label="House Type" value={data.address?.houseType || "-"} />
       </Section>
 
-      <Section title="Employment Details" source="(Fetched from GOSI)" icon="/assets/employment_det_logo.png">
+      <Section title="Employment Details" source="(Fetched from GOSI)" icon="/customer_agent/assets/employment_det_logo.png">
         <Detail label="Employer type" value={data.employment.type || "-"} />
         <Detail label="Employer name" value={data.employment.employer || "-"} />
         <Detail label="Industry type" value={data.employment.industry || "-"} />
@@ -107,7 +107,7 @@ export function PersonalDetailsWidget({ data }: PersonalDetailsWidgetProps) {
         <Detail label="Work Post code" value={data.employment.workAddress?.postalCode || "-"} />
       </Section>
 
-      <Section title="Income Details" source="(Fetched from GOSI)" icon="/assets/income_det_logo.png">
+      <Section title="Income Details" source="(Fetched from GOSI)" icon="/customer_agent/assets/income_det_logo.png">
         <Detail label="Monthly Income" value={data.income.monthly || "-"} />
       </Section>
 

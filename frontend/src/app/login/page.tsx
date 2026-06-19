@@ -142,7 +142,7 @@ export default function LoginPage() {
           <div className="w-full px-6 py-3.5 flex items-center gap-3">
             <div className="h-10 w-10 bg-white/85 flex items-center justify-center shrink-0">
               <Image
-                src="/assets/newgen_logo.png"
+                src="/customer_agent/assets/newgen_logo.png"
                 alt="Newgen"
                 width={28}
                 height={28}

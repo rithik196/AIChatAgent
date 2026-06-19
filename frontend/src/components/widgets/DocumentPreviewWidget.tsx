@@ -27,19 +27,19 @@ export function DocumentPreviewWidget({ data }: DocumentPreviewWidgetProps) {
   const actionLabel = isCertificateStep ? "Generate Contract & Promissory Note" : "Proceed to e-sign";
 
   const documents = data?.documents || [
-    { name: "Contract Letter", type: "pdf", url: "/assets/ContractSaudi.pdf" },
-    { name: "Promissory Note", type: "pdf", url: "/assets/PromissoryNote.pdf" },
+    { name: "Contract Letter", type: "pdf", url: "/customer_agent/assets/ContractSaudi.pdf" },
+    { name: "Promissory Note", type: "pdf", url: "/customer_agent/assets/PromissoryNote.pdf" },
   ];
   const title = data?.title || "Digital Documents";
   const subtitle = data?.subtitle || "Ready for E-Sign";
 
   const openDocument = (doc: Document) => {
-    const url = encodeURI(doc.url || "/assets/ContractSaudi.pdf");
+    const url = encodeURI(doc.url || "/customer_agent/assets/ContractSaudi.pdf");
     window.open(url, "_blank", "noopener,noreferrer");
   };
 
   const downloadDocument = (doc: Document) => {
-    const url = encodeURI(doc.url || "/assets/ContractSaudi.pdf");
+    const url = encodeURI(doc.url || "/customer_agent/assets/ContractSaudi.pdf");
     const a = document.createElement("a");
     a.href = url;
     a.download = `${doc.name.replace(/\s+/g, "_")}.pdf`;
