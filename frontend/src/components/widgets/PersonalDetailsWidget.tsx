@@ -4,7 +4,7 @@ import React from "react";
 import { motion } from "framer-motion";
 
 export interface PersonalDetailsWidgetProps {
-  data: {
+  data?: {
     name: string;
     phone: string;
     email: string;
@@ -48,6 +48,7 @@ export interface PersonalDetailsWidgetProps {
 }
 
 export function PersonalDetailsWidget({ data }: PersonalDetailsWidgetProps) {
+  if (!data) return null;
   const showActions = data.showActions !== false;
 
   const handleModify = () => {

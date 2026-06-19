@@ -4,7 +4,7 @@ import React, { useEffect, useRef } from "react";
 import { motion } from "framer-motion";
 
 export interface UpdatingWidgetProps {
-  data: {
+  data?: {
     section: string;       // e.g. "Personal details", "Income details"
     auto_advance_ms?: number;
     next_message?: string;
@@ -13,6 +13,7 @@ export interface UpdatingWidgetProps {
 }
 
 export function UpdatingWidget({ data }: UpdatingWidgetProps) {
+  if (!data) return null;
   const { section, auto_advance_ms = 3000, next_message, silent } = data;
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const [isVisible, setIsVisible] = React.useState(true);

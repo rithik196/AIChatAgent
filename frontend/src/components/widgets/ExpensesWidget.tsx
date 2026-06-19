@@ -5,7 +5,7 @@ import { Check, PencilLine } from "lucide-react";
 import { motion } from "framer-motion";
 
 export interface ExpensesWidgetProps {
-  data: {
+  data?: {
     mode?: "review" | "edit";
     prefilled?: boolean;
     totalExpenses?: number;

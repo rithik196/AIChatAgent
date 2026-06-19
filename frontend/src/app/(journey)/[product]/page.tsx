@@ -32,7 +32,7 @@ export default function JourneyPage() {
 
   // Check auth on mount — redirect to login if not authenticated
   useEffect(() => {
-    fetch("/api/auth/me")
+    fetch("/customer_agent/api/auth/me")
       .then((r) => r.json())
       .then((data) => {
         if (data.authenticated && data.phone) {
@@ -54,7 +54,7 @@ export default function JourneyPage() {
   // Load conversation history after auth
   useEffect(() => {
     if (!sessionId) return;
-    fetch(`/api/chat/history/${encodeURIComponent(sessionId)}`)
+    fetch(`/customer_agent/api/chat/history/${encodeURIComponent(sessionId)}`)
       .then((r) => r.json())
       .then((data) => {
         setInitialSession(data.session || null);
@@ -118,7 +118,7 @@ function ChatView({ product, sessionId, initialMessages, initialSession }: {
     id: sessionId,
     messages: initialMessages,
     transport: new DefaultChatTransport({
-      api: '/api/chat',
+      api: '/customer_agent/api/chat',
       headers: { 'x-session-id': sessionId },
       body: { sessionId, session: initialSession ?? undefined },
     }),

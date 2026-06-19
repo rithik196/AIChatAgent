@@ -52,7 +52,7 @@ export default function LoginPage() {
     }
     setLoading(true);
     try {
-      const res = await fetch("/api/auth/send-otp", {
+      const res = await fetch("/customer_agent/api/auth/send-otp", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ phone: cleaned, purpose: "login" }),
@@ -99,7 +99,7 @@ export default function LoginPage() {
     }
     setLoading(true);
     try {
-      const res = await fetch("/api/auth/verify-otp", {
+      const res = await fetch("/customer_agent/api/auth/verify-otp", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ phone: phone.replace(/\s/g, ""), otp: entered, purpose: "login" }),
