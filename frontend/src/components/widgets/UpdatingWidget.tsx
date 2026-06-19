@@ -61,7 +61,7 @@ export function UpdatingWidget({ data }: UpdatingWidgetProps) {
         initial={{ scale: 0.85, opacity: 0, y: 20 }}
         animate={{ scale: 1, opacity: 1, y: 0 }}
         transition={{ duration: 0.35, ease: "easeOut" }}
-        className="bg-white rounded-3xl shadow-2xl p-8 flex flex-col items-center gap-5 max-w-xs w-full mx-4"
+        className="journey-panel p-8 flex flex-col items-center gap-5 max-w-xs w-full mx-4"
       >
         {/* Spinner */}
         <div className="relative w-16 h-16">
@@ -76,25 +76,25 @@ export function UpdatingWidget({ data }: UpdatingWidgetProps) {
 
         {/* Text */}
         <div className="text-center">
-          <h3 className="text-lg font-bold text-slate-900 mb-1">Updating Details...</h3>
-          <p className="text-sm text-slate-500 font-medium">
+          <h3 className="journey-heading mb-1">Updating Details...</h3>
+          <p className="journey-body text-[#425768]">
             {section} {section.endsWith("details") ? "are" : "is"} getting updated with new data
           </p>
         </div>
 
         {/* Progress bar */}
-        <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
+        <div className="w-full bg-white rounded-full h-1 overflow-hidden border border-[#D5DCE3]">
           <motion.div
             initial={{ width: "0%" }}
             animate={{ width: "100%" }}
             transition={{ duration: (auto_advance_ms || 3000) / 1000, ease: "linear" }}
             className="h-full rounded-full"
-            style={{ background: "linear-gradient(90deg, #1B6A8A 0%, #4BA3C7 100%)" }}
+            style={{ background: "linear-gradient(261.63deg, #C24231 9.51%, #FB8B23 87.57%)" }}
           />
         </div>
         
         {/* Optional: Show elapsed time for debugging */}
-        <div className="text-xs text-slate-400 font-medium">
+        <div className="journey-label">
           Auto-advancing in {(auto_advance_ms || 3000) / 1000}s...
         </div>
       </motion.div>

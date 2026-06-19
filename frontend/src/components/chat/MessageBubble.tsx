@@ -5,6 +5,7 @@ import { Volume2, VolumeX } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useSpeakContext } from "@/hooks/SpeakContext";
 import { getFemaleVoice } from "@/lib/voice";
+import { OptionButtons } from "./OptionButtons";
 import { NafathWidget } from "../widgets/NafathWidget";
 import { OfferSliderWidget } from "../widgets/OfferSliderWidget";
 import { SuccessWidget } from "../widgets/SuccessWidget";
@@ -20,6 +21,7 @@ import { AccountSelectorWidget } from "../widgets/AccountSelectorWidget";
 import { DisbursementWidget } from "../widgets/DisbursementWidget";
 import { NTBIntroductionWidget } from "../widgets/NTBIntroductionWidget";
 import { ExpensesWidget } from "../widgets/ExpensesWidget";
+import { IncomeProofChoiceWidget } from "../widgets/IncomeProofChoiceWidget";
 import { UpdatingWidget } from "../widgets/UpdatingWidget";
 import { ModifySectionWidget } from "../widgets/ModifySectionWidget";
 import { ModifyPersonalWidget } from "../widgets/ModifyPersonalWidget";
@@ -29,12 +31,15 @@ import { ModifyIncomeWidget } from "../widgets/ModifyIncomeWidget";
 import { BureauConsentWidget } from "../widgets/BureauConsentWidget";
 import { EligibilityCheckWidget } from "../widgets/EligibilityCheckWidget";
 import { WantsMoreDecisionWidget } from "../widgets/WantsMoreDecisionWidget";
+import { HigherAmountReviewWidget } from "../widgets/HigherAmountReviewWidget";
 import { BackofficeWorkitemWidget } from "../widgets/BackofficeWorkitemWidget";
 import { ApplicationSummaryWidget } from "../widgets/ApplicationSummaryWidget";
 import { FinalIVRConsentWidget } from "../widgets/FinalIVRConsentWidget";
 import { IBANValidationWidget } from "../widgets/IBANValidationWidget";
 import { CommodityTradeAuthorizationWidget } from "../widgets/CommodityTradeAuthorizationWidget";
 import { PreApprovedOfferWidget } from "../widgets/PreApprovedOfferWidget";
+import { DelayTriggerWidget } from "../widgets/DelayTriggerWidget";
+import { ImportantText } from "../shared/ImportantText";
 
 type WidgetData = unknown;
 
@@ -51,9 +56,12 @@ interface MessagePart {
 
 interface MessageMetadata {
   widget?: WidgetSpec | null;
+  options?: Array<{ id: string; label: string; value: string }>;
+  optionContext?: { type?: string; field?: string };
+  postText?: string;
 }
 
-type WidgetComponent = React.ComponentType<any>;
+type WidgetComponent = React.ComponentType<{ data?: WidgetData }>;
 
 // Widget registry - maps widget name to component
 const WIDGET_REGISTRY: Record<string, WidgetComponent> = {
@@ -72,6 +80,7 @@ const WIDGET_REGISTRY: Record<string, WidgetComponent> = {
   DisbursementWidget,
   NTBIntroductionWidget,
   ExpensesWidget,
+  IncomeProofChoiceWidget,
   UpdatingWidget,
   ModifySectionWidget,
   ModifyPersonalWidget,
@@ -81,12 +90,14 @@ const WIDGET_REGISTRY: Record<string, WidgetComponent> = {
   BureauConsentWidget,
   EligibilityCheckWidget,
   WantsMoreDecisionWidget,
+  HigherAmountReviewWidget,
   BackofficeWorkitemWidget,
   ApplicationSummaryWidget,
   FinalIVRConsentWidget,
   IBANValidationWidget,
   CommodityTradeAuthorizationWidget,
   PreApprovedOfferWidget,
+  DelayTriggerWidget,
 };
 
 interface MessageBubbleProps {
@@ -163,7 +174,7 @@ function renderInlineSpans(text: string): React.ReactNode[] {
 
   while ((match = regex.exec(text)) !== null) {
     if (match.index > lastIndex) {
-      parts.push(text.slice(lastIndex, match.index));
+    parts.push(<ImportantText key={`t-${match.index}`} text={text.slice(lastIndex, match.index)} />);
     }
 
     if (match[2]) {
@@ -186,7 +197,7 @@ function renderInlineSpans(text: string): React.ReactNode[] {
   }
 
   if (lastIndex < text.length) {
-    parts.push(text.slice(lastIndex));
+    parts.push(<ImportantText key={`t-end-${lastIndex}`} text={text.slice(lastIndex)} />);
   }
 
   return parts;
@@ -230,6 +241,80 @@ export function MessageBubble({ role, content, parts, metadata }: MessageBubbleP
   if (!sanitizedText && !widgetSpec) return null;
 
   const WidgetComponent = widgetSpec ? WIDGET_REGISTRY[widgetSpec.widget] : null;
+  const renderTextBlock = () => sanitizedText && (
+    <div
+      className={cn(
+        "max-w-[85%] px-5 py-3.5 rounded-[16px] shadow-sm",
+        isUser
+          ? "rounded-br-none text-[14px] leading-[16px] font-normal text-[#15212B]"
+          : "rounded-bl-none type-body-md-strong text-slate-900"
+      )}
+      style={{
+        backgroundImage: isUser
+          ? "linear-gradient(90deg, #FB8B23 0%, #C24231 100%)"
+          : "linear-gradient(90deg, #EBF4F5 0%, #B9DCF2 100%)",
+      }}
+    >
+      {isUser ? sanitizedText : renderInlineMarkdown(sanitizedText)}
+      {!isUser && speak && (
+        <button
+          onClick={handleSpeak}
+          className="mt-2 flex items-center gap-1 text-xs text-blue-500 hover:text-blue-700 transition-colors"
+          aria-label={isSpeaking ? "Stop speaking" : "Read aloud"}
+        >
+          {isSpeaking ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+        </button>
+      )}
+    </div>
+  );
+
+  const renderOptions = () => !isUser && metadata?.options && metadata.options.length > 0 && (
+    <OptionButtons
+      options={metadata.options}
+      onSelect={(value) => {
+        const field = metadata.optionContext?.field;
+        if (metadata.optionContext?.type === "profile_completion" && field) {
+          window.dispatchEvent(
+            new CustomEvent("mock-send-message", {
+              detail: {
+                visibleText: value,
+                systemText: `__SYS__PROFILE_COMPLETION: ${JSON.stringify({ field, value })}`,
+              },
+            })
+          );
+          return;
+        }
+        window.dispatchEvent(new CustomEvent("mock-send-message", { detail: value }));
+      }}
+    />
+  );
+
+  const renderPostText = () => {
+    const postText = metadata?.postText?.trim();
+    if (!postText || isUser) return null;
+
+    return (
+      <div
+        className={cn(
+          "max-w-[85%] px-5 py-3.5 rounded-[16px] rounded-bl-none shadow-sm type-body-md-strong text-slate-900"
+        )}
+        style={{
+          backgroundImage: "linear-gradient(90deg, #EBF4F5 0%, #B9DCF2 100%)",
+        }}
+      >
+        {renderInlineMarkdown(postText)}
+        {speak && (
+          <button
+            onClick={handleSpeak}
+            className="mt-2 flex items-center gap-1 text-xs text-blue-500 hover:text-blue-700 transition-colors"
+            aria-label={isSpeaking ? "Stop speaking" : "Read aloud"}
+          >
+            {isSpeaking ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+          </button>
+        )}
+      </div>
+    );
+  };
 
   const handleSpeak = () => {
     if (isSpeaking) {
@@ -258,36 +343,10 @@ export function MessageBubble({ role, content, parts, metadata }: MessageBubbleP
 
   return (
     <div className={cn("flex flex-col w-full gap-2", isUser ? "items-end" : "items-start")}>
-      {sanitizedText && (
-        <div
-          className={cn(
-            "max-w-[85%] px-5 py-3.5 text-[14px] leading-relaxed text-slate-900 rounded-[24px] shadow-sm font-medium",
-            isUser ? "bg-gradient-to-r from-[#ffd3a6] to-[#d6988d] rounded-br-[8px]" : "rounded-bl-[8px]"
-          )}
-          style={
-            !isUser
-              ? {
-                  backgroundColor: "#FFFFFF",
-                  backgroundImage:
-                    "linear-gradient(125.41deg, rgba(185, 220, 242, 0.2) -6.53%, rgba(235, 244, 245, 0.2) 110.14%)",
-                }
-              : undefined
-          }
-        >
-          {isUser ? sanitizedText : renderInlineMarkdown(sanitizedText)}
-          {!isUser && speak && (
-            <button
-              onClick={handleSpeak}
-              className="mt-2 flex items-center gap-1 text-xs text-blue-500 hover:text-blue-700 transition-colors"
-              aria-label={isSpeaking ? "Stop speaking" : "Read aloud"}
-            >
-              {isSpeaking ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
-            </button>
-          )}
-        </div>
-      )}
-
+      {renderTextBlock()}
       {WidgetComponent && <WidgetComponent data={widgetSpec?.data} />}
+      {renderPostText()}
+      {renderOptions()}
     </div>
   );
 }

@@ -4,17 +4,22 @@ import React, { useState } from "react";
 import { motion } from "framer-motion";
 
 export function ModifyIncomeWidget({ data }: any) {
-  const [monthlyIncome, setMonthlyIncome] = useState(data?.income?.monthly || "SAR 35650");
-  const [obligations, setObligations] = useState(data?.income?.obligations || "8750");
+  const initialMonthly = String(data?.income?.monthly || "35650").replace(/\D/g, "");
+  const [monthlyIncome, setMonthlyIncome] = useState(initialMonthly || "35650");
+  const obligations = data?.income?.obligations || "8750";
   const creditCardLimit = data?.income?.creditCardLimit || "SAR 20000";
+
+  const normalizedMonthly = monthlyIncome.replace(/\D/g, "");
+  const monthlyValue = Number(normalizedMonthly || "0");
+  const isWithinRange = monthlyValue >= 5000 && monthlyValue <= 200000;
 
   const handleSubmit = () => {
     window.dispatchEvent(
       new CustomEvent("mock-send-message", {
-        detail: {
-          visibleText: "Save updated income details",
-          systemText: `__SYS__UPDATE_INCOME: ${JSON.stringify({
-            monthly: monthlyIncome,
+          detail: {
+            visibleText: "Save updated income details",
+            systemText: `__SYS__UPDATE_INCOME: ${JSON.stringify({
+            monthly: normalizedMonthly,
             obligations,
             creditCardLimit,
           })}`,
@@ -25,34 +30,30 @@ export function ModifyIncomeWidget({ data }: any) {
 
   return (
     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-sm mt-3">
-      <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
-        <h3 className="text-sm font-semibold text-slate-800 mb-4">Update Income Details</h3>
+      <div className="journey-surface p-5">
+        <h3 className="journey-heading mb-4">Update Income Details</h3>
 
         <div className="flex flex-col gap-4">
           <div>
-            <label className="text-xs font-semibold text-slate-600 mb-2 block">Monthly Income</label>
+            <label className="journey-label mb-2 block">Monthly Income</label>
             <input
               type="text"
               value={monthlyIncome}
-              onChange={(e) => setMonthlyIncome(e.target.value)}
-              className="w-full p-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-blue-400"
+              inputMode="numeric"
+              onChange={(e) => setMonthlyIncome(e.target.value.replace(/\D/g, ""))}
+              placeholder="5000 - 200000"
+              className="w-full rounded-[16px] border border-[#D5DCE3] bg-white px-3 py-2 text-[14px] leading-[16px] font-semibold text-[#0D141A] placeholder:text-slate-400 focus:outline-none focus:border-blue-400"
             />
-          </div>
-
-          <div>
-            <label className="text-xs font-semibold text-slate-600 mb-2 block">Obligations</label>
-            <input
-              type="text"
-              value={obligations}
-              onChange={(e) => setObligations(e.target.value)}
-              className="w-full p-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-blue-400"
-            />
+            <p className="mt-1 journey-label">Min Value - 5,000 | Max Value - 200,000</p>
+            {!isWithinRange && (
+              <p className="mt-1 text-[12px] font-normal text-rose-600">Enter a value within the allowed range.</p>
+            )}
           </div>
 
           <button
             onClick={handleSubmit}
-            className="w-full mt-2 py-2.5 text-white font-semibold rounded-full hover:opacity-90 transition-all"
-            style={{ background: "linear-gradient(90deg, #1B6A8A 0%, #4BA3C7 100%)" }}
+            disabled={!isWithinRange}
+            className="w-full mt-2 py-2.5 journey-widget-button hover:opacity-90 transition-all"
           >
             Save Changes
           </button>

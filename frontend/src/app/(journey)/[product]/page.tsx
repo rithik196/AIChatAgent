@@ -6,6 +6,7 @@ import { DefaultChatTransport } from 'ai';
 import { ChatWindow } from '@/components/chat/ChatWindow';
 import { VoiceButton } from '@/components/chat/VoiceButton';
 import { Paperclip, Send } from 'lucide-react';
+import Image from 'next/image';
 import { useParams, useRouter } from 'next/navigation';
 import { useVoice } from '@/hooks/useVoice';
 import { SpeakContext } from '@/hooks/SpeakContext';
@@ -27,6 +28,7 @@ export default function JourneyPage() {
   const [phone, setPhone] = useState<string | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
   const [initialMessages, setInitialMessages] = useState<UIMessage[] | null>(null);
+  const [initialSession, setInitialSession] = useState<Record<string, unknown> | null>(null);
 
   // Check auth on mount — redirect to login if not authenticated
   useEffect(() => {
@@ -55,6 +57,7 @@ export default function JourneyPage() {
     fetch(`/api/chat/history/${encodeURIComponent(sessionId)}`)
       .then((r) => r.json())
       .then((data) => {
+        setInitialSession(data.session || null);
         if (data.messages && data.messages.length > 0) {
           setInitialMessages(toUIMessages(data.messages));
         } else {
@@ -69,6 +72,7 @@ export default function JourneyPage() {
         }
       })
       .catch(() => {
+        setInitialSession(null);
         setInitialMessages([
           {
             id: `welcome_${product}`,
@@ -94,16 +98,18 @@ export default function JourneyPage() {
         product={product}
         sessionId={sessionId}
         initialMessages={initialMessages}
+        initialSession={initialSession}
       />
     </SpeakContext.Provider>
   );
 }
 
 /** Inner component — only mounted after auth + history are resolved */
-function ChatView({ product, sessionId, initialMessages }: {
+function ChatView({ product, sessionId, initialMessages, initialSession }: {
   product: string;
   sessionId: string;
   initialMessages: UIMessage[];
+  initialSession: Record<string, unknown> | null;
 }) {
   const [input, setInput] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -114,7 +120,7 @@ function ChatView({ product, sessionId, initialMessages }: {
     transport: new DefaultChatTransport({
       api: '/api/chat',
       headers: { 'x-session-id': sessionId },
-      body: { sessionId },
+      body: { sessionId, session: initialSession ?? undefined },
     }),
   });
 
@@ -232,23 +238,29 @@ function ChatView({ product, sessionId, initialMessages }: {
   return (
     <SpeakContext.Provider value={speak}>
     <div className="flex flex-col h-full bg-white relative">
-      <div className="absolute top-0 left-0 w-full bg-white/80 backdrop-blur-xl border-b border-slate-200 z-10 shadow-sm">
-        <div className="p-4 flex justify-between items-center">
-          <div>
-            <h2 className="text-lg font-bold text-slate-900 capitalize">
+      <div className="absolute top-0 left-0 w-full z-10 bg-white/70 backdrop-blur-xl shadow-[0_8px_24px_-18px_rgba(15,23,42,0.45)] relative">
+        <div className="px-4 py-3.5 flex items-center gap-3">
+          <div className="h-10 w-10  bg-white/85  flex items-center justify-center shrink-0">
+            <Image
+              src="/assets/newgen_logo.png"
+              alt="Newgen"
+              width={28}
+              height={28}
+              className="h-7 w-auto object-contain"
+              priority
+            />
+          </div>
+          <div className="min-w-0">
+            <h2 className="type-display-sm text-slate-900 capitalize truncate">
               {product.replace('_', ' ')}
             </h2>
-            <p className="text-[11px] font-semibold text-blue-600 uppercase tracking-wider">Agentic Finance Advisor</p>
-          </div>
-          <div className="flex gap-2">
-            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-100 to-teal-100 border border-blue-200 flex items-center justify-center shadow-sm">
-              <span className="text-xs font-bold text-blue-700">R</span>
-            </div>
+            <p className="type-overline pt-1 text-slate-500">Agentic Finance Advisor</p>
           </div>
         </div>
+        <div className="absolute bottom-0 left-0 h-[2px] w-full bg-gradient-to-r from-[#FB8B23] to-[#C24231]" />
       </div>
 
-      <div className="flex-1 overflow-hidden pt-[72px] pb-24">
+      <div className="flex-1 overflow-hidden pt-0 pb-24">
         <ChatWindow
           messages={messages as unknown as { id: string; role: 'user' | 'assistant'; content?: string; parts?: unknown[]; annotations?: unknown[] }[]}
           isLoading={isLoading}
@@ -259,21 +271,21 @@ function ChatView({ product, sessionId, initialMessages }: {
       <div className="absolute bottom-0 left-0 w-full p-4 bg-white shadow-[0_-4px_20px_-10px_rgba(0,0,0,0.05)]">
         {/* Voice error banner */}
         {voiceError && (
-          <div className="mb-2 px-4 py-2 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700 flex justify-between items-center">
+          <div className="mb-2 px-4 py-2 bg-red-50 border border-red-200 rounded-xl type-body-md-strong text-red-700 flex justify-between items-center">
             <span>{voiceError}</span>
             <button onClick={clearError} className="ml-2 text-red-400 hover:text-red-600 font-bold">&times;</button>
           </div>
         )}
         {/* Interim voice transcript */}
         {interimText && (
-          <div className="mb-2 px-4 py-2 bg-blue-50 rounded-xl text-sm text-blue-700 italic animate-pulse">
+          <div className="mb-2 px-4 py-2 bg-blue-50 rounded-xl type-body-md-strong text-blue-700 italic animate-pulse">
             🎙 {interimText}
           </div>
         )}
         <form onSubmit={onSubmit} className="flex gap-2 items-center">
           <div className="flex-1 flex items-center bg-slate-100 rounded-2xl px-4 py-3">
             <input
-              className="flex-1 bg-transparent border-none focus:outline-none focus:ring-0 text-slate-900 placeholder:text-slate-400"
+              className="flex-1 bg-transparent border-none focus:outline-none focus:ring-0 type-body-md text-slate-900 placeholder:text-slate-400"
               value={input || ''}
               onChange={(e) => setInput(e.target.value)}
               placeholder={voiceState === "listening" ? "Listening..." : "Type your message here..."}

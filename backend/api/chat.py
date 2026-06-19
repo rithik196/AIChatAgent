@@ -8,24 +8,557 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import List, Dict, Any
 import httpx
+import html
 import json
+import subprocess
+import tempfile
 import time
 import math
 import random
 import re
 import logging
+import string
+import sys
+import textwrap
+from pathlib import Path
+import datetime
 
 from db import get_customer_by_phone, get_customer_by_national_id, update_customer, get_etb_customer_profile, get_etb_registered_ibans
-from services.mail import send_open_banking_email
-from backend.utils.eligibility import calculate_max_eligible_amount
+from services.mail import send_open_banking_email, send_docusign_email
+from utils.eligibility import calculate_max_eligible_amount
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
 AGENT_URL = "http://localhost:8001"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+AGENT_DIR = REPO_ROOT / "agent"
+if str(AGENT_DIR) not in sys.path:
+    sys.path.append(str(AGENT_DIR))
+try:
+    from knowledge.faq_engine import answer_general_query as answer_gateway_general_query
+except Exception:
+    answer_gateway_general_query = None
+
+COMMODITY_CERTIFICATE_TEMPLATE = REPO_ROOT / "frontend" / "public" / "assets" / "CommodityCertificate.html"
+COMMODITY_CERTIFICATE_OUTPUT_DIR = REPO_ROOT / "frontend" / "public" / "generated"
+CHROME_CANDIDATES = (
+    Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),
+    Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"),
+)
 
 # ── In-memory session store (backed by agent persistence) ────────────
 SESSION_STORE: dict[str, dict] = {}
+GATEWAY_SESSION_DIR = REPO_ROOT / ".data" / "sessions"
+GATEWAY_SESSION_DIR.mkdir(parents=True, exist_ok=True)
+
+COMMODITY_CERTIFICATE_PRICE = 3710.80
+
+PERSONAL_COMPLETION_FIELDS = [
+    "levelOfEducation",
+    "maritalStatus",
+    "dependents",
+    "houseType",
+]
+
+PERSONAL_COMPLETION_LABELS = {
+    "levelOfEducation": "Level of education",
+    "maritalStatus": "Marital Status",
+    "dependents": "No. of dependents",
+    "houseType": "House Type",
+}
+
+PERSONAL_COMPLETION_OPTIONS = {
+    "levelOfEducation": [
+        "Graduation",
+        "Primary Education",
+        "Intermediate (Middle School)",
+        "Secondary (High School)",
+        "Diploma (Associate / Intermediate)",
+        "Bachelor's Degree",
+        "Master's Degree",
+        "Doctorate (PhD)",
+    ],
+    "maritalStatus": [
+        "Single",
+        "Married",
+        "Divorced",
+        "Widowed",
+        "Separated",
+        "Polygamous",
+    ],
+    "dependents": ["0", "1", "2", "3", "4", "5", "6+"],
+    "houseType": [
+        "Villa",
+        "Owned Villa",
+        "Owned Apartment",
+        "Owned Traditional House",
+        "Rented Apartment",
+        "Rented Villa",
+        "Company Provided Accommodation",
+        "Shared Accommodation",
+        "Family Owned (Not in applicant name)",
+        "Government Housing",
+    ],
+}
+
+PERSONAL_COMPLETION_STAGE_AWAITING_PROCEED = "awaiting_proceed"
+PERSONAL_COMPLETION_STAGE_COLLECTING = "collecting"
+PERSONAL_COMPLETION_STAGE_COMPLETE = "complete"
+
+EXPENSE_BREAKDOWN_DEFAULT = {
+    "housing": "3000",
+    "food": "1500",
+    "utilities": "760",
+    "healthcare": "500",
+    "transportation": "1000",
+    "education": "800",
+}
+
+ETB_EXPENSES_TOTAL = 7560
+
+CONTINUATION_PHRASES = (
+    "yes",
+    "yep",
+    "yeah",
+    "sure",
+    "ok",
+    "ohk",
+    "okay",
+    "alright",
+    "begin",
+    "start",
+    "lets begin",
+    "let's begin",
+    "start journey",
+    "begin journey",
+    "proceed",
+    "continue",
+    "go ahead",
+    "go on",
+    "please proceed",
+    "please continue",
+    "carry on",
+    "move on",
+    "yes proceed",
+    "proceed please",
+    "confirm",
+    "confirmed",
+    "i confirm",
+)
+
+DECLINE_PHRASES = (
+    "no",
+    "nope",
+    "not now",
+    "not yet",
+    "later",
+    "skip",
+    "cancel",
+    "stop",
+    "hold on",
+    "wait",
+)
+
+
+def _gateway_session_path(session_id: str) -> Path:
+    safe_id = (session_id or "").replace("/", "_").replace("\\", "_").replace("..", "_")
+    return GATEWAY_SESSION_DIR / f"{safe_id}.json"
+
+
+def _load_gateway_session(session_id: str) -> dict | None:
+    path = _gateway_session_path(session_id)
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return {k: v for k, v in data.items() if not k.startswith("_")}
+    except (json.JSONDecodeError, OSError):
+        logger.exception("Failed to load persisted gateway session %s", session_id)
+        return None
+
+
+def _store_gateway_session(session_id: str, session: dict) -> None:
+    session["session_id"] = session_id
+    SESSION_STORE[session_id] = session
+    path = _gateway_session_path(session_id)
+    try:
+        path.write_text(json.dumps({**session, "_saved_at": time.time()}, ensure_ascii=False, default=str), encoding="utf-8")
+    except OSError:
+        logger.exception("Failed to persist gateway session %s", session_id)
+
+
+def _is_missing_value(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str):
+        cleaned = value.strip()
+        return cleaned == "" or cleaned == "-"
+    return False
+
+
+def _get_personal_completion_state(session: dict) -> dict[str, Any] | None:
+    profile = _build_personal_widget_data(session, session.get("session_id", ""))
+    personal = profile.get("personal", {}) if isinstance(profile, dict) else {}
+    address = profile.get("address", {}) if isinstance(profile, dict) else {}
+
+    values = {
+        "levelOfEducation": personal.get("levelOfEducation"),
+        "maritalStatus": personal.get("maritalStatus"),
+        "dependents": personal.get("dependents"),
+        "houseType": address.get("houseType"),
+    }
+
+    missing_fields = [field for field in PERSONAL_COMPLETION_FIELDS if _is_missing_value(values.get(field))]
+    if not missing_fields:
+        return None
+
+    return {
+        "missing_fields": missing_fields,
+        "current_field": missing_fields[0],
+    }
+
+
+def _build_personal_completion_prompt(field_key: str) -> str:
+    label = PERSONAL_COMPLETION_LABELS.get(field_key, field_key)
+    return f"Please choose your {label} from the options below to complete your profile."
+
+
+def _build_personal_completion_options(field_key: str) -> list[dict[str, str]]:
+    options = PERSONAL_COMPLETION_OPTIONS.get(field_key, [])
+    return [
+        {"id": f"{field_key}_{idx}", "label": option, "value": option}
+        for idx, option in enumerate(options)
+    ]
+
+
+def _ensure_expenses_prefilled(session: dict) -> None:
+    if session.get("expenses_prefilled"):
+        return
+    if session.get("ntb_open_banking_income_verified") or session.get("income_verification_method") == "open_banking":
+        _prefill_open_banking_expenses(session)
+        return
+    if session.get("customerType") == "ETB" or session.get("journeyMode") == "ETB_CORE":
+        session["expenses_prefilled"] = True
+        session["expenses_total"] = ETB_EXPENSES_TOTAL
+        session["expenses_breakdown"] = dict(EXPENSE_BREAKDOWN_DEFAULT)
+        expenses = session.setdefault("expenses", {})
+        expenses["breakdown"] = session["expenses_breakdown"]
+        expenses["total"] = ETB_EXPENSES_TOTAL
+
+
+def _prefill_open_banking_expenses(session: dict) -> None:
+    session["income_verification_method"] = "open_banking"
+    session["ntb_open_banking_income_verified"] = True
+    if session.get("expenses_prefilled"):
+        return
+    session["expenses_prefilled"] = True
+    session["expenses_total"] = ETB_EXPENSES_TOTAL
+    session["expenses_breakdown"] = dict(EXPENSE_BREAKDOWN_DEFAULT)
+    expenses = session.setdefault("expenses", {})
+    expenses["breakdown"] = session["expenses_breakdown"]
+    expenses["total"] = ETB_EXPENSES_TOTAL
+
+
+def _normalize_chat_text(text: str) -> str:
+    normalized = (text or "").lower().strip()
+    if normalized.startswith("__sys__"):
+        normalized = normalized[7:].strip()
+    normalized = re.sub(r"\s+", " ", normalized)
+    return normalized
+
+
+def _contains_phrase(text: str, phrase: str) -> bool:
+    pattern = rf"(?<!\w){re.escape(phrase)}(?!\w)"
+    return bool(re.search(pattern, text))
+
+
+def _is_decline_message(text: str) -> bool:
+    normalized = _normalize_chat_text(text)
+    if not normalized:
+        return False
+    return any(_contains_phrase(normalized, phrase) for phrase in DECLINE_PHRASES)
+
+
+def _is_continuation_message(text: str) -> bool:
+    normalized = _normalize_chat_text(text)
+    if not normalized or _is_decline_message(normalized):
+        return False
+    return any(_contains_phrase(normalized, phrase) for phrase in CONTINUATION_PHRASES)
+
+
+def _looks_like_general_question(raw_text: str) -> bool:
+    text = (raw_text or "").strip()
+    normalized = _normalize_chat_text(text)
+    if not normalized:
+        return False
+    if text.lower().startswith("__sys__"):
+        return False
+    if re.fullmatch(r"[12]\d{9}", normalized) or re.fullmatch(r"\d{6}", normalized):
+        return False
+    if _is_continuation_message(normalized) or _is_decline_message(normalized):
+        return False
+    if normalized.startswith(("update_personal", "update_address", "update_employment", "update_income", "update_expenses")):
+        return False
+    if normalized.startswith(("document_uploaded:", "profile_completion:")):
+        return False
+
+    question_starters = (
+        "what", "why", "how", "when", "where", "which", "who",
+        "can you", "could you", "do i", "does", "is", "are",
+        "will", "would", "should", "tell me", "explain", "describe",
+    )
+    if "?" in text:
+        return True
+    return any(normalized.startswith(starter) for starter in question_starters)
+
+
+def _answer_gateway_question(raw_text: str, session: dict) -> str | None:
+    if not _looks_like_general_question(raw_text):
+        return None
+    if answer_gateway_general_query:
+        try:
+            faq = answer_gateway_general_query(raw_text, session)
+            if faq and faq.get("text"):
+                return str(faq["text"])
+        except Exception:
+            logger.exception("Failed to answer gateway FAQ question")
+    return (
+        "I do not have an exact prepared answer for that question yet, but I have kept your application "
+        "at the same step. Please rephrase it around the Cash Finance journey, documents, eligibility, "
+        "verification, offer, signing, or disbursement and I will help from there."
+    )
+
+
+async def _answer_gateway_question_with_agent(raw_text: str, session_id: str, session: dict) -> str | None:
+    if not _looks_like_general_question(raw_text):
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            resp = await client.post(
+                f"{AGENT_URL}/answer_question",
+                json={
+                    "session_id": session_id,
+                    "message": raw_text,
+                    "session": session,
+                },
+            )
+        if resp.status_code == 200:
+            data = resp.json()
+            answer = (data.get("response") or "").strip()
+            if answer:
+                return answer
+        logger.warning("Agent question endpoint returned status=%s body=%s", resp.status_code, resp.text[:500])
+    except Exception:
+        logger.exception("Failed to answer question through agent endpoint")
+    return _answer_gateway_question(raw_text, session)
+
+
+def _extract_prefixed_json_payload(text: str, prefix: str) -> dict[str, Any] | None:
+    pattern = rf"^\s*(?:__SYS__)?{re.escape(prefix)}\s*:\s*(\{{[\s\S]*\}})\s*$"
+    match = re.match(pattern, text or "", flags=re.IGNORECASE)
+    if not match:
+        return None
+    try:
+        payload = json.loads(match.group(1))
+    except json.JSONDecodeError:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _apply_deterministic_profile_update(session: dict, command: str, payload: dict[str, Any]) -> str | None:
+    if command == "UPDATE_PERSONAL":
+        _persist_profile_update(session, "personal", {
+            "levelOfEducation": payload.get("levelOfEducation"),
+            "maritalStatus": payload.get("maritalStatus"),
+            "dependents": payload.get("dependents"),
+            "email": payload.get("email"),
+        })
+        return "Personal Details"
+
+    if command == "UPDATE_ADDRESS":
+        _persist_profile_update(session, "address", {
+            "line1": payload.get("line1"),
+            "line2": payload.get("line2"),
+            "street": payload.get("street"),
+            "city": payload.get("city"),
+            "postalCode": payload.get("postalCode"),
+            "houseType": payload.get("houseType"),
+        })
+        return "Address Details"
+
+    if command == "UPDATE_EMPLOYMENT":
+        _persist_profile_update(session, "employment", {
+            "type": payload.get("type"),
+            "industry": payload.get("industry"),
+            "employer": payload.get("employer"),
+            "experience": payload.get("experience"),
+            "workAddress": payload.get("workAddress"),
+        })
+        return "Employment Details"
+
+    if command == "UPDATE_INCOME":
+        _persist_profile_update(session, "income", {
+            "monthly": payload.get("monthly"),
+            "obligations": payload.get("obligations"),
+            "creditCardLimit": payload.get("creditCardLimit"),
+        })
+        return "Income Details"
+
+    if command == "UPDATE_EXPENSES":
+        breakdown = payload.get("breakdown") if isinstance(payload.get("breakdown"), dict) else {}
+        if breakdown:
+            session["expenses_breakdown"] = breakdown
+            session["expenses"] = {**(session.get("expenses") or {}), "breakdown": breakdown}
+        total_expenses = payload.get("totalExpenses")
+        if total_expenses is not None:
+            session["expenses_total"] = total_expenses
+            session["expenses"] = {**(session.get("expenses") or {}), "total": total_expenses}
+        session["expenses_editing"] = False
+        return "Monthly Expenses"
+
+    return None
+
+
+def _stage_pending_profile_update(session: dict, section: str, updates: dict[str, Any]) -> None:
+    key = f"pending_{section}_update"
+    session[key] = updates
+
+
+def _finalize_pending_profile_update(session: dict, section: str) -> bool:
+    key = f"pending_{section}_update"
+    updates = session.pop(key, None)
+    if not isinstance(updates, dict):
+        return False
+    if section == "income":
+        updates = {
+            **updates,
+            "monthly": "SAR 41250",
+        }
+    _persist_profile_update(session, section, updates)
+    return True
+
+
+def _ensure_session_customer_profile(session: dict) -> dict[str, Any]:
+    profile = session.get("customer_profile")
+    if isinstance(profile, dict) and profile:
+        return profile
+    hydrated = _build_personal_widget_data(session, session.get("session_id", "")) or {}
+    session["customer_profile"] = hydrated if isinstance(hydrated, dict) else {}
+    return session["customer_profile"]
+
+
+def _persist_profile_update(session: dict, section: str, updates: dict[str, Any]) -> dict[str, Any]:
+    """Persist widget edits into the session profile and best-effort mock DB."""
+    profile = _ensure_session_customer_profile(session)
+    payload: dict[str, Any] = {}
+
+    if section == "personal":
+        personal = profile.setdefault("personal", {})
+        if updates.get("levelOfEducation") is not None:
+            personal["levelOfEducation"] = str(updates.get("levelOfEducation", "")).strip()
+            payload["levelOfEducation"] = personal["levelOfEducation"]
+        if updates.get("maritalStatus") is not None:
+            personal["maritalStatus"] = str(updates.get("maritalStatus", "")).strip()
+            payload["maritalStatus"] = personal["maritalStatus"]
+        if updates.get("dependents") is not None:
+            personal["dependents"] = str(updates.get("dependents", "")).strip()
+            payload["dependents"] = personal["dependents"]
+        if updates.get("email") is not None:
+            profile["email"] = str(updates.get("email", "")).strip()
+            payload["email"] = profile["email"]
+        payload["personal"] = dict(personal)
+
+    elif section == "address":
+        address = profile.setdefault("address", {})
+        for key in ("line1", "line2", "street", "city", "postalCode", "houseType"):
+            if updates.get(key) is not None:
+                address[key] = str(updates.get(key, "")).strip()
+        payload["address"] = dict(address)
+
+    elif section == "employment":
+        employment = profile.setdefault("employment", {})
+        for key in ("type", "industry", "employer", "experience"):
+            if updates.get(key) is not None:
+                employment[key] = str(updates.get(key, "")).strip()
+        work_address_in = updates.get("workAddress") if isinstance(updates.get("workAddress"), dict) else {}
+        if isinstance(work_address_in, dict):
+            work_address = employment.setdefault("workAddress", {})
+            for key in ("line1", "city", "postalCode"):
+                if work_address_in.get(key) is not None:
+                    work_address[key] = str(work_address_in.get(key, "")).strip()
+        payload["employment"] = dict(employment)
+
+    elif section == "income":
+        income = profile.setdefault("income", {})
+        for key in ("monthly", "obligations", "creditCardLimit"):
+            if updates.get(key) is not None:
+                income[key] = str(updates.get(key, "")).strip()
+        payload["income"] = dict(income)
+
+    national_id = session.get("collected", {}).get("id_number")
+    if national_id:
+        try:
+            update_customer(national_id, payload)
+            customer = get_customer_by_national_id(national_id)
+            if customer:
+                profile = _merge_widget_profile(_customer_to_widget_data(customer), profile)
+        except Exception:
+            logger.exception("Failed to persist %s update for session %s", section, session.get("session_id", ""))
+
+    session["customer_profile"] = profile
+    return profile
+
+
+def _build_personal_completion_gate_options() -> list[dict[str, str]]:
+    return [
+        {"id": "profile_completion_proceed", "label": "Proceed", "value": "proceed"},
+        {"id": "profile_completion_later", "label": "Not now", "value": "not_now"},
+    ]
+
+
+def _fast_state_response(session: dict) -> str | None:
+    step = session.get("step", "identity")
+    sub_step = session.get("sub_step", "")
+
+    if step == "identity" and sub_step == "personal_details":
+        return "I have retrieved your current profile details. Please review them to make sure everything is correct to proceed."
+
+    if step == "identity" and sub_step == "modify_address_choice":
+        return "Would you like to update your existing address or add a new address?"
+
+    if step == "identity" and sub_step == "modify_income_proof_choice":
+        return "Please choose how you'd like to verify your income."
+
+    if step == "identity" and sub_step == "modify_employment_document_pending":
+        return "Please upload your employment verification document below."
+
+    if step == "identity" and sub_step == "modify_income_upload_statement":
+        return "Please upload your bank statement below."
+
+    if step == "identity" and sub_step == "open_banking_email_sent":
+        return "An email has been sent to your registered ID. Please link your account."
+
+    if step == "identity" and sub_step == "open_banking_linked":
+        return "We are updating your details now. Please wait while we save the changes."
+
+    if step == "identity" and sub_step == "expenses":
+        if session.get("expenses_editing"):
+            return "Edit the category amounts below, then save your changes."
+        return "Please review your monthly expenses below, or choose Modify if you want to edit the breakdown."
+
+    if step == "identity" and sub_step == "updating_details":
+        return "We are updating your details now. Please wait while we save the changes."
+
+    return None
+
+
+def _apply_personal_completion_value(session: dict, field_key: str, value: str) -> None:
+    cleaned = value.strip()
+    if field_key in {"levelOfEducation", "maritalStatus", "dependents"}:
+        _persist_profile_update(session, "personal", {field_key: cleaned})
+    elif field_key == "houseType":
+        _persist_profile_update(session, "address", {"houseType": cleaned})
 
 
 def _get_phone_from_session_id(session_id: str) -> str:
@@ -102,7 +635,7 @@ def _merge_widget_profile(base: Any, overlay: Any) -> dict:
     return _merge_dicts(base_dict, overlay_dict)
 
 
-def _build_personal_widget_data(session: dict) -> dict:
+def _build_personal_widget_data(session: dict, session_id: str = "") -> dict:
     """Build a full personal-details payload by combining the live session with persisted customer data."""
     complete_profile: dict[str, Any] = {}
     national_id = session.get("collected", {}).get("id_number", "")
@@ -110,12 +643,18 @@ def _build_personal_widget_data(session: dict) -> dict:
         customer = get_customer_by_national_id(national_id)
         if customer:
             complete_profile = _customer_to_widget_data(customer)
+    if not complete_profile:
+        phone = _get_phone_from_session_id(session_id) or session.get("collected", {}).get("phone_number", "")
+        if phone:
+            customer = get_customer_by_phone(phone)
+            if customer:
+                complete_profile = _customer_to_widget_data(customer)
 
     return _merge_widget_profile(complete_profile, session.get("customer_profile"))
 
 
 def _build_application_summary_data(session: dict) -> dict:
-    profile = _build_personal_widget_data(session)
+    profile = _build_personal_widget_data(session, session.get("session_id", ""))
     collected = session.get("collected", {})
     finance = session.get("finance_summary", {})
     account = session.get("selected_account", {})
@@ -130,7 +669,7 @@ def _build_application_summary_data(session: dict) -> dict:
     # Ensure bank/beneficiary are populated from IBAN master when only IBAN is present.
     if account.get("iban") and (not account.get("bank") or not account.get("beneficiary")):
         try:
-            from backend.utils.eligibility import validate_iban
+            from utils.eligibility import validate_iban
             iban_lookup = validate_iban(account.get("iban", ""))
             if iban_lookup.get("valid"):
                 if not account.get("bank"):
@@ -150,7 +689,7 @@ def _build_application_summary_data(session: dict) -> dict:
         "financeSummary": {
             "amount": finance.get("amount", 0),
             "tenure": finance.get("tenure", 60),
-            "profit_rate": finance.get("profit_rate", "12%"),
+            "profit_rate": finance.get("profit_rate", "6.1%"),
             "monthly_installment": finance.get("monthly_installment", 0),
             "total_payable": finance.get("total_payable", 0),
         },
@@ -165,12 +704,239 @@ def _build_application_summary_data(session: dict) -> dict:
 
 # ── Helpers ──────────────────────────────────────────────────────────
 
+def _generate_certificate_number(length: int = 20) -> str:
+    alphabet = string.ascii_uppercase + string.digits
+    return "".join(random.choices(alphabet, k=length))
+
+
+def _ensure_higher_amount_workitem(session: dict) -> dict:
+    workitem = session.setdefault("backoffice_workitem", {})
+    if not workitem.get("applicationId"):
+        workitem["applicationId"] = str(random.randint(100000, 999999))
+    workitem.update({
+        "customerId": session.get("collected", {}).get("id_number", ""),
+        "requestedAmount": session.get("requested_amount", "above_eligible_limit"),
+        "maxEligible": session.get("offer", {}).get("max_amount", 0),
+        "branch": "Riyadh",
+        "remarks": "Customer requested amount above automatic eligible limit. Application submitted for manual specialist review.",
+    })
+    return workitem
+
+
+def _select_browser_executable() -> Path | None:
+    for candidate in CHROME_CANDIDATES:
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _resolve_commodity_certificate_amount(session: dict) -> int:
+    finance = session.setdefault("finance_summary", {})
+    amount = finance.get("amount") or session.get("finance_amount")
+    if not amount:
+        amount = session.get("offer", {}).get("selected_amount") or session.get("offer", {}).get("max_amount") or 0
+    amount = int(amount or 0)
+    finance["amount"] = amount
+    session["finance_amount"] = amount
+    return amount
+
+
+def _render_commodity_certificate_html(session: dict) -> str:
+    if not COMMODITY_CERTIFICATE_TEMPLATE.exists():
+        raise FileNotFoundError(f"Commodity certificate template not found: {COMMODITY_CERTIFICATE_TEMPLATE}")
+
+    template = COMMODITY_CERTIFICATE_TEMPLATE.read_text(encoding="utf-8")
+    certificate_state = session.setdefault("commodity_certificate", {})
+    certificate_number = certificate_state.get("certificateNumber") or _generate_certificate_number()
+    certificate_state["certificateNumber"] = certificate_number
+
+    finance_amount = _resolve_commodity_certificate_amount(session)
+    current_date = datetime.datetime.now().strftime("%d %B %Y")
+    volume = finance_amount / COMMODITY_CERTIFICATE_PRICE if COMMODITY_CERTIFICATE_PRICE else 0.0
+
+    replacements = {
+        "&certificateNumber&": html.escape(certificate_number),
+        "$certificateNumber$": html.escape(certificate_number),
+        "&CurrentDate&": html.escape(current_date),
+        "$CurrentDate$": html.escape(current_date),
+        "&Volume&": f"{volume:.2f}",
+        "$Volume$": f"{volume:.2f}",
+        "&Value&": f"{finance_amount:,.0f}",
+        "$Value$": f"{finance_amount:,.0f}",
+    }
+
+    rendered = template
+    for placeholder, value in replacements.items():
+        rendered = rendered.replace(placeholder, value)
+    return rendered
+
+
+def _ensure_commodity_certificate_pdf(session: dict) -> str:
+    existing_url = session.get("commodity_certificate_url")
+    if existing_url:
+        existing_path = REPO_ROOT / "frontend" / "public" / existing_url.lstrip("/")
+        if existing_path.exists():
+            return existing_url
+
+    COMMODITY_CERTIFICATE_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    session_id = session.get("session_id", "session")
+    pdf_path = COMMODITY_CERTIFICATE_OUTPUT_DIR / f"CommodityCertificate_{session_id}.pdf"
+    _write_commodity_certificate_pdf(session, pdf_path)
+    session["commodity_certificate_url"] = f"/generated/{pdf_path.name}"
+    session.setdefault("commodity_certificate", {})["pdf_url"] = session["commodity_certificate_url"]
+    return session["commodity_certificate_url"]
+
+
+def _pdf_escape_text(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+
+def _wrap_pdf_text(value: str, width: int = 92) -> list[str]:
+    return textwrap.wrap(value, width=width, break_long_words=False, break_on_hyphens=False) or [""]
+
+
+def _pdf_text_command(x: int, y: int, text: str, font: str = "F1", size: int = 12) -> str:
+    return f"BT /{font} {size} Tf 1 0 0 1 {x} {y} Tm ({_pdf_escape_text(text)}) Tj ET"
+
+
+def _compose_pdf_document(page_streams: list[str]) -> bytes:
+    objects: list[bytes] = []
+
+    def add_object(payload: str) -> None:
+        objects.append(payload.encode("latin-1"))
+
+    add_object("<< /Type /Catalog /Pages 2 0 R >>")
+    page_refs = " ".join(f"{idx} 0 R" for idx in range(3, 3 + len(page_streams)))
+    add_object(f"<< /Type /Pages /Kids [{page_refs}] /Count {len(page_streams)} >>")
+
+    for page_number in range(len(page_streams)):
+        content_obj = 5 + len(page_streams) + page_number
+        add_object(
+            f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] "
+            f"/Resources << /Font << /F1 5 0 R /F2 6 0 R >> >> /Contents {content_obj} 0 R >>"
+        )
+
+    add_object("<< /Type /Font /Subtype /Type1 /BaseFont /Times-Roman >>")
+    add_object("<< /Type /Font /Subtype /Type1 /BaseFont /Times-Bold >>")
+
+    for stream in page_streams:
+        stream_bytes = stream.encode("latin-1")
+        add_object(f"<< /Length {len(stream_bytes)} >>\nstream\n{stream}\nendstream")
+
+    pdf = bytearray()
+    pdf.extend(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
+
+    offsets: list[int] = []
+    for index, obj in enumerate(objects, start=1):
+        offsets.append(len(pdf))
+        pdf.extend(f"{index} 0 obj\n".encode("latin-1"))
+        pdf.extend(obj)
+        pdf.extend(b"\nendobj\n")
+
+    xref_start = len(pdf)
+    pdf.extend(f"xref\n0 {len(objects) + 1}\n".encode("latin-1"))
+    pdf.extend(b"0000000000 65535 f \n")
+    for offset in offsets:
+        pdf.extend(f"{offset:010d} 00000 n \n".encode("latin-1"))
+    pdf.extend(
+        f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref_start}\n%%EOF".encode("latin-1")
+    )
+    return bytes(pdf)
+
+
+def _write_commodity_certificate_pdf(session: dict, pdf_path: Path) -> None:
+    certificate_state = session.setdefault("commodity_certificate", {})
+    certificate_number = certificate_state.get("certificateNumber") or _generate_certificate_number()
+    certificate_state["certificateNumber"] = certificate_number
+    finance_amount = _resolve_commodity_certificate_amount(session)
+    current_date = datetime.datetime.now().strftime("%d %B %Y")
+    volume = finance_amount / COMMODITY_CERTIFICATE_PRICE if COMMODITY_CERTIFICATE_PRICE else 0.0
+    volume_text = f"{volume:.2f}"
+    value_text = f"{finance_amount:,.0f}"
+
+    page1: list[str] = []
+    page1.append(_pdf_text_command(150, 790, f"Certificate Number: {certificate_number}", "F2", 18))
+    intro_lines = _wrap_pdf_text(
+        "This is to certify that the following transaction has been executed through the Saudi Finance Company in accordance with the Rules of Saudi Islamic Services Ltd.",
+        88,
+    )
+    y = 748
+    for line in intro_lines:
+        page1.append(_pdf_text_command(60, y, line, "F1", 11))
+        y -= 16
+
+    page1.append(_pdf_text_command(60, y - 12, "Seller : Newgen Software", "F2", 11))
+    page1.append(_pdf_text_command(60, y - 28, "Buyer : Newgen Software", "F2", 11))
+
+    rows = [
+        ("Bid No :", certificate_number),
+        ("Reporting Time / Date :", current_date),
+        ("Value Date :", current_date),
+        ("Product Code / Description :", "Crude Palm Oil"),
+        ("Unit :", "Tonnages"),
+        ("Volume :", volume_text),
+        ("Currency :", "SAR"),
+        ("Price :", "3710.80"),
+        ("Price (MYR Equivalent) :", ""),
+        ("Value :", value_text),
+        ("Transaction Type :", "BID"),
+        ("Murabaha Value :", value_text),
+    ]
+
+    table_y = y - 70
+    for label, value in rows:
+        page1.append(_pdf_text_command(60, table_y, label, "F2", 11))
+        page1.append(_pdf_text_command(250, table_y, value, "F1", 11))
+        table_y -= 22
+
+    page2: list[str] = []
+    page2.append(_pdf_text_command(60, 790, "Notes :", "F2", 14))
+    notes = [
+        'This e-Certificate has the benefit of, and is generated pursuant to, the Rules of Saudi Islamic Services Ltd. ("Rules"). The Rules form an integral part hereof.',
+        "This e-Certificate is valid only in the Saudi Finance Company. BMIS will not be responsible and be held liable for any loss or damage arising from any unauthorised use of this e-Certificate.",
+        "This e-Certificate is governed by, and construed in accordance with, the laws of Saudi so long as it does not contradict with Shariah principles.",
+        "This e-Certificate is a computer generated and does not require any signature.",
+        "In the absence of manifest error by BMIS, the contents of this e-Certificate are conclusive and binding upon the Participants named herein.",
+        "Any expression used in this e-Certificate has the same meaning as in the Rules.",
+    ]
+    note_y = 760
+    for idx, note in enumerate(notes, start=1):
+        wrapped = _wrap_pdf_text(f"{idx}. {note}", 88)
+        for line in wrapped:
+            page2.append(_pdf_text_command(60, note_y, line, "F1", 11))
+            note_y -= 16
+        note_y -= 8
+
+    pdf_path.write_bytes(_compose_pdf_document(["\n".join(page1), "\n".join(page2)]))
+    
+def _resolve_step_tracker(step: str, sub_step: str) -> dict[str, int | bool]:
+    """Return step tracker metadata for canonical journey entry points."""
+    tracker_map: dict[tuple[str, str], int] = {
+        ("identity", "personal_details"): 1,
+        ("offer", "pre_approved_offer"): 2,
+        ("offer", "eligible"): 2,
+        ("trade", "authorize"): 3,
+        ("esign", "documents"): 4,
+        ("disburse", "account"): 5,
+    }
+    step_number = tracker_map.get((step, sub_step))
+    if not step_number:
+        return {"show_step_tracker": False, "tracker_total": 5}
+    return {
+        "show_step_tracker": True,
+        "tracker_step": step_number,
+        "tracker_total": 5,
+    }
+
+
 def resolve_widget(session: dict, extract: dict | None) -> dict | None:
     """Map step+sub_step to widget type + data payload."""
     step = session.get("step", "identity")
     sub_step = session.get("sub_step", "")
     customer_type = session.get("customerType") or ("ETB" if session.get("user_type") == "existing" else "NTB")
     journey_mode = session.get("journeyMode", "PRE_DEDUPE")
+    tracker_data = _resolve_step_tracker(step, sub_step)
+    is_preapproved_path = customer_type == "ETB"
 
     if step == "identity" and sub_step == "nafath_pending":
         return {"widget": "NafathWidget", "data": {"nafath_code": session.get("nafath_code", math.floor(10 + random.random() * 89))}}
@@ -185,16 +951,17 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
         return {"widget": "LoadingWidget", "data": {"title": "Running Dedupe Check...", "subtitle": "Verifying your records", "auto_advance_ms": 3000, "next_message": "dedupe_complete", "silent": True}}
 
     if step == "identity" and sub_step == "identify_yourself":
-        if customer_type == "ETB" and journey_mode != "NTB_ENRICHMENT":
-            return None
         return {"widget": "NTBIntroductionWidget", "data": {}}
 
     if step == "identity" and sub_step == "personal_details":
-        if customer_type == "ETB" and journey_mode != "NTB_ENRICHMENT":
+        completion_state = _get_personal_completion_state(session)
+        if session.get("profile_completion_stage") == PERSONAL_COMPLETION_STAGE_COLLECTING:
             return None
+        show_actions = completion_state is None
         return {
             "widget": "PersonalDetailsWidget",
-            "data": _build_personal_widget_data(session) or {
+            "data": {
+                **(_build_personal_widget_data(session, session.get("session_id", "")) or {
                 "name": "Customer",
                 "phone": "",
                 "email": "",
@@ -232,6 +999,11 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
                     "obligations": "",
                     "creditCardLimit": ""
                 }
+                }),
+                "showActions": show_actions,
+                "missingFields": completion_state["missing_fields"] if completion_state else [],
+                "currentMissingField": completion_state["current_field"] if completion_state else None,
+                **tracker_data,
             }
         }
 
@@ -239,16 +1011,50 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
         return {"widget": "ModifySectionWidget", "data": {}}
 
     if step == "identity" and sub_step == "modify_personal":
-        return {"widget": "ModifyPersonalWidget", "data": session.get("customer_profile") or {}}
+        profile = _build_personal_widget_data(session, session.get("session_id", "")) or session.get("customer_profile") or {}
+        return {"widget": "ModifyPersonalWidget", "data": profile}
 
     if step == "identity" and sub_step == "modify_address":
-        return {"widget": "ModifyAddressWidget", "data": session.get("customer_profile") or {}}
+        address_mode = session.get("modify_address_mode", "existing")
+        profile = _build_personal_widget_data(session, session.get("session_id", "")) or session.get("customer_profile") or {}
+        if address_mode == "new":
+            profile = {
+                **profile,
+                "address": {
+                    "line1": "",
+                    "line2": "",
+                    "street": "",
+                    "city": "",
+                    "postalCode": "",
+                    "houseType": "",
+                },
+                "addressMode": "new",
+            }
+        else:
+            profile = {**profile, "addressMode": "existing"}
+        return {"widget": "ModifyAddressWidget", "data": profile}
+
+    if step == "identity" and sub_step == "modify_address_choice":
+        return None
 
     if step == "identity" and sub_step == "modify_employment":
         return {"widget": "ModifyEmploymentWidget", "data": session.get("customer_profile") or {}}
 
     if step == "identity" and sub_step == "modify_income":
         return {"widget": "ModifyIncomeWidget", "data": session.get("customer_profile") or {}}
+
+    if step == "identity" and sub_step == "modify_income_proof_choice":
+        return {"widget": "IncomeProofChoiceWidget", "data": {}}
+
+    if step == "identity" and sub_step == "open_banking_email_sent":
+        return {
+            "widget": "DelayTriggerWidget",
+            "data": {
+                "auto_advance_ms": 3000,
+                "next_message": "open_banking_linked",
+                "silent": True,
+            },
+        }
 
     if step == "identity" and sub_step == "updating_details":
         updating = session.get("updating", {})
@@ -263,11 +1069,21 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
         }
 
     if step == "identity" and sub_step == "expenses":
+        _ensure_expenses_prefilled(session)
+        expenses = session.get("expenses") or {}
+        breakdown = expenses.get("breakdown")
+        if not isinstance(breakdown, dict) or not breakdown:
+            breakdown = session.get("expenses_breakdown") if isinstance(session.get("expenses_breakdown"), dict) else {}
+        if not isinstance(breakdown, dict) or not breakdown:
+            breakdown = EXPENSE_BREAKDOWN_DEFAULT if session.get("expenses_prefilled") else {}
+        mode = "edit" if session.get("expenses_editing") else "review"
         return {
             "widget": "ExpensesWidget",
             "data": {
+                "mode": mode,
                 "prefilled": bool(session.get("expenses_prefilled")),
-                "totalExpenses": session.get("expenses_total", 7560),
+                "totalExpenses": expenses.get("total", session.get("expenses_total", 7560)),
+                "breakdown": breakdown,
             },
         }
 
@@ -294,7 +1110,7 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
             session.setdefault("offer", {})
             session["offer"].update({
                 "max_amount": max_amount,
-                "profit_rate": "12%",
+                "profit_rate": "6.1%",
                 "max_tenure": etb_profile.get("preferred_tenure_months", 60),
             })
         return {
@@ -302,8 +1118,10 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
             "data": {
                 "title": "Your Pre-Approved Offer",
                 "max_amount": max_amount,
-                "profit_rate": "12%",
+                "profit_rate": "6.1%",
                 "max_tenure": offer.get("max_tenure", etb_profile.get("preferred_tenure_months", 60)),
+                "is_preapproved_path": True,
+                **tracker_data,
             },
         }
 
@@ -331,10 +1149,12 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
                 "data": {
                     "title": "Your Pre-Approved Offer",
                     "max_amount": max_amount,
-                    "profit_rate": eligibility_result.get("profit_rate", "12%"),
+                    "profit_rate": eligibility_result.get("profit_rate", "6.1%"),
                     "max_tenure": etb_profile.get("preferred_tenure_months", 60),
                     "is_etb": True,
+                    "is_preapproved_path": True,
                     "pre_approval_badge": "✓ PRE-APPROVED",
+                    **tracker_data,
                 },
             }
         
@@ -344,9 +1164,11 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
             "data": {
                 "title": "Eligible Finance Offer",
                 "max_amount": offer.get("max_amount", 350000),
-                "profit_rate": offer.get("profit_rate", "12%"),
+                "profit_rate": offer.get("profit_rate", "6.1%"),
                 "max_tenure": offer.get("max_tenure", 60),
-                "is_etb": False,
+                "is_etb": is_preapproved_path,
+                "is_preapproved_path": is_preapproved_path,
+                **tracker_data,
             },
         }
 
@@ -358,16 +1180,10 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
             },
         }
 
-    if step == "offer" and sub_step == "wants_more_open_banking":
+    if step == "offer" and sub_step in {"wants_more_review", "wants_more_open_banking"}:
         return {
-            "widget": "LoadingWidget",
-            "data": {
-                "title": "Open Banking Verification",
-                "subtitle": "Linking your account and updating your profile...",
-                "auto_advance_ms": 4500,
-                "next_message": "open_banking_linked",
-                "silent": True,
-            },
+            "widget": "HigherAmountReviewWidget",
+            "data": {},
         }
 
     if step == "offer" and sub_step == "wants_more_backoffice":
@@ -391,9 +1207,29 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
                     "show_manual_entry": True,
                     "pre_select_default": True,  # Auto-select is_default=true account
                     "is_etb": True,
+                    **tracker_data,
                 },
             }
-        
+        if journey_mode == "NTB_ENRICHMENT" and session.get("ntb_open_banking_income_verified"):
+            return {
+                "widget": "AccountSelectorWidget",
+                "data": {
+                    "accounts": [
+                        {
+                            "type": "Existing Account",
+                            "iban": "SA0230400197093922590013",
+                            "bank": "Alawwal Bank",
+                            "beneficiary": "Abdul Rahman",
+                            "is_default": True,
+                        },
+                    ],
+                    "show_manual_entry": True,
+                    "pre_select_default": True,
+                    "is_etb": False,
+                    **tracker_data,
+                },
+            }
+
         # NTB: Empty list + manual entry
         return {
             "widget": "AccountSelectorWidget",
@@ -402,11 +1238,12 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
                 "show_manual_entry": True,
                 "pre_select_default": False,
                 "is_etb": False,
+                **tracker_data,
             },
         }
 
     if step == "disburse" and sub_step == "iban_validation":
-        from backend.utils.eligibility import validate_iban
+        from utils.eligibility import validate_iban
         iban = session.get("selected_account", {}).get("iban", "")
         validation_result = validate_iban(iban)
         return {
@@ -475,8 +1312,10 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
             "data": {
                 "max_amount": offer.get("max_amount", 250000),
                 "min_amount": 5000,
-                "profit_rate": offer.get("profit_rate", "12%"),
+                "profit_rate": offer.get("profit_rate", "6.1%"),
                 "default_tenure": 36,
+                "default_amount": offer.get("max_amount", 250000) if is_preapproved_path else None,
+                "is_preapproved_path": is_preapproved_path,
             },
         }
 
@@ -487,7 +1326,7 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
         }
 
     if step == "trade" and sub_step == "authorize":
-        return {"widget": "CommodityTradeAuthorizationWidget", "data": {}}
+        return {"widget": "CommodityTradeAuthorizationWidget", "data": {**tracker_data}}
 
     if step == "trade" and sub_step == "loading":
         return {"widget": "LoadingWidget", "data": {"title": "Executing Commodity Trade...", "subtitle": "Processing your Murabaha transaction", "auto_advance_ms": 3000, "next_message": "loading_complete", "silent": True}}
@@ -496,14 +1335,14 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
         return {"widget": "VerificationSuccessWidget", "data": {"title": "Commodity Trade Successful", "subtitle": "Your Murabaha transaction has been completed.", "auto_advance_ms": 3000, "next_message": "trade_certificate_ready", "silent": True}}
 
     if step == "trade" and sub_step == "certificate":
+        certificate_url = _ensure_commodity_certificate_pdf(session)
         return {
             "widget": "DocumentPreviewWidget",
             "data": {
                 "title": "Commodity Transaction Certificate",
                 "subtitle": "Generated and ready to download",
                 "current_step": 3,
-                # UI no longer shows an in-widget proceed button; chat will prompt the user.
-                "documents": [{"name": "Commodity Transaction Certificate", "type": "pdf", "url": "/assets/Letter.pdf"}],
+                "documents": [{"name": "Commodity Transaction Certificate", "type": "pdf", "url": certificate_url}],
             },
         }
 
@@ -512,13 +1351,13 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
             "widget": "DocumentPreviewWidget",
             "data": {
                 "documents": [
-                    {"name": "Contract Letter", "type": "pdf", "url": "/assets/Letter.pdf"},
-                    {"name": "Promissory Note", "type": "pdf", "url": "/assets/Letter.pdf"},
+                    {"name": "Contract Letter", "type": "pdf", "url": "/assets/ContractSaudi.pdf"},
+                    {"name": "Promissory Note", "type": "pdf", "url": "/assets/PromissoryNote.pdf"},
                 ],
                 "title": "Contract & Promissory Note",
                 "subtitle": "Ready for E-Sign",
                 "current_step": 4,
-                # proceed/send actions are handled by chat confirmations
+                **tracker_data,
             },
         }
 
@@ -537,20 +1376,9 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
     if step == "esign" and sub_step == "otp_ivr":
         return {"widget": "OtpVerificationWidget", "data": {}}
 
-    if step == "disburse" and sub_step == "account":
-        return {
-            "widget": "AccountSelectorWidget",
-            "data": {
-                "accounts": [
-                    {"type": "Current Account", "iban": "SA89 2980 0000 9090 5454 5001", "bank": "FIRST ABU DHABI BANK"},
-                    {"type": "Savings Account", "iban": "SA89 2980 0000 9090 5454 5002", "bank": "FIRST ABU DHABI BANK"},
-                ],
-            },
-        }
-
     if step == "done":
         finance = session.get("finance_summary") or {}
-        profile = _build_personal_widget_data(session)
+        profile = _build_personal_widget_data(session, session.get("session_id"))
         selected_account = session.get("selected_account", {})
         customer_name = profile.get("name") or session.get("collected", {}).get("full_name") or "Customer"
         return {
@@ -608,11 +1436,484 @@ def _build_sse_stream(response_text: str, widget_spec: dict | None, ui_flags: di
     yield "data: [DONE]\n\n"
 
 
+def _stream_widget_response(response_text: str, widget_spec: dict | None, ui_flags: dict | None = None) -> StreamingResponse:
+    return StreamingResponse(
+        _build_sse_stream(response_text, widget_spec, ui_flags),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "x-vercel-ai-ui-message-stream": "v1",
+        },
+    )
+
+
+def _is_expenses_confirmation_message(text: str) -> bool:
+    normalized = _normalize_chat_text(text)
+    if _looks_like_general_question(text):
+        return False
+    mentions_expenses = any(
+        _contains_phrase(normalized, phrase)
+        for phrase in ("expense", "expenses", "monthly expenses")
+    )
+    confirms = any(
+        _contains_phrase(normalized, phrase)
+        for phrase in (
+            "confirm",
+            "confirmed",
+            "i confirm",
+            "looks correct",
+            "looks good",
+            "correct",
+            "approved",
+            "proceed",
+            "continue",
+        )
+    )
+    return mentions_expenses and confirms
+
+
+def _handle_active_widget_text_action(
+    session: dict,
+    session_id: str,
+    raw_msg: str,
+    normalized_msg: str,
+) -> StreamingResponse | None:
+    if not raw_msg or _looks_like_general_question(raw_msg):
+        return None
+    if raw_msg.lower().strip().startswith("__sys__"):
+        return None
+
+    step = session.get("step", "identity")
+    sub_step = session.get("sub_step", "")
+
+    def done(text: str, widget_spec_override: dict | None | object = ...) -> StreamingResponse:
+        _store_gateway_session(session_id, session)
+        widget_spec = resolve_widget(session, None) if widget_spec_override is ... else widget_spec_override
+        return _stream_widget_response(text, widget_spec)
+
+    if step == "identity" and sub_step == "identify_yourself":
+        if _is_continuation_message(raw_msg):
+            session["sub_step"] = "personal_details"
+            return done(
+                "I have retrieved your current profile details. Please review them to make sure everything is correct to proceed."
+            )
+        if _is_decline_message(raw_msg):
+            return done("No problem. Take your time and let me know when you're ready to begin.", None)
+
+    if step == "identity" and sub_step == "expenses":
+        if _is_expenses_confirmation_message(raw_msg) or normalized_msg == "expenses_confirm":
+            expenses = session.setdefault("expenses", {})
+            if "breakdown" not in expenses and session.get("expenses_breakdown"):
+                expenses["breakdown"] = session.get("expenses_breakdown")
+            if "total" not in expenses and session.get("expenses_total") is not None:
+                expenses["total"] = session.get("expenses_total")
+            session["expenses_editing"] = False
+            session["sub_step"] = "bureau_consent"
+            return done("Please review and confirm the bureau consent to continue.")
+        if any(_contains_phrase(normalized_msg, phrase) for phrase in ("modify expenses", "edit expenses", "change expenses")):
+            session["expenses_editing"] = True
+            session.setdefault("expenses", {})
+            return done("Edit the category amounts below, then save your changes.")
+
+    if step == "offer" and sub_step in {"wants_more_review", "wants_more_open_banking"}:
+        if any(_contains_phrase(normalized_msg, phrase) for phrase in ("go back", "back", "cancel review")):
+            session["sub_step"] = "wants_more_decision"
+            return done("Please confirm whether the maximum eligible amount is okay for you.")
+        if (
+            normalized_msg == "submit_higher_amount_review"
+            or (_contains_phrase(normalized_msg, "submit") and _contains_phrase(normalized_msg, "review"))
+            or _contains_phrase(normalized_msg, "send for review")
+        ):
+            session["sub_step"] = "wants_more_backoffice"
+            _ensure_higher_amount_workitem(session)
+            return done("Your request has been submitted for manual review.")
+
+    return None
+
+
+def _parse_rate(rate_text: Any) -> float:
+    match = re.search(r"(\d+(?:\.\d+)?)", str(rate_text or "6.1"))
+    return float(match.group(1)) if match else 6.1
+
+
+def _build_finance_summary(amount: int, tenure: int, profit_rate_text: Any = None) -> dict:
+    annual_rate = _parse_rate(profit_rate_text)
+    monthly_rate = annual_rate / 100 / 12
+    if monthly_rate > 0 and tenure > 0:
+        installment = amount * monthly_rate * ((1 + monthly_rate) ** tenure) / (((1 + monthly_rate) ** tenure) - 1)
+    else:
+        installment = amount / max(tenure, 1)
+    monthly_installment = int(round(installment))
+    return {
+        "amount": int(amount),
+        "tenure": int(tenure),
+        "profit_rate": f"{annual_rate:g}%",
+        "monthly_installment": monthly_installment,
+        "total_payable": monthly_installment * int(tenure),
+    }
+
+
+def _complete_eligibility_check(session: dict) -> None:
+    offer = session.get("offer") or {}
+    if not offer.get("max_amount"):
+        collected = session.get("collected", {})
+        monthly_income = float(collected.get("monthly_income", 35650))
+        monthly_obligations = float(collected.get("monthly_obligations", 8750))
+        credit_card_limit = float(collected.get("credit_card_limit", 20000))
+        eligibility_result = calculate_max_eligible_amount(
+            monthly_income=monthly_income,
+            monthly_obligations=monthly_obligations,
+            credit_card_limit=credit_card_limit,
+            tenure_months=60,
+            region=session.get("region", "SA"),
+        )
+        offer = {
+            "max_amount": eligibility_result.get("max_amount") or eligibility_result.get("estimated_amount", 0),
+            "profit_rate": "6.1%",
+            "max_tenure": 60,
+            "foir_status": eligibility_result.get("foir_status", "ELIGIBLE"),
+        }
+    else:
+        offer.setdefault("profit_rate", "6.1%")
+        offer.setdefault("max_tenure", 60)
+    session["offer"] = offer
+    session["step"] = "offer"
+    session["step_number"] = 2
+    session["sub_step"] = "eligible"
+
+
+def _populate_selected_account_details(session: dict) -> None:
+    account = session.setdefault("selected_account", {})
+    iban = account.get("iban", "")
+    if not iban:
+        return
+    if account.get("bank") and account.get("beneficiary"):
+        return
+    try:
+        from utils.eligibility import validate_iban
+        iban_lookup = validate_iban(iban)
+        if iban_lookup.get("valid"):
+            account["bank"] = account.get("bank") or iban_lookup.get("bank", "")
+            account["beneficiary"] = account.get("beneficiary") or iban_lookup.get("beneficiary", "")
+    except Exception:
+        logger.exception("Failed to derive bank details for IBAN %s", iban)
+
+
+def _send_docusign_for_session(session: dict, session_id: str) -> None:
+    if session.get("docusign_email_sent"):
+        return
+    profile = _build_personal_widget_data(session, session_id) or session.get("customer_profile") or {}
+    if profile and not session.get("customer_profile"):
+        session["customer_profile"] = profile
+    email = profile.get("email")
+    name = profile.get("name") or session.get("collected", {}).get("full_name") or "Customer"
+    if not email:
+        logger.warning("[routing] session=%s skipped docusign email because customer_profile.email is missing", session_id)
+        return
+    try:
+        if send_docusign_email(email, name):
+            session["docusign_email_sent"] = True
+    except Exception as exc:
+        logger.error("Failed to trigger Docusign email for session %s: %s", session_id, exc)
+
+
+def _finish_disbursement(session: dict) -> None:
+    finance_summary = session.get("finance_summary", {})
+    selected_account = session.get("selected_account", {})
+    session["disbursement"] = {
+        "customer_name": (_build_personal_widget_data(session, session.get("session_id", "")) or {}).get("name", "Customer"),
+        "reference": f"PF-2025-{str(abs(hash(session.get('collected', {}).get('id_number', ''))))[:8]}",
+        "date": datetime.datetime.now().strftime("%d %B %Y"),
+        "amount": finance_summary.get("amount", 0),
+        "account": selected_account.get("iban", "****1234"),
+        "tenure": f"{finance_summary.get('tenure', 0)} Months",
+        "profit_rate": finance_summary.get("profit_rate", ""),
+        "first_installment": (datetime.datetime.now() + datetime.timedelta(days=90)).strftime("%d %B %Y"),
+        "monthly_installment": finance_summary.get("monthly_installment", 0),
+        "total_payable": finance_summary.get("total_payable", 0),
+        "bank": selected_account.get("bank", ""),
+        "beneficiary": selected_account.get("beneficiary", ""),
+    }
+    session["step"] = "done"
+    session["sub_step"] = "complete"
+
+
+def _is_widget_event(raw_msg: str, normalized_msg: str) -> bool:
+    raw = (raw_msg or "").strip()
+    lower = raw.lower()
+    if lower.startswith("__sys__"):
+        return True
+    if lower.startswith(("account_selected::", "iban_entered::", "document_uploaded:")):
+        return True
+    return normalized_msg in {
+        "nafath approved",
+        "confirm and proceed",
+        "let me enter a different iban",
+        "send me an otp",
+        "call me for ivr verification",
+        "i do not consent",
+        "otp verification",
+        "ivr verification",
+        "need higher amount",
+        "request for a higher amount",
+        "continue with current eligible amount",
+    }
+
+
+def _handle_widget_event(session: dict, session_id: str, raw_msg: str, normalized_msg: str) -> StreamingResponse | None:
+    if not _is_widget_event(raw_msg, normalized_msg):
+        return None
+
+    raw = (raw_msg or "").strip()
+    raw_lower = raw.lower()
+    signal = normalized_msg
+    step = session.get("step", "identity")
+    sub_step = session.get("sub_step", "")
+    response_text = "Please continue."
+    ui_flags: dict[str, Any] = {}
+
+    def done(text: str, widget_spec_override: dict | None | object = ...) -> StreamingResponse:
+        _store_gateway_session(session_id, session)
+        widget_spec = resolve_widget(session, None) if widget_spec_override is ... else widget_spec_override
+        return _stream_widget_response(text, widget_spec, ui_flags)
+
+    profile_completion_payload = _extract_prefixed_json_payload(raw_msg, "PROFILE_COMPLETION")
+    if profile_completion_payload is not None:
+        session["step"] = "identity"
+        session["sub_step"] = "personal_details"
+        field = profile_completion_payload.get("field")
+        value = profile_completion_payload.get("value")
+        if field and value is not None:
+            _apply_personal_completion_value(session, str(field), str(value))
+        completion_state = _get_personal_completion_state(session)
+        if completion_state:
+            session["profile_completion"] = completion_state
+            session["profile_completion_stage"] = PERSONAL_COMPLETION_STAGE_COLLECTING
+            current_field = completion_state["current_field"]
+            ui_flags.update({
+                "options": _build_personal_completion_options(current_field),
+                "optionContext": {
+                    "type": "profile_completion",
+                    "field": current_field,
+                },
+            })
+            return done(_build_personal_completion_prompt(current_field), None)
+        session.pop("profile_completion", None)
+        session.pop("profile_completion_stage", None)
+        return done(
+            "Your profile details are complete. Please review them and choose Modify Details or Confirm & Continue."
+        )
+
+    if step == "identity":
+        if sub_step == "nafath_pending" and signal == "nafath approved":
+            session["sub_step"] = "loading"
+            return done("Your identity is being verified now. Please wait while we complete this step.")
+
+        if sub_step == "loading" and signal == "loading_complete":
+            session["sub_step"] = "verified"
+            return done("Your identity has been verified successfully. We are moving to the Dedupe check now.")
+
+        if sub_step == "verified" and signal == "continue":
+            session["sub_step"] = "dedupe_check"
+            return done("We are running a Dedupe check to verify your records. Please wait a moment while we continue.")
+
+        if sub_step == "dedupe_check" and signal in {"dedupe_complete", "loading_complete"}:
+            if session.get("customerType") == "ETB":
+                session["step"] = "offer"
+                session["step_number"] = 2
+                session["sub_step"] = "pre_approved_offer"
+                session["journeyMode"] = "ETB_CORE"
+                response_text = "Great news! Your pre-approved offer is ready. Please review it below."
+            else:
+                session["sub_step"] = "identify_yourself"
+                session["journeyMode"] = "NTB_ENRICHMENT"
+                response_text = "Your journey overview is ready. Would you like to proceed with the next step?"
+            return done(response_text)
+
+        if sub_step == "identify_yourself" and signal == "continue":
+            session["sub_step"] = "personal_details"
+            return done("I have retrieved your current profile details. Please review them to make sure everything is correct to proceed.")
+
+        if sub_step == "personal_details" and signal == "continue":
+            personal_completion_state = _get_personal_completion_state(session)
+            if personal_completion_state:
+                session["profile_completion"] = personal_completion_state
+                session.setdefault("profile_completion_stage", PERSONAL_COMPLETION_STAGE_AWAITING_PROCEED)
+                return done("Please complete the missing details in chat to continue.")
+            session["sub_step"] = "expenses"
+            return done("Let's proceed to your monthly expenses review.")
+
+        if signal == "bureau_consent_granted":
+            session["sub_step"] = "eligibility_check"
+            session.pop("profile_completion", None)
+            session.pop("profile_completion_stage", None)
+            return done("Thank you. We are starting the next verification step now.")
+
+        if signal == "bureau_consent_denied":
+            session["sub_step"] = "bureau_consent"
+            return done("No problem. Please review the consent when you're ready to continue.")
+
+        if signal == "eligibility_check_complete":
+            _complete_eligibility_check(session)
+            session.pop("profile_completion", None)
+            session.pop("profile_completion_stage", None)
+            return done("Your eligibility check is complete. Please review the offer below.")
+
+    if step == "offer":
+        if sub_step == "pre_approved_offer":
+            if signal == "accepted_pre_approved_offer":
+                session["step"] = "identity"
+                session["sub_step"] = "bureau_consent"
+                return done("Please review and confirm the bureau consent to continue.")
+            if signal in {"higher_amount_requested", "need higher amount", "request for a higher amount"}:
+                session["wants_more"] = True
+                session["journeyMode"] = "NTB_ENRICHMENT"
+                session["journeyOrigin"] = session.get("customerType", "UNKNOWN")
+                session["transitionReason"] = "Customer requested higher amount than pre-approved ETB offer"
+                session["step"] = "identity"
+                session["sub_step"] = "personal_details"
+                return done("I have retrieved your current profile details. Please review them to make sure everything is correct to proceed.")
+
+        if sub_step == "eligible" and signal == "continue":
+            session["sub_step"] = "wants_more_decision"
+            return done("Please confirm whether the maximum eligible amount is okay for you.")
+
+        if sub_step == "wants_more_decision":
+            if signal == "accepted_max_offer":
+                session["sub_step"] = "slider"
+                return done("Please choose your desired finance amount and tenure.")
+            if signal == "higher_amount_requested":
+                session["sub_step"] = "wants_more_review"
+                return done("Please review the manual review request details below.")
+
+        if sub_step in {"wants_more_review", "wants_more_open_banking"} and signal == "higher_amount_review_go_back":
+            session["sub_step"] = "wants_more_decision"
+            return done("Please confirm whether the maximum eligible amount is okay for you.")
+
+        if sub_step in {"wants_more_review", "wants_more_open_banking"} and signal == "submit_higher_amount_review":
+            session["sub_step"] = "wants_more_backoffice"
+            _ensure_higher_amount_workitem(session)
+            return done("Your request has been submitted for manual review.")
+
+        payload = _extract_prefixed_json_payload(raw_msg, "CONFIRM_FINANCE_PLAN")
+        if sub_step == "slider" and payload is not None:
+            amount = int(payload.get("amount") or payload.get("loan_amount") or session.get("offer", {}).get("max_amount", 0))
+            tenure = int(payload.get("tenure") or payload.get("tenure_months") or 36)
+            rate = payload.get("profitRate") or session.get("offer", {}).get("profit_rate", "6.1%")
+            session["finance_summary"] = _build_finance_summary(amount, tenure, rate)
+            session["finance_amount"] = amount
+            session["sub_step"] = "summary"
+            return done("Your finance summary is ready. Please review the details below.")
+
+        if sub_step == "summary" and signal == "continue":
+            session["step"] = "trade"
+            session["step_number"] = 3
+            session["sub_step"] = "authorize"
+            return done(
+                "Murabaha financing uses an asset-backed trade structure. The bank purchases the commodity and sells it to you at the agreed cost plus profit. Please review and authorize the commodity trade."
+            )
+
+    if step == "trade":
+        if sub_step == "authorize" and signal == "continue":
+            session["sub_step"] = "loading"
+            return done("We are executing the commodity trade now.")
+
+        if sub_step == "loading" and signal == "loading_complete":
+            session["sub_step"] = "success"
+            return done("Commodity trade completed successfully.")
+
+        if sub_step == "success" and signal == "trade_certificate_ready":
+            session["sub_step"] = "certificate"
+            return done("Your Commodity Transaction Certificate has been generated.")
+
+        if sub_step == "certificate" and signal == "proceed_esign":
+            session["step"] = "esign"
+            session["step_number"] = 4
+            session["sub_step"] = "documents"
+            return done("Please review the Contract & Promissory Note below. When ready, proceed with e-signing.")
+
+    if step == "esign":
+        if sub_step == "documents" and signal == "proceed_esign":
+            _send_docusign_for_session(session, session_id)
+            session["sub_step"] = "email_sent"
+            return done("The e-sign email has been sent. Please complete the signature from your email.")
+
+        if sub_step == "email_sent" and signal == "esign_email_complete":
+            session["step"] = "disburse"
+            session["step_number"] = 5
+            session["sub_step"] = "account"
+            return done("Please select the disbursement account for your finance amount.")
+
+    if step == "disburse":
+        if sub_step == "account":
+            if raw_lower.startswith("account_selected::"):
+                iban = raw.split("::", 1)[1].strip()
+                session["selected_account"] = {"iban": iban}
+                for account in (resolve_widget(session, None) or {}).get("data", {}).get("accounts", []):
+                    if account.get("iban") == iban:
+                        session["selected_account"].update({
+                            "bank": account.get("bank", ""),
+                            "beneficiary": account.get("beneficiary", ""),
+                        })
+                        break
+                session["sub_step"] = "iban_validation"
+                return done("We are validating the selected IBAN now.")
+            if raw_lower.startswith("iban_entered::"):
+                session["selected_account"] = {"iban": raw.split("::", 1)[1].strip().replace(" ", "")}
+                session["sub_step"] = "iban_validation"
+                return done("We are validating the entered IBAN now.")
+
+        if sub_step == "iban_validation":
+            if signal == "let me enter a different iban":
+                session["sub_step"] = "account"
+                return done("Please enter a different IBAN for disbursement.")
+            if signal == "confirm and proceed":
+                _populate_selected_account_details(session)
+                session["sub_step"] = "application_summary"
+                return done("Please review your application summary before final verification.")
+
+        if sub_step == "application_summary" and signal == "continue":
+            session["sub_step"] = "ivr_consent"
+            return done("Please choose your final verification method.")
+
+        if sub_step == "ivr_consent":
+            if signal in {"send me an otp", "otp verification"}:
+                session["sub_step"] = "otp_entry"
+                return done("Please enter the 6-digit OTP sent to your registered mobile number.")
+            if signal in {"call me for ivr verification", "ivr verification"}:
+                session["sub_step"] = "ivr_requested"
+                return done("IVR request is started. Please verify the details through the call.")
+            if signal == "i do not consent":
+                session["step"] = "offer"
+                session["sub_step"] = "wants_more_backoffice"
+                session["backoffice_workitem"] = {
+                    "customerId": session.get("collected", {}).get("id_number", ""),
+                    "remarks": "Customer did not consent to final verification. Route to RM review.",
+                }
+                return done("We have routed your application for back-office review.")
+
+        if sub_step == "otp_verifying" and signal == "otp_verification_complete":
+            session["sub_step"] = "otp_success"
+            return done("OTP verification completed successfully.")
+
+        if sub_step == "ivr_requested" and signal == "ivr_verification_complete":
+            session["sub_step"] = "ivr_success"
+            return done("IVR verification completed successfully.")
+
+        if sub_step in {"otp_success", "ivr_success"} and signal == "complete_disbursement":
+            _finish_disbursement(session)
+            return done("Final verification is complete. Your disbursement summary is ready.")
+
+    return None
+
+
 # ── Request models ───────────────────────────────────────────────────
 
 class ChatRequest(BaseModel):
     session_id: str
     messages: List[Dict[str, Any]]
+    session: Dict[str, Any] | None = None
 
 class UpdateCustomerRequest(BaseModel):
     session_id: str
@@ -629,6 +1930,11 @@ class SendOpenBankingEmailRequest(BaseModel):
     email: str
     name: str
 
+class DocusignEmailRequest(BaseModel):
+    session_id: str
+    email: str
+    name: str
+
 
 # ── Endpoints ────────────────────────────────────────────────────────
 
@@ -636,42 +1942,141 @@ class SendOpenBankingEmailRequest(BaseModel):
 async def chat(request: ChatRequest):
     session_id = request.session_id
     last_user_msg = (request.messages[-1].get("content", "") if request.messages else "").strip()
+    normalized_user_msg = _normalize_chat_text(last_user_msg)
 
     # Get or create session
     current_session = SESSION_STORE.get(session_id)
     if not current_session:
-        current_session = {
-            "region": "SA",
-            "step": "identity",
-            "sub_step": "awaiting_id",
-            "step_number": 1,
-            "total_steps": 5,
-            "product": "cash_finance",
-            "user_type": "unknown",
-            "customerType": "UNKNOWN",
-            "journeyMode": "PRE_DEDUPE",
-            "journeyOrigin": "UNKNOWN",
-            "transitionReason": None,
-            "collected": {},
-            "offer": {},
-            "finance_summary": {},
-            "disbursement": {},
-            "_lastWidgetState": "identity/awaiting_id",
-        }
-        SESSION_STORE[session_id] = current_session
+        persisted_session = _load_gateway_session(session_id)
+        if persisted_session:
+            current_session = persisted_session
+            current_session["session_id"] = session_id
+        elif isinstance(request.session, dict) and request.session:
+            current_session = dict(request.session)
+            current_session["session_id"] = session_id
+            current_session.setdefault("region", "SA")
+            current_session.setdefault("step", "identity")
+            current_session.setdefault("sub_step", "awaiting_id")
+            current_session.setdefault("step_number", 1)
+            current_session.setdefault("total_steps", 5)
+            current_session.setdefault("product", "cash_finance")
+            current_session.setdefault("user_type", "unknown")
+            current_session.setdefault("customerType", "UNKNOWN")
+            current_session.setdefault("journeyMode", "PRE_DEDUPE")
+            current_session.setdefault("journeyOrigin", "UNKNOWN")
+            current_session.setdefault("transitionReason", None)
+            current_session.setdefault("collected", {})
+            current_session.setdefault("offer", {})
+            current_session.setdefault("finance_summary", {})
+            current_session.setdefault("disbursement", {})
+            current_session.setdefault("_lastWidgetState", "identity/awaiting_id")
+        else:
+            current_session = {
+                "session_id": session_id,
+                "region": "SA",
+                "step": "identity",
+                "sub_step": "awaiting_id",
+                "step_number": 1,
+                "total_steps": 5,
+                "product": "cash_finance",
+                "user_type": "unknown",
+                "customerType": "UNKNOWN",
+                "journeyMode": "PRE_DEDUPE",
+                "journeyOrigin": "UNKNOWN",
+                "transitionReason": None,
+                "collected": {},
+                "offer": {},
+                "finance_summary": {},
+                "disbursement": {},
+                "_lastWidgetState": "identity/awaiting_id",
+            }
+        _store_gateway_session(session_id, current_session)
+    else:
+        current_session["session_id"] = session_id
 
-    # Quick-path: accept any 6-digit OTP during esign otp step and advance to disbursement account
+    widget_event_response = _handle_widget_event(current_session, session_id, last_user_msg, normalized_user_msg)
+    if widget_event_response is not None:
+        return widget_event_response
+
+    active_widget_text_response = _handle_active_widget_text_action(
+        current_session,
+        session_id,
+        last_user_msg,
+        normalized_user_msg,
+    )
+    if active_widget_text_response is not None:
+        return active_widget_text_response
+
+    # Quick-path: accept any 6-digit OTP during OTP entry steps.
     if last_user_msg and re.fullmatch(r"\d{6}", last_user_msg):
         sub = current_session.get("sub_step", "")
+        if current_session.get("step") == "disburse" and sub == "otp_entry":
+            current_session["sub_step"] = "otp_verifying"
+            _store_gateway_session(session_id, current_session)
+            widget_spec = resolve_widget(current_session, None)
+            response_text = "We are verifying the OTP now."
+            return _stream_widget_response(response_text, widget_spec)
+
         if current_session.get("step") == "esign" and sub == "otp_ivr":
             # Treat entered 6-digit as successful verification (no real-time backend OTP required)
             current_session["step"] = "disburse"
             current_session["sub_step"] = "account"
-            SESSION_STORE[session_id] = current_session
+            _store_gateway_session(session_id, current_session)
 
             # Return an immediate SSE response with the account selector widget
             widget_spec = resolve_widget(current_session, None)
             response_text = "OTP verification successful. Proceeding to disbursement account selection."
+            return _stream_widget_response(response_text, widget_spec)
+
+    # Quick-path: internal widget signals should not fall through to the LLM layer.
+    # This keeps button clicks deterministic even if the session is momentarily behind
+    # the widget that emitted the signal.
+    direct_signal = normalized_user_msg
+    if current_session.get("step") == "identity" and direct_signal in {
+        "bureau_consent_granted",
+        "bureau_consent_denied",
+        "eligibility_check_complete",
+    }:
+        current_sub = current_session.get("sub_step", "")
+        if direct_signal == "eligibility_check_complete" and current_sub in {
+            "personal_details",
+            "bureau_consent",
+            "eligibility_check",
+        }:
+            offer = current_session.get("offer", {}) or {}
+            customer_id = current_session.get("collected", {}).get("id_number", "")
+            customer_type = current_session.get("customerType") or "UNKNOWN"
+            journey_mode = current_session.get("journeyMode") or (
+                "ETB_CORE" if customer_type == "ETB" else "NTB_ENRICHMENT"
+            )
+            if not offer.get("max_amount"):
+                etb_profile = get_etb_customer_profile(customer_id) if customer_id else {}
+                eligibility_result = calculate_max_eligible_amount(
+                    monthly_income=etb_profile.get("monthly_income", 35650),
+                    monthly_obligations=etb_profile.get("monthly_obligations", 8750),
+                    credit_card_limit=etb_profile.get("credit_card_limit", 20000),
+                    tenure_months=etb_profile.get("preferred_tenure_months", 60),
+                    region=current_session.get("region", "SA"),
+                )
+                offer = {
+                    "max_amount": eligibility_result.get("max_amount") or eligibility_result.get("estimated_amount", 0),
+                    "profit_rate": "6.1%",
+                    "max_tenure": etb_profile.get("preferred_tenure_months", 60),
+                    "foir_status": eligibility_result.get("foir_status", "ELIGIBLE"),
+                }
+            else:
+                offer.setdefault("profit_rate", "6.1%")
+                offer.setdefault("max_tenure", 60)
+            current_session["offer"] = offer
+            current_session["step"] = "offer"
+            current_session["step_number"] = 2
+            current_session["sub_step"] = "eligible"
+            current_session["journeyMode"] = journey_mode
+            current_session.pop("profile_completion", None)
+            current_session.pop("profile_completion_stage", None)
+            _store_gateway_session(session_id, current_session)
+            widget_spec = resolve_widget(current_session, None)
+            response_text = "Your eligibility check is complete. Please review the offer below."
             return StreamingResponse(
                 _build_sse_stream(response_text, widget_spec),
                 media_type="text/event-stream",
@@ -681,6 +2086,469 @@ async def chat(request: ChatRequest):
                     "x-vercel-ai-ui-message-stream": "v1",
                 },
             )
+
+        if current_sub in {"personal_details", "bureau_consent"}:
+            if direct_signal == "bureau_consent_granted":
+                current_session["sub_step"] = "eligibility_check"
+                current_session.pop("profile_completion", None)
+                current_session.pop("profile_completion_stage", None)
+                _store_gateway_session(session_id, current_session)
+                widget_spec = resolve_widget(current_session, None)
+                response_text = "Thank you. We are starting the next verification step now."
+                return StreamingResponse(
+                    _build_sse_stream(response_text, widget_spec),
+                    media_type="text/event-stream",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "Connection": "keep-alive",
+                        "x-vercel-ai-ui-message-stream": "v1",
+                    },
+                )
+
+            current_session["sub_step"] = "bureau_consent"
+            _store_gateway_session(session_id, current_session)
+            widget_spec = resolve_widget(current_session, None)
+            response_text = "No problem. Please review the consent when you're ready to continue."
+            return StreamingResponse(
+                _build_sse_stream(response_text, widget_spec),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "x-vercel-ai-ui-message-stream": "v1",
+                },
+            )
+
+    # Identity routing for widget-triggered intents.
+    if current_session.get("step") == "identity":
+        if current_session.get("sub_step") == "updating_details" and normalized_user_msg == "update_complete":
+            updating_section = (current_session.get("updating") or {}).get("section")
+            if updating_section == "Income Details":
+                _finalize_pending_profile_update(current_session, "income")
+            elif updating_section == "Employment Details":
+                _finalize_pending_profile_update(current_session, "employment")
+            current_session["sub_step"] = "personal_details"
+            current_session.pop("updating", None)
+            current_session.pop("pending_income_verification", None)
+            _store_gateway_session(session_id, current_session)
+            widget_spec = resolve_widget(current_session, None)
+            response_text = (
+                "Your details have been successfully updated. "
+                "Would you like to update any other details, or should we confirm and proceed?"
+            )
+            return StreamingResponse(
+                _build_sse_stream(response_text, widget_spec),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "x-vercel-ai-ui-message-stream": "v1",
+                },
+                )
+
+        if current_session.get("sub_step") == "modify_address_choice":
+            existing_phrases = {
+                "existing",
+                "modify existing",
+                "existing address",
+                "old address",
+                "update existing address",
+                "keep existing address",
+            }
+            new_phrases = {
+                "new",
+                "new address",
+                "add new address",
+                "add address",
+                "add a new address",
+                "create new address",
+            }
+            if any(_contains_phrase(normalized_user_msg, phrase) for phrase in existing_phrases):
+                current_session["sub_step"] = "modify_address"
+                current_session["modify_address_mode"] = "existing"
+                _store_gateway_session(session_id, current_session)
+                widget_spec = resolve_widget(current_session, None)
+                response_text = "Please update your address details below."
+                return StreamingResponse(
+                    _build_sse_stream(response_text, widget_spec),
+                    media_type="text/event-stream",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "Connection": "keep-alive",
+                        "x-vercel-ai-ui-message-stream": "v1",
+                    },
+                )
+            if any(_contains_phrase(normalized_user_msg, phrase) for phrase in new_phrases):
+                current_session["sub_step"] = "modify_address"
+                current_session["modify_address_mode"] = "new"
+                _store_gateway_session(session_id, current_session)
+                widget_spec = resolve_widget(current_session, None)
+                response_text = "Please add the new address details below."
+                return StreamingResponse(
+                    _build_sse_stream(response_text, widget_spec),
+                    media_type="text/event-stream",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "Connection": "keep-alive",
+                        "x-vercel-ai-ui-message-stream": "v1",
+                    },
+                )
+
+        if current_session.get("sub_step") == "modify_employment_document_pending" and normalized_user_msg.startswith("document_uploaded:"):
+            _finalize_pending_profile_update(current_session, "employment")
+            current_session["sub_step"] = "updating_details"
+            current_session["updating"] = {
+                "section": "Employment Details",
+                "auto_advance_ms": 3000,
+                "next_message": "update_complete",
+                "silent": True,
+            }
+            _store_gateway_session(session_id, current_session)
+            widget_spec = resolve_widget(current_session, None)
+            response_text = "We are updating your employment details now. Please wait while we save the changes."
+            return StreamingResponse(
+                _build_sse_stream(response_text, widget_spec),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "x-vercel-ai-ui-message-stream": "v1",
+                },
+            )
+
+        if current_session.get("sub_step") == "modify_income_upload_statement" and normalized_user_msg.startswith("document_uploaded:"):
+            _finalize_pending_profile_update(current_session, "income")
+            current_session["sub_step"] = "updating_details"
+            current_session["updating"] = {
+                "section": "Income Details",
+                "auto_advance_ms": 3000,
+                "next_message": "update_complete",
+                "silent": True,
+            }
+            current_session["pending_income_verification"] = "upload_statement"
+            _store_gateway_session(session_id, current_session)
+            widget_spec = resolve_widget(current_session, None)
+            response_text = "We are updating your income details now. Please wait while we save the changes."
+            return StreamingResponse(
+                _build_sse_stream(response_text, widget_spec),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "x-vercel-ai-ui-message-stream": "v1",
+                },
+            )
+
+        if current_session.get("sub_step") == "open_banking_email_sent" and normalized_user_msg == "open_banking_linked":
+            current_session["sub_step"] = "updating_details"
+            current_session["updating"] = {
+                "section": "Income Details",
+                "auto_advance_ms": 10000,
+                "next_message": "open_banking_update_complete",
+                "silent": True,
+            }
+            current_session["pending_income_verification"] = "open_banking"
+            current_session["income_verification_method"] = "open_banking"
+            current_session["ntb_open_banking_income_verified"] = True
+            _store_gateway_session(session_id, current_session)
+            widget_spec = resolve_widget(current_session, None)
+            response_text = "We are updating your income details now. Please wait while we save the changes."
+            return StreamingResponse(
+                _build_sse_stream(response_text, widget_spec),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "x-vercel-ai-ui-message-stream": "v1",
+                },
+            )
+
+        if current_session.get("sub_step") == "updating_details" and normalized_user_msg == "open_banking_update_complete":
+            _finalize_pending_profile_update(current_session, "income")
+            _prefill_open_banking_expenses(current_session)
+            current_session["sub_step"] = "personal_details"
+            current_session.pop("updating", None)
+            current_session.pop("pending_income_verification", None)
+            _store_gateway_session(session_id, current_session)
+            widget_spec = resolve_widget(current_session, None)
+            response_text = (
+                "Your details have been successfully updated. "
+                "Would you like to update any other details, or should we confirm and proceed?"
+            )
+            return StreamingResponse(
+                _build_sse_stream(response_text, widget_spec),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "x-vercel-ai-ui-message-stream": "v1",
+                },
+            )
+
+        if normalized_user_msg == "expenses_modify":
+            current_session["sub_step"] = "expenses"
+            current_session["expenses_editing"] = True
+            _store_gateway_session(session_id, current_session)
+            widget_spec = resolve_widget(current_session, None)
+            response_text = "Edit the category amounts below, then save your changes."
+            return StreamingResponse(
+                _build_sse_stream(response_text, widget_spec),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "x-vercel-ai-ui-message-stream": "v1",
+                },
+            )
+
+        if normalized_user_msg == "expenses_confirm":
+            current_session["sub_step"] = "bureau_consent"
+            current_session["expenses_editing"] = False
+            _store_gateway_session(session_id, current_session)
+            widget_spec = resolve_widget(current_session, None)
+            response_text = "Please review and confirm the bureau consent to continue."
+            return StreamingResponse(
+                _build_sse_stream(response_text, widget_spec),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "x-vercel-ai-ui-message-stream": "v1",
+                },
+            )
+
+        explicit_identity_routes = {
+            "modify_section": "modify_section",
+            "modify_personal": "modify_personal",
+            "modify_address": "modify_address_choice",
+            "modify_address_existing": "modify_address",
+            "modify_address_new": "modify_address",
+            "modify_employment": "modify_employment",
+            "modify_income": "modify_income",
+            "upload_statement": "modify_income_upload_statement",
+            "open_banking": "open_banking_email_sent",
+        }
+        target_sub_step = explicit_identity_routes.get(normalized_user_msg)
+        if target_sub_step:
+            current_session["sub_step"] = target_sub_step
+            if normalized_user_msg == "modify_address":
+                current_session.pop("modify_address_mode", None)
+            elif normalized_user_msg == "modify_address_existing":
+                current_session["modify_address_mode"] = "existing"
+            elif normalized_user_msg == "modify_address_new":
+                current_session["modify_address_mode"] = "new"
+            elif normalized_user_msg == "upload_statement":
+                current_session["pending_income_verification"] = "upload_statement"
+            elif normalized_user_msg == "open_banking":
+                current_session["pending_income_verification"] = "open_banking"
+                current_session["income_verification_method"] = "open_banking"
+                current_session["ntb_open_banking_income_verified"] = True
+                profile = _build_personal_widget_data(current_session, session_id) or {}
+                if profile and not current_session.get("customer_profile"):
+                    current_session["customer_profile"] = profile
+                email = profile.get("email")
+                name = profile.get("name") or "Customer"
+                logger.info(
+                    "[routing] session=%s triggering open banking email email=%s name=%s profile_keys=%s",
+                    session_id,
+                    email,
+                    name,
+                    sorted(profile.keys()) if isinstance(profile, dict) else [],
+                )
+                if email:
+                    try:
+                        send_open_banking_email(email, name)
+                    except Exception as exc:
+                        logger.error("Failed to trigger Open Banking email for session %s: %s", session_id, exc)
+                else:
+                    logger.warning(
+                        "[routing] session=%s skipped open banking email because customer_profile.email is missing",
+                        session_id,
+                    )
+            _store_gateway_session(session_id, current_session)
+            widget_spec = resolve_widget(current_session, None)
+            prompt_map = {
+                "modify_section": "Which section would you like to update?",
+                "modify_personal": "Please update your personal details below.",
+                "modify_address_choice": "Would you like to update your existing address or add a new address?",
+                "modify_address": "Please update your address details below.",
+                "modify_employment": "Please update your employment details below.",
+                "modify_income": "Please update your income details below.",
+                "modify_income_upload_statement": "Please upload your bank statement below.",
+                "open_banking_email_sent": "An email has been sent to your registered ID. Please link your account.",
+            }
+            ui_flags = {"allow_upload": target_sub_step == "modify_income_upload_statement"}
+            return StreamingResponse(
+                _build_sse_stream(prompt_map.get(target_sub_step, "Please continue."), widget_spec, ui_flags),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "x-vercel-ai-ui-message-stream": "v1",
+                },
+            )
+
+        update_commands = (
+            "UPDATE_PERSONAL",
+            "UPDATE_ADDRESS",
+            "UPDATE_EMPLOYMENT",
+            "UPDATE_INCOME",
+            "UPDATE_EXPENSES",
+        )
+        for command in update_commands:
+            payload = _extract_prefixed_json_payload(last_user_msg, command)
+            if payload is None:
+                continue
+            if command == "UPDATE_EMPLOYMENT":
+                _stage_pending_profile_update(current_session, "employment", {
+                    "type": payload.get("type"),
+                    "industry": payload.get("industry"),
+                    "employer": payload.get("employer"),
+                    "experience": payload.get("experience"),
+                    "workAddress": payload.get("workAddress"),
+                })
+                current_session["sub_step"] = "modify_employment_document_pending"
+                current_session.pop("pending_income_verification", None)
+                _store_gateway_session(session_id, current_session)
+                widget_spec = resolve_widget(current_session, None)
+                response_text = "Please upload your employment verification document below."
+                return StreamingResponse(
+                    _build_sse_stream(response_text, widget_spec, {"allow_upload": True}),
+                    media_type="text/event-stream",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "Connection": "keep-alive",
+                        "x-vercel-ai-ui-message-stream": "v1",
+                    },
+                )
+
+            if command == "UPDATE_INCOME":
+                _stage_pending_profile_update(current_session, "income", {
+                    "monthly": payload.get("monthly"),
+                    "obligations": payload.get("obligations"),
+                    "creditCardLimit": payload.get("creditCardLimit"),
+                })
+                current_session["sub_step"] = "modify_income_proof_choice"
+                current_session["pending_income_verification"] = None
+                _store_gateway_session(session_id, current_session)
+                widget_spec = resolve_widget(current_session, None)
+                response_text = "Please choose how you'd like to verify your income."
+                return StreamingResponse(
+                    _build_sse_stream(response_text, widget_spec),
+                    media_type="text/event-stream",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "Connection": "keep-alive",
+                        "x-vercel-ai-ui-message-stream": "v1",
+                    },
+                )
+
+            updated_section = _apply_deterministic_profile_update(current_session, command, payload)
+            if not updated_section:
+                continue
+            if command == "UPDATE_EXPENSES":
+                current_session["sub_step"] = "expenses"
+                current_session["expenses_editing"] = False
+                _store_gateway_session(session_id, current_session)
+                widget_spec = resolve_widget(current_session, None)
+                response_text = "Your monthly expenses have been updated."
+                return StreamingResponse(
+                    _build_sse_stream(response_text, widget_spec),
+                    media_type="text/event-stream",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "Connection": "keep-alive",
+                        "x-vercel-ai-ui-message-stream": "v1",
+                    },
+                )
+            current_session["sub_step"] = "updating_details"
+            current_session["updating"] = {
+                "section": updated_section,
+                "auto_advance_ms": 3000,
+                "next_message": "update_complete",
+                "silent": True,
+            }
+            current_session.pop("profile_completion", None)
+            current_session.pop("profile_completion_stage", None)
+            _store_gateway_session(session_id, current_session)
+            widget_spec = resolve_widget(current_session, None)
+            response_text = "We are updating your details now. Please wait while we save the changes."
+            return StreamingResponse(
+                _build_sse_stream(response_text, widget_spec),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "x-vercel-ai-ui-message-stream": "v1",
+                },
+            )
+
+    # Quick-path: the personal-details proceed gate should not depend on LLM classification.
+    if (
+        current_session.get("step") == "identity"
+        and current_session.get("sub_step") == "personal_details"
+    ):
+        personal_completion_state = _get_personal_completion_state(current_session)
+        completion_stage = current_session.get("profile_completion_stage")
+        if not personal_completion_state and _is_continuation_message(last_user_msg):
+            current_session["sub_step"] = "expenses"
+            _store_gateway_session(session_id, current_session)
+            widget_spec = resolve_widget(current_session, None)
+            response_text = "Let's proceed to your monthly expenses review."
+            return StreamingResponse(
+                _build_sse_stream(response_text, widget_spec),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "x-vercel-ai-ui-message-stream": "v1",
+                },
+            )
+        if personal_completion_state and completion_stage != PERSONAL_COMPLETION_STAGE_COLLECTING:
+            if _is_continuation_message(last_user_msg):
+                current_session["profile_completion"] = personal_completion_state
+                current_session["profile_completion_stage"] = PERSONAL_COMPLETION_STAGE_COLLECTING
+                _store_gateway_session(session_id, current_session)
+                response_text = _build_personal_completion_prompt(personal_completion_state["current_field"])
+                response_options = _build_personal_completion_options(personal_completion_state["current_field"])
+                return StreamingResponse(
+                    _build_sse_stream(
+                        response_text,
+                        None,
+                        {
+                            "options": response_options,
+                            "optionContext": {
+                                "type": "profile_completion",
+                                "field": personal_completion_state["current_field"],
+                            },
+                        },
+                    ),
+                    media_type="text/event-stream",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "Connection": "keep-alive",
+                        "x-vercel-ai-ui-message-stream": "v1",
+                    },
+                )
+            if _is_decline_message(last_user_msg):
+                current_session["profile_completion"] = personal_completion_state
+                current_session["profile_completion_stage"] = PERSONAL_COMPLETION_STAGE_AWAITING_PROCEED
+                _store_gateway_session(session_id, current_session)
+                response_text = "No problem. Take your time and let me know when you're ready to continue."
+                return StreamingResponse(
+                    _build_sse_stream(response_text, None),
+                    media_type="text/event-stream",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "Connection": "keep-alive",
+                        "x-vercel-ai-ui-message-stream": "v1",
+                    },
+                )
+
+    question_answer = await _answer_gateway_question_with_agent(last_user_msg, session_id, current_session)
+    if question_answer:
+        _store_gateway_session(session_id, current_session)
+        return _stream_widget_response(question_answer, None)
 
     # Call agent
     async with httpx.AsyncClient(timeout=60.0) as client:
@@ -701,6 +2569,7 @@ async def chat(request: ChatRequest):
 
     # Update session
     updated_session = data.get("session", current_session)
+    updated_session["session_id"] = session_id
 
     # Attach DB-backed customer profile only when needed.
     # This avoids repeated DB round-trips on every chat turn.
@@ -719,28 +2588,90 @@ async def chat(request: ChatRequest):
         if customer:
             updated_session["customer_profile"] = _customer_to_widget_data(customer)
 
-    SESSION_STORE[session_id] = updated_session
+    _store_gateway_session(session_id, updated_session)
+
+    personal_completion_state = None
+    if updated_session.get("step") == "identity" and updated_session.get("sub_step") == "personal_details":
+        personal_completion_state = _get_personal_completion_state(updated_session)
+        if personal_completion_state:
+            updated_session["profile_completion"] = personal_completion_state
+            updated_session.setdefault("profile_completion_stage", PERSONAL_COMPLETION_STAGE_AWAITING_PROCEED)
+        else:
+            updated_session.pop("profile_completion", None)
+            updated_session.pop("profile_completion_stage", None)
+    else:
+        updated_session.pop("profile_completion", None)
+        updated_session.pop("profile_completion_stage", None)
 
     # Widget resolution — compare step/sub_step before vs after the agent call.
     # This is restart-safe: no stale in-memory _lastWidgetState involved.
     prev_step = current_session.get("step", "identity")
     prev_sub  = current_session.get("sub_step", "awaiting_id")
     prev_profile = current_session.get("customer_profile")
+    prev_expenses_state = (
+        bool(current_session.get("expenses_editing")),
+        current_session.get("expenses_total"),
+        current_session.get("expenses_breakdown"),
+    )
     new_step  = updated_session.get("step", "identity")
     new_sub   = updated_session.get("sub_step", "awaiting_id")
     new_profile = updated_session.get("customer_profile")
+    new_expenses_state = (
+        bool(updated_session.get("expenses_editing")),
+        updated_session.get("expenses_total"),
+        updated_session.get("expenses_breakdown"),
+    )
     profile_changed = prev_profile != new_profile
-    state_changed = (prev_step != new_step) or (prev_sub != new_sub) or profile_changed
+    expenses_changed = prev_expenses_state != new_expenses_state
+    state_changed = (prev_step != new_step) or (prev_sub != new_sub) or profile_changed or expenses_changed
 
     if state_changed and new_step == "identity" and new_sub == "open_banking_email_sent":
-        profile = updated_session.get("customer_profile") or {}
+        profile = _build_personal_widget_data(updated_session, session_id) or {}
+        if profile and not updated_session.get("customer_profile"):
+            updated_session["customer_profile"] = profile
         email = profile.get("email")
         name = profile.get("name") or "Customer"
+        logger.info(
+            "[routing] session=%s triggering open banking email email=%s name=%s profile_keys=%s",
+            session_id,
+            email,
+            name,
+            sorted(profile.keys()) if isinstance(profile, dict) else [],
+        )
         if email:
             try:
                 send_open_banking_email(email, name)
             except Exception as exc:
                 logger.error("Failed to trigger Open Banking email for session %s: %s", session_id, exc)
+        else:
+            logger.warning(
+                "[routing] session=%s skipped open banking email because customer_profile.email is missing",
+                session_id,
+            )
+
+    if state_changed and new_step == "esign" and new_sub == "email_sent":
+        profile = _build_personal_widget_data(updated_session, session_id) or updated_session.get("customer_profile") or {}
+        if profile and not updated_session.get("customer_profile"):
+            updated_session["customer_profile"] = profile
+        email = profile.get("email")
+        name = profile.get("name") or updated_session.get("collected", {}).get("full_name") or "Customer"
+        logger.info(
+            "[routing] session=%s triggering docusign email email=%s name=%s profile_keys=%s",
+            session_id,
+            email,
+            name,
+            sorted(profile.keys()) if isinstance(profile, dict) else [],
+        )
+        if email:
+            try:
+                send_docusign_email(email, name)
+            except Exception as exc:
+                logger.error("Failed to trigger Docusign email for session %s: %s", session_id, exc)
+        else:
+            logger.warning(
+                "[routing] session=%s skipped docusign email because customer_profile.email is missing",
+                session_id,
+            )
 
     widget_spec = resolve_widget(updated_session, data.get("extract")) if state_changed else None
 
@@ -768,12 +2699,29 @@ async def chat(request: ChatRequest):
     # Clean response text
     response_text = data.get("response", "No response generated.")
     response_text = re.sub(r"<WIDGET_DATA>[\s\S]*?</WIDGET_DATA>", "", response_text).strip()
+    fast_response = _fast_state_response(updated_session) if state_changed else None
+    if fast_response is not None:
+        response_text = fast_response
+    response_options = None
+    post_widget_text = None
 
-    if prev_sub == "updating_details" and new_step == "identity" and new_sub == "personal_details":
-        response_text = (
-            "Your details have been successfully updated. "
-            "Would you like to update any other details, or should we confirm and proceed?"
-        )
+    if updated_session.get("step") == "identity" and updated_session.get("sub_step") == "personal_details":
+        stage = updated_session.get("profile_completion_stage")
+        if personal_completion_state:
+            if stage == PERSONAL_COMPLETION_STAGE_AWAITING_PROCEED:
+                post_widget_text = "Would you like to proceed with filling the missing details?"
+            elif stage == PERSONAL_COMPLETION_STAGE_COLLECTING:
+                response_text = _build_personal_completion_prompt(personal_completion_state["current_field"])
+                response_options = _build_personal_completion_options(personal_completion_state["current_field"])
+            elif profile_changed and prev_sub == "personal_details":
+                post_widget_text = "Would you like to proceed with filling the missing details?"
+        elif profile_changed and prev_sub == "personal_details":
+            response_text = (
+                "Your profile details are complete. You can now review them and choose Modify Details or Confirm & Continue."
+            )
+
+    if updated_session.get("step") == "identity" and updated_session.get("sub_step") == "modify_address_choice":
+        response_text = "Would you like to update your existing address or add a new address?"
 
     allow_upload = (
         updated_session.get("step") == "identity"
@@ -784,7 +2732,25 @@ async def chat(request: ChatRequest):
     )
 
     return StreamingResponse(
-        _build_sse_stream(response_text, widget_spec, {"allow_upload": allow_upload}),
+        _build_sse_stream(
+            response_text,
+            widget_spec,
+            {
+                "allow_upload": allow_upload,
+                **(
+                    {
+                        "options": response_options,
+                        "optionContext": {
+                            "type": "profile_completion",
+                            "field": personal_completion_state["current_field"] if personal_completion_state else None,
+                        },
+                    }
+                    if response_options and personal_completion_state
+                    else {}
+                ),
+                **({"postText": post_widget_text} if post_widget_text else {}),
+            },
+        ),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -821,18 +2787,79 @@ async def api_update_customer(request: UpdateCustomerRequest):
     if session_id in SESSION_STORE:
         customer = get_customer_by_national_id(national_id)
         if customer:
-            SESSION_STORE[session_id]["customer_profile"] = _customer_to_widget_data(customer)
+            current_profile = SESSION_STORE[session_id].get("customer_profile") or {}
+            SESSION_STORE[session_id]["customer_profile"] = _merge_widget_profile(
+                _customer_to_widget_data(customer),
+                current_profile,
+            )
             
     return {"success": success}
 
 @router.post("/chat/send_open_banking_email")
 async def api_send_open_banking_email(request: OpenBankingEmailRequest):
-    """Trigger the NGP_TRIGGER_MAIL stored procedure."""
+    """Send the Open Banking consent email through the configured mail service."""
+    logger.info(
+        "[send_open_banking_email] request session=%s email=%s name=%s",
+        request.session_id,
+        request.email,
+        request.name,
+    )
     success = send_open_banking_email(request.email, request.name)
+    logger.info(
+        "[send_open_banking_email] result session=%s success=%s",
+        request.session_id,
+        success,
+    )
     return {"success": success}
 
 @router.post("/send_open_banking_email")
 async def api_send_open_banking_email_alt(request: SendOpenBankingEmailRequest):
-    """Trigger Open Banking email via NGP_TRIGGER_MAIL."""
+    """Send the Open Banking consent email through the configured mail service."""
+    logger.info(
+        "[send_open_banking_email_alt] request session=%s email=%s name=%s",
+        request.session_id,
+        request.email,
+        request.name,
+    )
     success = send_open_banking_email(request.email, request.name)
+    logger.info(
+        "[send_open_banking_email_alt] result session=%s success=%s",
+        request.session_id,
+        success,
+    )
     return {"success": success}
+
+@router.post("/chat/send_docusign_email")
+async def api_send_docusign_email(request: DocusignEmailRequest):
+    """Send the e-sign document email through the configured mail service."""
+    logger.info(
+        "[send_docusign_email] request session=%s email=%s name=%s",
+        request.session_id,
+        request.email,
+        request.name,
+    )
+    success = send_docusign_email(request.email, request.name)
+    logger.info(
+        "[send_docusign_email] result session=%s success=%s",
+        request.session_id,
+        success,
+    )
+    return {"success": success}
+
+@router.post("/send_docusign_email")
+async def api_send_docusign_email_alt(request: DocusignEmailRequest):
+    """Send the e-sign document email through the configured mail service."""
+    logger.info(
+        "[send_docusign_email_alt] request session=%s email=%s name=%s",
+        request.session_id,
+        request.email,
+        request.name,
+    )
+    success = send_docusign_email(request.email, request.name)
+    logger.info(
+        "[send_docusign_email_alt] result session=%s success=%s",
+        request.session_id,
+        success,
+    )
+    return {"success": success}
+

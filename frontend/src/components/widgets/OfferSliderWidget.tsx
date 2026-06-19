@@ -2,7 +2,6 @@
 
 import React, { useState, useMemo } from 'react';
 import { motion } from 'framer-motion';
-import { StepIndicator } from './StepIndicator';
 
 interface OfferSliderWidgetProps {
   data?: {
@@ -10,6 +9,8 @@ interface OfferSliderWidgetProps {
     min_amount?: number;
     profit_rate?: string;
     default_tenure?: number;
+    default_amount?: number | null;
+    is_preapproved_path?: boolean;
   };
 }
 
@@ -18,11 +19,15 @@ const TENURE_OPTIONS = [12, 24, 36, 48, 60];
 export function OfferSliderWidget({ data }: OfferSliderWidgetProps) {
   const maxAmount = data?.max_amount || 250000;
   const minAmount = data?.min_amount || 5000;
-  const profitRateStr = data?.profit_rate || '12%';
+  const profitRateStr = data?.profit_rate || '6.1%';
   const profitRate = parseFloat(profitRateStr) / 100;
   const defaultTenure = data?.default_tenure || 36;
+  const defaultAmount = Math.min(
+    maxAmount,
+    Math.max(minAmount, data?.default_amount ?? Math.round(maxAmount * 0.6))
+  );
 
-  const [amount, setAmount] = useState(Math.round(maxAmount * 0.6));
+  const [amount, setAmount] = useState(defaultAmount);
   const [tenure, setTenure] = useState(defaultTenure);
   const [showTenureDropdown, setShowTenureDropdown] = useState(false);
 
@@ -40,8 +45,7 @@ export function OfferSliderWidget({ data }: OfferSliderWidgetProps) {
       transition={{ duration: 0.5, ease: [0.23, 1, 0.32, 1] as [number, number, number, number] }}
       className="w-full max-w-sm mt-4"
     >
-      <StepIndicator currentStep={3} />
-      <div className="relative overflow-hidden rounded-3xl bg-white border border-slate-200 shadow-2xl shadow-blue-900/5">
+      <div className="relative overflow-hidden rounded-[16px] bg-white border border-[#D5DCE3] shadow-2xl shadow-blue-900/5">
         <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-[#1B6A8A] via-[#4BA3C7] to-[#1B6A8A]" />
         
         <div className="p-6">
@@ -52,18 +56,18 @@ export function OfferSliderWidget({ data }: OfferSliderWidgetProps) {
               </svg>
             </div>
             <div>
-              <h3 className="text-base font-bold text-slate-900 leading-tight">Customize Finance</h3>
-              <p className="text-[11px] font-medium text-slate-400 uppercase tracking-wider">Adjust your plan</p>
+              <h3 className="journey-heading">Customize Finance</h3>
+              <p className="journey-label">Adjust your plan</p>
             </div>
           </div>
 
           {/* Amount Slider */}
-          <div className="mb-7 bg-slate-50 p-4 rounded-2xl border border-slate-100">
+          <div className="journey-panel p-4 mb-7">
             <div className="flex justify-between items-end mb-4">
-              <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Amount</p>
+              <p className="journey-label">Amount (SAR)</p>
               <div className="text-right">
                 <span className="text-2xl font-black text-[#1B6A8A]">{amount.toLocaleString('en-IN')}</span>
-                <span className="text-xs font-bold text-slate-400 ml-1">SAR</span>
+                <span className="journey-label ml-1">SAR</span>
               </div>
             </div>
             <input
@@ -73,39 +77,43 @@ export function OfferSliderWidget({ data }: OfferSliderWidgetProps) {
               step={1}
               value={amount}
               onChange={(e) => setAmount(Number(e.target.value))}
-              className="w-full h-1.5 rounded-full appearance-none cursor-pointer focus:outline-none"
+              className="journey-range w-full h-1 rounded-full appearance-none cursor-pointer focus:outline-none"
               style={{
-                background: `linear-gradient(to right, #4BA3C7 0%, #4BA3C7 ${((amount - minAmount) / (maxAmount - minAmount)) * 100}%, #E2E8F0 ${((amount - minAmount) / (maxAmount - minAmount)) * 100}%, #E2E8F0 100%)`,
+                backgroundColor: "#FFFFFF",
+                backgroundImage: "linear-gradient(261.63deg, #C24231 9.51%, #FB8B23 87.57%)",
+                backgroundRepeat: "no-repeat",
+                backgroundSize: `${((amount - minAmount) / (maxAmount - minAmount)) * 100}% 100%`,
+                backgroundPosition: "left center",
               }}
             />
-            <div className="flex justify-between text-[10px] font-semibold text-slate-400 mt-2">
+            <div className="flex justify-between journey-label mt-2">
               <span>{minAmount.toLocaleString()}</span>
               <span>{maxAmount.toLocaleString('en-IN')}</span>
             </div>
           </div>
 
           {/* Tenure Slider */}
-          <div className="mb-6 bg-slate-50 p-4 rounded-2xl border border-slate-100 relative">
+          <div className="journey-panel p-4 mb-6 relative">
             <div className="flex justify-between items-end mb-4">
-              <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Tenure</p>
+              <p className="journey-label">Tenure (Months)</p>
               
               <div className="relative">
                 <button
                   onClick={() => setShowTenureDropdown(!showTenureDropdown)}
-                  className="flex items-center gap-1 bg-white border border-slate-200 px-3 py-1.5 rounded-lg hover:border-blue-300 transition-colors"
+                  className="flex items-center gap-1 bg-white border border-[#D5DCE3] px-3 py-1.5 rounded-[16px] hover:border-blue-300 transition-colors"
                 >
-                  <span className="text-sm font-bold text-[#1B6A8A]">{tenure} Mo</span>
+                  <span className="journey-value text-[#1B6A8A]">{tenure} Mo</span>
                   <svg className="w-3 h-3 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
                   </svg>
                 </button>
                 {showTenureDropdown && (
-                  <div className="absolute top-full right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-xl z-20 overflow-hidden w-32 py-1">
+                  <div className="absolute top-full right-0 mt-1 bg-white border border-[#D5DCE3] rounded-[16px] shadow-xl z-20 overflow-hidden w-32 py-1">
                     {TENURE_OPTIONS.map((t) => (
                       <button
                         key={t}
                         onClick={() => { setTenure(t); setShowTenureDropdown(false); }}
-                        className={`block w-full text-left px-4 py-2 text-xs transition-colors hover:bg-slate-50 ${t === tenure ? 'font-bold text-[#1B6A8A] bg-blue-50/50' : 'text-slate-600 font-medium'}`}
+                        className={`block w-full text-left px-4 py-2 text-[12px] transition-colors hover:bg-slate-50 ${t === tenure ? 'font-semibold text-[#1B6A8A] bg-blue-50/50' : 'text-[#425768] font-normal'}`}
                       >
                         {t} Months
                       </button>
@@ -121,29 +129,33 @@ export function OfferSliderWidget({ data }: OfferSliderWidgetProps) {
               step={12}
               value={tenure}
               onChange={(e) => setTenure(Number(e.target.value))}
-              className="w-full h-1.5 rounded-full appearance-none cursor-pointer focus:outline-none"
+              className="journey-range w-full h-1 rounded-full appearance-none cursor-pointer focus:outline-none"
               style={{
-                background: `linear-gradient(to right, #4BA3C7 0%, #4BA3C7 ${((tenure - 12) / (60 - 12)) * 100}%, #E2E8F0 ${((tenure - 12) / (60 - 12)) * 100}%, #E2E8F0 100%)`,
+                backgroundColor: "#FFFFFF",
+                backgroundImage: "linear-gradient(261.63deg, #C24231 9.51%, #FB8B23 87.57%)",
+                backgroundRepeat: "no-repeat",
+                backgroundSize: `${((tenure - 12) / (60 - 12)) * 100}% 100%`,
+                backgroundPosition: "left center",
               }}
             />
-            <div className="flex justify-between text-[10px] font-semibold text-slate-400 mt-2">
+            <div className="flex justify-between journey-label mt-2">
               <span>12</span>
               <span>60</span>
             </div>
           </div>
 
           {/* Details & Actions */}
-          <div className="flex justify-between items-center bg-[#1B6A8A] rounded-2xl p-4 mb-5 text-white shadow-lg shadow-[#1B6A8A]/30">
+          <div className="flex justify-between items-center bg-[#1B6A8A] rounded-[16px] p-4 mb-5 text-white shadow-lg shadow-[#1B6A8A]/30">
             <div>
-              <p className="text-[10px] text-blue-100 uppercase tracking-wider font-semibold mb-1">Profit Rate</p>
-              <p className="text-sm font-bold">{profitRateStr}</p>
+              <p className="text-[12px] leading-none font-normal text-blue-100 mb-1">Profit Rate</p>
+              <p className="text-[14px] leading-[16px] font-semibold">{profitRateStr}</p>
             </div>
             <div className="w-px h-8 bg-blue-400/30" />
             <div className="text-right">
-              <p className="text-[10px] text-blue-100 uppercase tracking-wider font-semibold mb-1">EMI</p>
+              <p className="text-[12px] leading-none font-normal text-blue-100 mb-1">EMI</p>
               <div className="flex items-baseline gap-1">
-                <p className="text-xl font-black">{monthlyInstallment.toLocaleString('en-IN')}</p>
-                <span className="text-xs font-semibold text-blue-200">SAR/mo</span>
+                <p className="text-[14px] leading-[16px] font-semibold">{monthlyInstallment.toLocaleString('en-IN')}</p>
+                <span className="text-[12px] leading-none font-normal text-blue-200">SAR/mo</span>
               </div>
             </div>
           </div>
@@ -165,7 +177,7 @@ export function OfferSliderWidget({ data }: OfferSliderWidgetProps) {
                   },
                 }));
               }}
-              className="w-full py-3.5 bg-slate-900 text-white text-[14px] font-semibold rounded-2xl shadow-md hover:bg-slate-800 transition-all duration-300"
+              className="w-full py-3.5 journey-widget-button text-[14px] shadow-md hover:opacity-90 transition-all duration-300"
             >
               Confirm Finance Plan
             </motion.button>
@@ -175,7 +187,7 @@ export function OfferSliderWidget({ data }: OfferSliderWidgetProps) {
               onClick={() => {
                 window.dispatchEvent(new CustomEvent('mock-send-message', { detail: 'Request for a higher amount' }));
               }}
-              className="w-full py-3 bg-white text-slate-500 border border-slate-200 text-[13px] font-semibold rounded-2xl hover:bg-slate-50 hover:text-slate-700 transition-all duration-300"
+              className="w-full py-3 journey-widget-button border border-transparent text-[14px] hover:opacity-90 transition-all duration-300"
             >
               Request higher amount
             </motion.button>

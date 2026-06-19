@@ -7,6 +7,8 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 from graph.graph import agent_app
+from graph.nodes import _chat, RESPOND_MODEL
+from knowledge.faq_engine import answer_general_query, retrieve_general_query_context
 from persistence import get_session, save_session, append_messages, get_conversation
 
 app = FastAPI(title="RLOS LangGraph Agent")
@@ -28,6 +30,16 @@ class ConversationResponse(BaseModel):
     messages: List[Dict[str, Any]]
     session: Optional[Dict[str, Any]] = None
 
+class QuestionRequest(BaseModel):
+    session_id: str = "default_session"
+    message: str
+    session: Dict[str, Any]
+
+class QuestionResponse(BaseModel):
+    response: str
+    domain: Optional[str] = None
+    confidence: Optional[float] = None
+
 @app.get("/conversation/{session_id}", response_model=ConversationResponse)
 async def get_conversation_history(session_id: str):
     """Return saved conversation + session for a given session ID."""
@@ -38,34 +50,31 @@ async def get_conversation_history(session_id: str):
 @app.post("/invoke", response_model=InvokeResponse)
 async def invoke_agent(req: InvokeRequest):
     try:
-        # 1. Try in-memory cache first, then file store, then create new
-        if req.session_id in SESSION_CACHE:
-            current_session = SESSION_CACHE[req.session_id]
-        else:
-            persisted = get_session(req.session_id)
-            if persisted:
-                current_session = persisted
-            else:
-                current_session = {
-                    "region": "SA",
-                    "step": "identity",
-                    "sub_step": "awaiting_id",
-                    "step_number": 1,
-                    "total_steps": 5,
-                    "product": "cash_finance",
-                    "user_type": "unknown",
-                    "customerType": "UNKNOWN",
-                    "journeyMode": "PRE_DEDUPE",
-                    "journeyOrigin": "UNKNOWN",
-                    "transitionReason": None,
-                    "collected": {},
-                    "offer": {},
-                    "finance_summary": {},
-                    "disbursement": {},
-                    "failed_attempts": 0,
-                }
-                # Merge incoming session over defaults
-                current_session.update(req.session)
+        defaults = {
+            "region": "SA",
+            "step": "identity",
+            "sub_step": "awaiting_id",
+            "step_number": 1,
+            "total_steps": 5,
+            "product": "cash_finance",
+            "user_type": "unknown",
+            "customerType": "UNKNOWN",
+            "journeyMode": "PRE_DEDUPE",
+            "journeyOrigin": "UNKNOWN",
+            "transitionReason": None,
+            "collected": {},
+            "offer": {},
+            "finance_summary": {},
+            "disbursement": {},
+            "failed_attempts": 0,
+        }
+        persisted = get_session(req.session_id) or {}
+        cached = SESSION_CACHE.get(req.session_id) or {}
+        incoming = dict(req.session or {})
+
+        # The API gateway is the live source of truth for the current widget state.
+        # Always let the incoming session override stale agent cache/persistence.
+        current_session = {**defaults, **persisted, **cached, **incoming}
 
         # Cache it
         SESSION_CACHE[req.session_id] = current_session
@@ -89,6 +98,7 @@ async def invoke_agent(req: InvokeRequest):
             "continue", "dedupe_complete", "dedupe complete",
             "identity_complete", "verification_loading", "done",
             "accepted_max_offer", "higher_amount_requested",
+            "submit_higher_amount_review", "higher_amount_review_go_back",
         }
 
         # Save conversation: user message + assistant response
@@ -111,6 +121,75 @@ async def invoke_agent(req: InvokeRequest):
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/answer_question", response_model=QuestionResponse)
+async def answer_question(req: QuestionRequest):
+    """Answer a journey question without invoking routing or mutating session state."""
+    try:
+        session = dict(req.session or {})
+        retrieved = retrieve_general_query_context(req.message, session, limit=4)
+        matches = retrieved.get("matches", [])
+
+        if not matches and not retrieved.get("is_banking_context"):
+            return QuestionResponse(
+                response=retrieved.get("out_of_scope_message", "I can only assist with banking-related queries."),
+                domain="out_of_scope",
+                confidence=0,
+            )
+
+        knowledge_lines = []
+        for match in matches:
+            knowledge_lines.append(
+                f"- Domain: {match.get('id')} | Score: {match.get('score')}\n"
+                f"  Guidance: {match.get('response')}"
+            )
+
+        prompt = [
+            {
+                "role": "system",
+                "content": (
+                    "You are answering a customer's question during a Cash Finance digital journey. "
+                    "Classify the message as a banking/journey question, then answer it using the supplied knowledge and session context. "
+                    "Do not advance, reset, or change the journey. Do not ask the customer to proceed unless the question explicitly asks for the next action. "
+                    "If the knowledge is insufficient, give a concise safe answer and say the bank will confirm final policy during verification. "
+                    "Keep the answer short, clear, and specific to the user's question."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Customer question: {req.message}\n\n"
+                    f"Current journey state: step={session.get('step')}, sub_step={session.get('sub_step')}, "
+                    f"customerType={session.get('customerType')}, journeyMode={session.get('journeyMode')}\n"
+                    f"Current offer: {session.get('offer', {})}\n"
+                    f"Finance summary: {session.get('finance_summary', {})}\n"
+                    f"Selected account: {session.get('selected_account', {})}\n\n"
+                    "Relevant knowledge:\n"
+                    + ("\n".join(knowledge_lines) if knowledge_lines else "- No exact template matched; answer from general Cash Finance context only.")
+                ),
+            },
+        ]
+
+        response_text = (await _chat(RESPOND_MODEL, prompt, temperature=0.2)).strip()
+        if not response_text:
+            fallback = answer_general_query(req.message, session)
+            response_text = fallback["text"] if fallback else "I can answer questions about your Cash Finance journey while keeping your application at the same step."
+
+        top = matches[0] if matches else {}
+        return QuestionResponse(
+            response=response_text,
+            domain=top.get("id"),
+            confidence=top.get("score"),
+        )
+    except Exception:
+        fallback = answer_general_query(req.message, req.session or {})
+        if fallback:
+            return QuestionResponse(
+                response=fallback["text"],
+                domain=fallback.get("domain"),
+                confidence=fallback.get("score"),
+            )
+        raise
 
 if __name__ == "__main__":
     import uvicorn

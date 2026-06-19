@@ -16,6 +16,58 @@ _client: AsyncOpenAI | None = None
 CLASSIFY_MODEL = "gpt-4o-mini"
 RESPOND_MODEL  = "gpt-4o-mini"
 
+CONTINUATION_PHRASES = (
+    "yes",
+    "yep",
+    "yeah",
+    "ya",
+    "sure",
+    "ok",
+    "ohk",
+    "okay",
+    "alright",
+    "certainly",
+    "affirmative",
+    "proceed",
+    "continue",
+    "go ahead",
+    "go on",
+    "begin",
+    "start",
+    "lets begin",
+    "let's begin",
+    "lets continue",
+    "let's continue",
+    "please proceed",
+    "please continue",
+    "sounds good",
+    "fine",
+    "confirm",
+    "confirmed",
+    "do it",
+    "carry on",
+    "move on",
+    "start journey",
+    "begin journey",
+    "i confirm",
+)
+
+DECLINE_PHRASES = (
+    "no",
+    "nope",
+    "not now",
+    "not yet",
+    "later",
+    "skip",
+    "cancel",
+    "stop",
+    "hold on",
+    "wait",
+    "don't",
+    "do not",
+    "maybe later",
+)
+
 
 def _get_client() -> AsyncOpenAI:
     global _client
@@ -30,6 +82,33 @@ async def _chat(model: str, messages: list[dict], temperature: float = 0.7) -> s
         model=model, messages=messages, temperature=temperature
     )
     return resp.choices[0].message.content or ""
+
+
+def _normalize_user_text(text: str) -> str:
+    normalized = (text or "").lower().strip()
+    if normalized.startswith("__sys__"):
+        normalized = normalized[7:].strip()
+    normalized = re.sub(r"\s+", " ", normalized)
+    return normalized
+
+
+def _contains_phrase(text: str, phrase: str) -> bool:
+    pattern = rf"(?<!\w){re.escape(phrase)}(?!\w)"
+    return bool(re.search(pattern, text))
+
+
+def _is_decline_message(text: str) -> bool:
+    normalized = _normalize_user_text(text)
+    if not normalized:
+        return False
+    return any(_contains_phrase(normalized, phrase) for phrase in DECLINE_PHRASES)
+
+
+def _is_continuation_message(text: str) -> bool:
+    normalized = _normalize_user_text(text)
+    if not normalized or _is_decline_message(normalized):
+        return False
+    return any(_contains_phrase(normalized, phrase) for phrase in CONTINUATION_PHRASES)
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -126,6 +205,7 @@ _ROUTING_SIGNALS = {
     "proceed to e-sign", "esign_email_complete",
     "accepted_offer", "accepted_pre_approved_offer",
     "accepted_max_offer", "higher_amount_requested",
+    "submit_higher_amount_review", "higher_amount_review_go_back",
     "otp_verification_complete", "ivr_verification_complete",
     "complete_disbursement", "verification_declined",
     "trade_certificate_ready",
@@ -179,11 +259,11 @@ def _fast_state_response(session: dict) -> str | None:
 
     # After OTP loader completion: show OTP verified widget only.
     if step == "identity" and sub_step == "verified":
-        return "Your identity has been verified. Shall we continue to the dedupe check?"
+        return "Your identity has been verified successfully. We are moving to the Dedupe check now."
 
     # After verified auto-continue: dedupe loader widget carries the message; return empty text.
     if step == "identity" and sub_step == "dedupe_check":
-        return "We are running a dedupe check to verify your records. Please wait a moment while we continue."
+        return "We are running a Dedupe check to verify your records. Please wait a moment while we continue."
 
     # After dedupe completion: widget (Journey Overview) carries the content.
     if step == "identity" and sub_step == "identify_yourself":
@@ -194,13 +274,16 @@ def _fast_state_response(session: dict) -> str | None:
         return "I have retrieved your current profile details. Please review them to make sure everything is correct to proceed."
 
     if step == "identity" and sub_step == "modify_section":
-        return "Which section would you like to update: Personal Details, Address Details, Employment Details, or Income Details?"
+        return "Which section would you like to update?"
 
     if step == "identity" and sub_step == "modify_personal":
-        return "Please provide the updated Personal Details fields you want to change (for example: marital status, dependents, education)."
+        return "Please provide the updated Personal Details fields you want to change."
 
     if step == "identity" and sub_step == "modify_address":
         return "Please share your updated address details. You can type your full updated address in one message."
+
+    if step == "identity" and sub_step == "modify_address_choice":
+        return "Would you like to update your existing address or add a new address?"
 
     if step == "identity" and sub_step == "modify_employment":
         return "Please provide updated employment details."
@@ -212,26 +295,24 @@ def _fast_state_response(session: dict) -> str | None:
         return "Please provide your updated monthly income."
 
     if step == "identity" and sub_step == "modify_income_proof_choice":
-        return (
-            "Please choose how you'd like to verify your income:\n"
-            "1. Upload Bank Statement\n"
-            "2. Open Banking"
-        )
+        return "Please choose how you'd like to verify your income."
 
     if step == "identity" and sub_step == "modify_income_upload_statement":
         return "Please upload your bank statement using the attachment icon below."
 
     if step == "identity" and sub_step == "open_banking_email_sent":
-        return "An email has been sent to your registered ID. Please link your account and reply with 'linked' once done."
+        return "An email has been sent to your registered ID. Please link your account"
 
     if step == "identity" and sub_step == "updating_details":
         return "We are updating your details now. Please wait while we save the changes."
 
     if step == "identity" and sub_step == "expenses":
-        return "Please review and confirm your average monthly expenses across all categories to continue."
+        if session.get("expenses_editing"):
+            return "Edit the category amounts below, then save your changes."
+        return "Please review your monthly expenses below, or choose Modify if you want to edit the breakdown."
 
     if step == "identity" and sub_step == "bureau_consent":
-        return "We need your consent to fetch bureau records. Would you like to proceed?"
+        return "Now we need your consent to fetch bureau records. Would you like to proceed?"
 
     if step == "identity" and sub_step == "eligibility_check":
         return "We are running your eligibility and due diligence checks now. Please wait while we continue."
@@ -245,7 +326,7 @@ def _fast_state_response(session: dict) -> str | None:
         max_amount = offer.get("max_amount")
         if max_amount is None:
             return ""
-        profit_rate = offer.get("profit_rate", "12%")
+        profit_rate = offer.get("profit_rate", "6.1%")
         max_tenure = offer.get("max_tenure", 60)
         return (
             f"Great news! You are pre-approved for up to **SAR {max_amount:,}** "
@@ -256,7 +337,7 @@ def _fast_state_response(session: dict) -> str | None:
     if step == "offer" and sub_step == "eligible":
         offer = session.get("offer", {})
         max_amount = offer.get("max_amount", 350000)
-        profit_rate = offer.get("profit_rate", "12%")
+        profit_rate = offer.get("profit_rate", "6.1%")
         max_tenure = offer.get("max_tenure", 60)
         return (
             f"Your eligible finance offer is ready. You can qualify for up to **SAR {max_amount:,}** "
@@ -267,11 +348,11 @@ def _fast_state_response(session: dict) -> str | None:
     if step == "offer" and sub_step == "wants_more_decision":
         return "Is this maximum amount okay, or would you like to explore a higher amount?"
 
-    if step == "offer" and sub_step == "wants_more_open_banking":
-        return "We are refreshing your offer through Open Banking. Please link your account and let me know once it is complete."
+    if step == "offer" and sub_step in {"wants_more_review", "wants_more_open_banking"}:
+        return "Please review the manual review request details below."
 
     if step == "offer" and sub_step == "wants_more_backoffice":
-        return "A Relationship Manager will review your request. Would you like to continue with the current eligible amount for now?"
+        return "Your request has been shared with our specialist team for manual review."
 
     if step == "offer" and sub_step == "slider":
         return "Please adjust the amount and tenure to your preference, then confirm to continue."
@@ -296,7 +377,7 @@ def _fast_state_response(session: dict) -> str | None:
         return "The commodity trade is being executed now. Please wait while we complete it."
 
     if step == "trade" and sub_step == "success":
-        return "The commodity trade was successful. Would you like to proceed to the Contract & Promissory Note e-sign step?"
+        return "The commodity trade was successful. Wait now generating the Commodity Transaction Certificate."
 
     if step == "esign" and sub_step == "documents":
         return (
@@ -430,21 +511,22 @@ def _deterministic_classify(msg: str, step: str, sub_step: str, session: dict) -
                         "data": {"id_number": id_number, "id_type": id_type}}
 
         elif sub_step == "nafath_pending":
-            signals = ["done", "approved", "open nafath", "confirmed", "yes", "ok", "verify"]
-            if any(s in msg_lower for s in signals):
+            if _is_continuation_message(msg_lower) or any(
+                _contains_phrase(msg_lower, phrase) for phrase in ("approved", "open nafath", "verify")
+            ):
                 return {"step": "identity", "intent": "STEP_DATA",
                         "data": {"nafath_approved": True}}
 
         elif sub_step == "loading":
-            signals = ["done", "ok", "yes", "continue", "next", "proceed", "loading_complete", "nafath approved"]
-            if any(s in msg_lower for s in signals):
+            if _is_continuation_message(msg_lower) or any(
+                _contains_phrase(msg_lower, phrase) for phrase in ("loading_complete", "nafath approved")
+            ):
                 return {"step": "identity", "intent": "STEP_DATA",
                         "data": {"loading_complete": True}}
 
         elif sub_step == "verified":
             # VerificationSuccessWidget auto-sends __SYS__continue internally
-            signals = ["loading_complete", "done", "ok", "yes", "continue", "next", "proceed"]
-            if any(s in msg_lower for s in signals):
+            if _is_continuation_message(msg_lower) or _contains_phrase(msg_lower, "loading_complete"):
                 return {"step": "identity", "intent": "STEP_DATA",
                         "data": {"identity_complete": True}}
 
@@ -456,17 +538,58 @@ def _deterministic_classify(msg: str, step: str, sub_step: str, session: dict) -
 
         elif sub_step == "identify_yourself":
             # NTBIntroductionWidget shows — user clicks Proceed button
-            signals = ["proceed", "yes", "ok", "start", "continue", "next", "sure", "go ahead", "begin"]
-            if any(s in msg_lower for s in signals):
+            if _is_continuation_message(msg_lower):
                 return {"step": "identity", "intent": "STEP_DATA",
                         "data": {"proceed": True}}
 
         elif sub_step == "personal_details":
+            payload = _extract_structured_update(msg, "__SYS__PROFILE_COMPLETION")
+            if payload is not None:
+                if "action" in payload:
+                    return {
+                        "step": "identity",
+                        "intent": "STEP_DATA",
+                        "data": {"profile_completion_action": payload.get("action")},
+                    }
+                return {
+                    "step": "identity",
+                    "intent": "STEP_DATA",
+                    "data": {
+                        "profile_completion_field": payload.get("field"),
+                        "profile_completion_value": payload.get("value"),
+                    },
+                }
+            completion_stage = session.get("profile_completion_stage")
+            has_pending_profile_field = bool(
+                session.get("profile_completion")
+                and session.get("profile_completion", {}).get("current_field")
+            )
+            # Treat unset stage the same as awaiting_proceed for the first confirmation.
+            if has_pending_profile_field and completion_stage != "collecting":
+                if _is_continuation_message(msg_lower):
+                    return {
+                        "step": "identity",
+                        "intent": "STEP_DATA",
+                        "data": {"profile_completion_action": "proceed"},
+                    }
+                if _is_decline_message(msg_lower):
+                    return {
+                        "step": "identity",
+                        "intent": "STEP_DATA",
+                        "data": {"profile_completion_action": "not_now"},
+                    }
+            if completion_stage == "collecting" and has_pending_profile_field:
+                return {
+                    "step": "identity",
+                    "intent": "STEP_DATA",
+                    "data": {"profile_completion_value": msg.strip()},
+                }
             # User explicitly confirms their details
             if "modify" in msg_lower or "not correct" in msg_lower or "change" in msg_lower:
                 return {"step": "identity", "intent": "STEP_DATA", "data": {"modify_requested": True}}
-            signals = ["done", "ok", "yes", "continue", "next", "proceed", "confirm", "offer", "go", "details confirmed"]
-            if any(s in msg_lower for s in signals):
+            if _is_continuation_message(msg_lower) or any(
+                _contains_phrase(msg_lower, phrase) for phrase in ("done", "details confirmed")
+            ):
                 return {"step": "identity", "intent": "STEP_DATA",
                         "data": {"identity_complete": True}}
 
@@ -480,13 +603,20 @@ def _deterministic_classify(msg: str, step: str, sub_step: str, session: dict) -
             if "income" in msg_lower:
                 return {"step": "identity", "intent": "STEP_DATA", "data": {"modify_section": "income"}}
 
-        elif sub_step in {"modify_personal", "modify_address", "modify_employment", "modify_employment_document_pending", "modify_income_upload_statement"}:
+        elif sub_step in {"modify_personal", "modify_address", "modify_address_choice", "modify_employment", "modify_employment_document_pending", "modify_income_upload_statement"}:
             if "document_uploaded" in msg_lower:
                 return {"step": "identity", "intent": "STEP_DATA", "data": {"document_uploaded": True}}
             if sub_step == "modify_personal":
                 payload = _extract_structured_update(msg, "__SYS__UPDATE_PERSONAL")
                 if payload is not None:
                     return {"step": "identity", "intent": "STEP_DATA", "data": {"update_personal": payload}}
+            if sub_step == "modify_address_choice":
+                if any(phrase in msg_lower for phrase in ("add new", "new address", "another address", "add another")):
+                    return {"step": "identity", "intent": "STEP_DATA", "data": {"address_action": "add_new"}}
+                if _is_continuation_message(msg_lower) or any(
+                    phrase in msg_lower for phrase in ("update existing", "existing", "edit", "update")
+                ):
+                    return {"step": "identity", "intent": "STEP_DATA", "data": {"address_action": "update_existing"}}
             if sub_step == "modify_address":
                 payload = _extract_structured_update(msg, "__SYS__UPDATE_ADDRESS")
                 if payload is not None:
@@ -499,9 +629,10 @@ def _deterministic_classify(msg: str, step: str, sub_step: str, session: dict) -
                 return {"step": "identity", "intent": "STEP_DATA", "data": {"update_value": msg.strip()}}
 
         elif sub_step in {"modify_income", "modify_income_proof_choice"}:
-            if "open banking" in msg_lower:
+            signal = _normalize_signal_text(msg)
+            if signal == "open_banking" or "open banking" in msg_lower:
                 return {"step": "identity", "intent": "STEP_DATA", "data": {"open_banking": True}}
-            if "upload" in msg_lower and "statement" in msg_lower:
+            if signal == "upload_statement" or ("upload" in msg_lower and "statement" in msg_lower):
                 return {"step": "identity", "intent": "STEP_DATA", "data": {"upload_statement": True}}
             payload = _extract_structured_update(msg, "__SYS__UPDATE_INCOME")
             if payload is not None:
@@ -514,15 +645,28 @@ def _deterministic_classify(msg: str, step: str, sub_step: str, session: dict) -
                     "data": {"income_value": int(amount_match.group(1))}
                 }
 
+        elif sub_step == "expenses":
+            signal = _normalize_signal_text(msg)
+            if signal == "expenses_modify":
+                return {"step": "identity", "intent": "STEP_DATA", "data": {"modify_expenses": True}}
+            if signal == "expenses_confirm":
+                return {"step": "identity", "intent": "STEP_DATA", "data": {"expenses_confirmed": True}}
+            payload = _extract_structured_update(msg, "__SYS__UPDATE_EXPENSES")
+            if payload is not None:
+                return {"step": "identity", "intent": "STEP_DATA", "data": {"update_expenses": payload}}
+            if _is_continuation_message(msg_lower) or any(
+                _contains_phrase(msg_lower, phrase) for phrase in ("confirm expenses", "expenses confirmed")
+            ):
+                return {"step": "identity", "intent": "STEP_DATA", "data": {"expenses_confirmed": True}}
+
         elif sub_step == "open_banking_email_sent":
-            if "linked" in msg_lower or "done" in msg_lower or "complete" in msg_lower:
+            if "open_banking_linked" in msg_lower:
                 return {"step": "identity", "intent": "STEP_DATA", "data": {"open_banking_linked": True}}
 
         elif sub_step == "updating_details":
             if "open_banking_complete" in msg_lower:
                 return {"step": "identity", "intent": "STEP_DATA", "data": {"open_banking_complete": True}}
-            signals = ["update_complete", "done", "ok", "continue"]
-            if any(s in msg_lower for s in signals):
+            if _is_continuation_message(msg_lower) or _contains_phrase(msg_lower, "update_complete"):
                 return {"step": "identity", "intent": "STEP_DATA", "data": {"update_complete": True}}
 
         elif sub_step == "expenses":
@@ -537,16 +681,22 @@ def _deterministic_classify(msg: str, step: str, sub_step: str, session: dict) -
                 return {"step": "identity", "intent": "STEP_DATA", "data": {"expenses_confirmed": True}}
 
         elif sub_step == "bureau_consent":
-            no_signals = ["no", "deny", "do not consent", "don't consent", "not consent"]
-            if any(s in msg_lower for s in no_signals):
+            if "bureau_consent_granted" in msg_lower:
+                return {"step": "identity", "intent": "STEP_DATA", "data": {"bureau_consent_granted": True}}
+            if "bureau_consent_denied" in msg_lower:
+                return {"step": "identity", "intent": "STEP_DATA", "data": {"bureau_consent_denied": True}}
+            if _is_decline_message(msg_lower) or any(
+                _contains_phrase(msg_lower, phrase) for phrase in ("deny", "do not consent", "don't consent", "not consent")
+            ):
                 return {"step": "identity", "intent": "STEP_DATA", "data": {"bureau_consent_denied": True}}
 
-            yes_signals = ["yes", "consent", "agree", "proceed", "ok", "continue"]
-            if any(s in msg_lower for s in yes_signals):
+            if _is_continuation_message(msg_lower) or any(
+                _contains_phrase(msg_lower, phrase) for phrase in ("consent", "agree")
+            ):
                 return {"step": "identity", "intent": "STEP_DATA", "data": {"bureau_consent_granted": True}}
 
         elif sub_step == "eligibility_check":
-            if "eligibility_check_complete" in msg_lower or "done" in msg_lower or "continue" in msg_lower:
+            if _is_continuation_message(msg_lower) or _contains_phrase(msg_lower, "eligibility_check_complete"):
                 return {"step": "identity", "intent": "STEP_DATA", "data": {"eligibility_check_complete": True}}
 
     # ─── OFFER ────────────────────────────────────────
@@ -554,48 +704,48 @@ def _deterministic_classify(msg: str, step: str, sub_step: str, session: dict) -
         if sub_step == "pre_approved_offer":
             if "higher amount" in msg_lower or "need more" in msg_lower:
                 return {"step": "offer", "intent": "STEP_DATA", "data": {"higher_amount_requested": True}}
-            signals = ["accept", "yes", "proceed", "go with offer", "ok", "sure", "continue"]
-            if any(s in msg_lower for s in signals):
+            if (
+                _is_continuation_message(msg_lower)
+                or any(_contains_phrase(msg_lower, phrase) for phrase in ("accept", "go with offer"))
+                or any(signal in msg_lower for signal in ("accepted_pre_approved_offer", "accepted_offer"))
+            ):
                 return {"step": "offer", "intent": "STEP_DATA", "data": {"accepted_pre_approved_offer": True}}
 
         elif sub_step == "eligible":
             if "higher amount" in msg_lower:
                 return {"step": "offer", "intent": "STEP_DATA", "data": {"higher_amount_requested": True}}
-            signals = ["accept", "yes", "proceed", "ok", "sure", "go ahead", "done", "continue"]
-            if any(s in msg_lower for s in signals):
+            if _is_continuation_message(msg_lower) or any(
+                _contains_phrase(msg_lower, phrase) for phrase in ("accept", "go ahead", "done")
+            ):
                 return {"step": "offer", "intent": "STEP_DATA", "data": {"accepted_offer": True}}
             more_signals = ["want more", "higher", "more amount", "increase amount"]
             if any(s in msg_lower for s in more_signals):
                 return {"step": "offer", "intent": "STEP_DATA", "data": {"higher_amount_requested": True}}
 
-            ok_signals = ["amount is okay", "maximum is okay", "okay", "ok", "continue", "yes"]
-            if any(s in msg_lower for s in ok_signals):
+            if _is_continuation_message(msg_lower) or any(
+                _contains_phrase(msg_lower, phrase) for phrase in ("amount is okay", "maximum is okay")
+            ):
                 return {"step": "offer", "intent": "STEP_DATA", "data": {"accepted_max_offer": True}}
 
-        elif sub_step == "wants_more_open_banking":
-            linked_signals = ["open_banking_linked", "linked", "done", "completed", "continue"]
-            if any(s in msg_lower for s in linked_signals):
-                return {"step": "offer", "intent": "STEP_DATA", "data": {"open_banking_linked": True}}
-
-        elif sub_step == "wants_more_backoffice":
-            continue_signals = ["continue", "ok", "yes", "proceed", "current eligible"]
-            if any(s in msg_lower for s in continue_signals):
-                return {"step": "offer", "intent": "STEP_DATA", "data": {"accepted_max_offer": True}}
+        elif sub_step in {"wants_more_review", "wants_more_open_banking"}:
+            if "higher_amount_review_go_back" in msg_lower or _contains_phrase(msg_lower, "go back"):
+                return {"step": "offer", "intent": "STEP_DATA", "data": {"higher_amount_review_go_back": True}}
+            if "submit_higher_amount_review" in msg_lower or (
+                _contains_phrase(msg_lower, "submit") and _contains_phrase(msg_lower, "review")
+            ):
+                return {"step": "offer", "intent": "STEP_DATA", "data": {"submit_higher_amount_review": True}}
 
         elif sub_step == "wants_more_decision":
-            ok_signals = [
-                "accepted_max_offer",
-                "amount is okay",
-                "amount okay",
-                "maximum amount is okay",
-                "maximum is okay",
-                "ok",
-                "okay",
-                "yes",
-                "continue",
-                "proceed",
-            ]
-            if any(s in msg_lower for s in ok_signals):
+            if _is_continuation_message(msg_lower) or any(
+                _contains_phrase(msg_lower, phrase)
+                for phrase in (
+                    "accepted_max_offer",
+                    "amount is okay",
+                    "amount okay",
+                    "maximum amount is okay",
+                    "maximum is okay",
+                )
+            ):
                 return {"step": "offer", "intent": "STEP_DATA", "data": {"accepted_max_offer": True}}
 
             more_signals = [
@@ -616,8 +766,9 @@ def _deterministic_classify(msg: str, step: str, sub_step: str, session: dict) -
             if "higher amount" in msg_lower:
                 return {"step": "offer", "intent": "STEP_DATA",
                         "data": {"higher_amount_requested": True}}
-            signals = ["proceed", "next", "continue", "confirm", "done"]
-            if any(s in msg_lower for s in signals):
+            if _is_continuation_message(msg_lower) or any(
+                _contains_phrase(msg_lower, phrase) for phrase in ("confirm", "done")
+            ):
                 amount_match = re.search(r'(\d{4,6})', msg.replace(",", ""))
                 amount = int(amount_match.group(1)) if amount_match else 250000
                 return {"step": "offer", "intent": "STEP_DATA",
@@ -627,8 +778,9 @@ def _deterministic_classify(msg: str, step: str, sub_step: str, session: dict) -
             if "modify" in msg_lower or "higher amount" in msg_lower or "change" in msg_lower:
                 return {"step": "offer", "intent": "STEP_DATA",
                         "data": {"higher_amount_requested": True}}
-            signals = ["proceed", "trade", "commodity", "yes", "confirm", "done", "continue"]
-            if any(s in msg_lower for s in signals):
+            if _is_continuation_message(msg_lower) or any(
+                _contains_phrase(msg_lower, phrase) for phrase in ("trade", "commodity", "done")
+            ):
                 return {"step": "offer", "intent": "STEP_DATA",
                         "data": {"proceed_trade": True}}
 
@@ -645,14 +797,12 @@ def _deterministic_classify(msg: str, step: str, sub_step: str, session: dict) -
         
         elif sub_step == "iban_validation":
             # IBAN validation: confirmation after validation widget
-            confirm_signals = ["confirm", "proceed", "correct", "yes", "okay", "ok"]
-            if any(s in msg_lower for s in confirm_signals):
+            if _is_continuation_message(msg_lower) or _contains_phrase(msg_lower, "correct"):
                 return {"step": "disburse", "intent": "STEP_DATA", "data": {"iban_validated": True}}
         
         elif sub_step == "application_summary":
             # Application summary: confirmation checkbox + button
-            confirm_signals = ["confirm", "proceed", "yes", "okay", "ok"]
-            if any(s in msg_lower for s in confirm_signals):
+            if _is_continuation_message(msg_lower) or _contains_phrase(msg_lower, "confirm"):
                 return {"step": "disburse", "intent": "STEP_DATA", "data": {"application_confirmed": True}}
         
         elif sub_step == "ivr_consent":
@@ -681,22 +831,21 @@ def _deterministic_classify(msg: str, step: str, sub_step: str, session: dict) -
                 return {"step": "disburse", "intent": "STEP_DATA", "data": {"ivr_verification_complete": True}}
 
         elif sub_step in {"otp_success", "ivr_success"}:
-            signals = ["complete_disbursement", "done", "confirm"]
-            if any(s in msg_lower for s in signals):
+            if _is_continuation_message(msg_lower) or _contains_phrase(msg_lower, "complete_disbursement"):
                 return {"step": "disburse", "intent": "STEP_DATA", "data": {"complete_disbursement": True}}
 
     # ─── TRADE ────────────────────────────────────────
     elif step == "trade":
         if sub_step == "authorize":
-            signals = ["authorize", "i authorize", "yes", "confirm", "proceed"]
-            if any(s in msg_lower for s in signals):
+            if _is_continuation_message(msg_lower) or any(
+                _contains_phrase(msg_lower, phrase) for phrase in ("authorize", "i authorize")
+            ):
                 return {"step": "trade", "intent": "STEP_DATA",
                         "data": {"confirmed": True}}
 
         elif sub_step == "loading":
             # Only explicit confirmation should advance the loading gate
-            signals = ["loading_complete", "done", "ok", "yes", "next", "proceed"]
-            if any(s in msg_lower for s in signals):
+            if _is_continuation_message(msg_lower) or _contains_phrase(msg_lower, "loading_complete"):
                 return {"step": "trade", "intent": "STEP_DATA",
                         "data": {"loading_complete": True}}
 
@@ -707,9 +856,10 @@ def _deterministic_classify(msg: str, step: str, sub_step: str, session: dict) -
                         "data": {"trade_certificate_ready": True}}
 
         elif sub_step == "certificate":
-            if msg_lower in {"continue", "yes", "ok", "proceed", "next"}:
+            if _is_continuation_message(msg_lower):
                 return {"step": "trade", "intent": "STEP_DATA", "data": {"proceed_esign": True}}
             signals = [
+                "proceed_esign",
                 "proceed to e-sign",
                 "generate contract",
                 "contract & promissory note",
@@ -723,7 +873,7 @@ def _deterministic_classify(msg: str, step: str, sub_step: str, session: dict) -
     # ─── ESIGN ────────────────────────────────────────
     elif step == "esign":
         if sub_step == "documents":
-            if msg_lower in {"continue", "yes", "ok", "proceed", "next"}:
+            if _is_continuation_message(msg_lower):
                 return {"step": "esign", "intent": "STEP_DATA", "data": {"esign_nafath": True}}
             signals = [
                 "proceed with e-sign",
@@ -755,8 +905,7 @@ def _deterministic_classify(msg: str, step: str, sub_step: str, session: dict) -
                 return {"step": "esign", "intent": "STEP_DATA",
                         "data": {"otp_method": "ivr"}}
             # Generic confirmation defaults to OTP
-            generic = ["yes", "ok", "proceed", "confirm", "done", "continue", "next", "submit"]
-            if any(s == msg_lower for s in generic):
+            if _is_continuation_message(msg_lower):
                 return {"step": "esign", "intent": "STEP_DATA",
                         "data": {"otp_method": "otp"}}
 
@@ -781,8 +930,7 @@ def _deterministic_classify(msg: str, step: str, sub_step: str, session: dict) -
                     return {"step": "disburse", "intent": "STEP_DATA",
                             "data": {"account_selected": iban}}
             # Simple confirmations (user already selected via widget)
-            signals = ["submit", "confirm", "done", "yes"]
-            if any(s == msg_lower for s in signals):
+            if _is_continuation_message(msg_lower) or _contains_phrase(msg_lower, "submit"):
                 return {"step": "disburse", "intent": "STEP_DATA",
                         "data": {"account_selected": "Current Account ****1234"}}
 
@@ -811,8 +959,7 @@ def _deterministic_classify(msg: str, step: str, sub_step: str, session: dict) -
                 return {"step": "disburse", "intent": "STEP_DATA", "data": {"ivr_verification_complete": True}}
 
         elif sub_step in {"otp_success", "ivr_success"}:
-            signals = ["complete_disbursement", "done", "confirm"]
-            if any(s in msg_lower for s in signals):
+            if _is_continuation_message(msg_lower) or _contains_phrase(msg_lower, "complete_disbursement"):
                 return {"step": "disburse", "intent": "STEP_DATA", "data": {"complete_disbursement": True}}
 
     return None

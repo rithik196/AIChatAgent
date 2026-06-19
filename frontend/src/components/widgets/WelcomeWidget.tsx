@@ -19,27 +19,22 @@ export function WelcomeWidget({ data }: WelcomeWidgetProps) {
       transition={{ duration: 0.5, ease: 'easeOut' }}
       className="w-full max-w-sm mt-2"
     >
-      <div
-        className="rounded-3xl p-8 text-center"
-        style={{
-          background: 'linear-gradient(180deg, #EBF4F5 0%, #B9DCF2 100%)',
-        }}
-      >
+      <div className="journey-surface p-8 text-center">
         <motion.h2
           initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.2 }}
-          className="text-2xl font-bold text-slate-900 mb-3"
+          className="text-[16px] leading-[16px] font-semibold text-[#0D141A] mb-3"
         >
           Welcome!
         </motion.h2>
-        <p className="text-sm text-slate-600 mb-1">
+        <p className="journey-body mb-1">
           I am your personal finance assistant.
         </p>
-        <p className="text-sm text-slate-600 mb-6">
+        <p className="journey-body mb-6">
           Let&apos;s start your digital finance application.
         </p>
-        <p className="text-xs text-slate-500 font-medium mb-4">
+        <p className="journey-label mb-4">
           Choose a category to begin
         </p>
         <div className="flex flex-col gap-3">
@@ -53,10 +48,7 @@ export function WelcomeWidget({ data }: WelcomeWidgetProps) {
                 const event = new CustomEvent('mock-send-message', { detail: cat });
                 window.dispatchEvent(event);
               }}
-              className="w-full py-3.5 px-6 text-white font-semibold rounded-full shadow-md hover:opacity-90 transition-all hover:scale-[1.02] active:scale-95"
-              style={{
-                background: 'linear-gradient(90deg, #1B6A8A 0%, #4BA3C7 100%)',
-              }}
+              className="w-full py-3.5 px-6 journey-widget-button hover:opacity-90 transition-all hover:scale-[1.02] active:scale-95"
             >
               {cat}
             </motion.button>

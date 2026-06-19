@@ -10,14 +10,16 @@ from temporalio.service import RPCError
 
 try:
     from backend.utils.eligibility import calculate_max_eligible_amount, validate_iban
-    from backend.db import get_etb_customer_profile
+    from backend.db import get_etb_customer_profile, update_customer
+    from backend.services.mail import send_docusign_email
 except ModuleNotFoundError:
     # Allow running agent from its folder without requiring PYTHONPATH.
     repo_root = Path(__file__).resolve().parents[2]
     if str(repo_root) not in sys.path:
         sys.path.insert(0, str(repo_root))
     from backend.utils.eligibility import calculate_max_eligible_amount, validate_iban
-    from backend.db import get_etb_customer_profile
+    from backend.db import get_etb_customer_profile, update_customer
+    from backend.services.mail import send_docusign_email
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +38,20 @@ JOURNEY_MODE_PRE_DEDUPE = "PRE_DEDUPE"
 JOURNEY_MODE_ETB_CORE = "ETB_CORE"
 JOURNEY_MODE_NTB_ENRICHMENT = "NTB_ENRICHMENT"
 
+
+def _ensure_higher_amount_workitem(session: dict) -> dict:
+    workitem = session.setdefault("backoffice_workitem", {})
+    if not workitem.get("applicationId"):
+        workitem["applicationId"] = str(100000 + (uuid.uuid4().int % 900000))
+    workitem.update({
+        "customerId": session.get("collected", {}).get("id_number", ""),
+        "requestedAmount": session.get("requested_amount", "above_eligible_limit"),
+        "maxEligible": session.get("offer", {}).get("max_amount", 0),
+        "branch": "Riyadh",
+        "remarks": "Customer requested amount above automatic eligible limit. Application submitted for manual specialist review.",
+    })
+    return workitem
+
 # ETB Configuration (A1a: Bureau consent mandatory for ETB)
 ETB_REQUIRE_BUREAU_CONSENT = True
 
@@ -43,6 +59,117 @@ MODIFY_SECTION_PERSONAL = "personal"
 MODIFY_SECTION_ADDRESS = "address"
 MODIFY_SECTION_EMPLOYMENT = "employment"
 MODIFY_SECTION_INCOME = "income"
+
+PERSONAL_COMPLETION_FIELDS = [
+    "levelOfEducation",
+    "maritalStatus",
+    "dependents",
+    "houseType",
+]
+
+PERSONAL_COMPLETION_OPTIONS = {
+    "levelOfEducation": [
+        "Graduation",
+        "Primary Education",
+        "Intermediate (Middle School)",
+        "Secondary (High School)",
+        "Diploma (Associate / Intermediate)",
+        "Bachelor's Degree",
+        "Master's Degree",
+        "Doctorate (PhD)",
+    ],
+    "maritalStatus": [
+        "Single",
+        "Married",
+        "Divorced",
+        "Widowed",
+        "Separated",
+        "Polygamous",
+    ],
+    "dependents": ["0", "1", "2", "3", "4", "5", "6+"],
+    "houseType": [
+        "Villa",
+        "Owned Villa",
+        "Owned Apartment",
+        "Owned Traditional House",
+        "Rented Apartment",
+        "Rented Villa",
+        "Company Provided Accommodation",
+        "Shared Accommodation",
+        "Family Owned (Not in applicant name)",
+        "Government Housing",
+    ],
+}
+
+
+def _is_missing_value(value: object) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return value.strip() == "" or value.strip() == "-"
+    return False
+
+
+def _get_personal_completion_state(session: dict) -> dict | None:
+    profile = session.get("customer_profile") or {}
+    personal = profile.get("personal") or {}
+    address = profile.get("address") or {}
+
+    values = {
+        "levelOfEducation": personal.get("levelOfEducation"),
+        "maritalStatus": personal.get("maritalStatus"),
+        "dependents": personal.get("dependents"),
+        "houseType": address.get("houseType"),
+    }
+
+    missing_fields = [field for field in PERSONAL_COMPLETION_FIELDS if _is_missing_value(values.get(field))]
+    if not missing_fields:
+        return None
+
+    return {
+        "missing_fields": missing_fields,
+        "current_field": missing_fields[0],
+    }
+
+
+def _apply_personal_completion_value(session: dict, field_key: str, value: str) -> None:
+    cleaned = value.strip()
+    profile = session.setdefault("customer_profile", {})
+    personal = profile.setdefault("personal", {})
+    address = profile.setdefault("address", {})
+
+    if field_key == "levelOfEducation":
+        personal["levelOfEducation"] = cleaned
+        update_customer(session.get("collected", {}).get("id_number", ""), {"personal": {"levelOfEducation": cleaned}})
+    elif field_key == "maritalStatus":
+        personal["maritalStatus"] = cleaned
+        update_customer(session.get("collected", {}).get("id_number", ""), {"personal": {"maritalStatus": cleaned}})
+    elif field_key == "dependents":
+        personal["dependents"] = cleaned
+        update_customer(session.get("collected", {}).get("id_number", ""), {"personal": {"dependents": cleaned}})
+    elif field_key == "houseType":
+        address["houseType"] = cleaned
+        update_customer(session.get("collected", {}).get("id_number", ""), {"address": {"houseType": cleaned}})
+
+
+def _normalize_personal_completion_value(field_key: str, value: str) -> str | None:
+    cleaned = value.strip()
+    if not cleaned:
+        return None
+
+    if field_key == "dependents":
+        if cleaned.lower() in {"6+", "6 plus", "6 or more"}:
+            return "6+"
+        if cleaned.isdigit() and cleaned in PERSONAL_COMPLETION_OPTIONS[field_key]:
+            return cleaned
+        return None
+
+    candidates = PERSONAL_COMPLETION_OPTIONS.get(field_key, [])
+    cleaned_lower = cleaned.lower()
+    for option in candidates:
+        if option.lower() == cleaned_lower:
+            return option
+    return None
 
 
 def _begin_updating(session: dict, section: str, auto_advance_ms: int = 3000, next_signal: str = "update_complete", next_sub_step: str = "personal_details") -> None:
@@ -121,7 +248,7 @@ def _route_to_etb_core(session: dict, reason: str | None = None) -> None:
 
     session["offer"] = {
         "max_amount": eligibility_result.get("max_amount") or eligibility_result.get("estimated_amount", 0),
-        "profit_rate": "12%",
+        "profit_rate": "6.1%",
         "max_tenure": etb_profile.get("preferred_tenure_months", 60),
         "foir_status": eligibility_result.get("foir_status"),
     }
@@ -160,6 +287,8 @@ def _merge_profile_update(session: dict, section: str, update: dict) -> None:
         for key in ("idExpirationDate", "levelOfEducation", "maritalStatus", "dependents"):
             if key in update and update[key] is not None:
                 personal[key] = update[key]
+        if "email" in update and update["email"] is not None:
+            profile["email"] = update["email"]
 
     elif section == "address":
         address = profile.setdefault("address", {})
@@ -239,7 +368,7 @@ def _parse_structured_update_value(raw_value: object, prefix: str) -> dict | Non
 
 
 def _finance_summary(amount: int, tenure: int, profit_rate_text: str | None = None) -> dict:
-    rate_text = str(profit_rate_text or "15%").strip() or "15%"
+    rate_text = str(profit_rate_text or "6.1%").strip() or "6.1%"
     rate_match = re.search(r"([\d.]+)", rate_text)
     annual_rate = float(rate_match.group(1)) / 100 if rate_match else 0.15
     monthly_rate = annual_rate / 12
@@ -453,21 +582,93 @@ def _advance_session_state(extract: dict, session: dict) -> None:
                 session["sub_step"] = "cancel"
                 logger.info("User cancelled at identify_yourself.")
 
-        elif (current_sub == "personal_details") and (data.get("identity_complete") or data.get("loading_complete") or data.get("continue") or data.get("modify_requested")):
+        elif current_sub == "personal_details":
+            completion_state = _get_personal_completion_state(session)
+            completion_stage = session.get("profile_completion_stage")
+            profile_completion_action = data.get("profile_completion_action")
+            explicit_completion_field = data.get("profile_completion_field")
+            profile_completion_value = data.get("profile_completion_value")
+
+            if profile_completion_action == "proceed" and completion_state:
+                session["profile_completion_stage"] = "collecting"
+                session["profile_completion"] = completion_state
+                logger.info("Customer chose to proceed with missing personal fields.")
+                return
+
+            if profile_completion_action == "not_now" and completion_state:
+                session["profile_completion_stage"] = "awaiting_proceed"
+                session["profile_completion"] = completion_state
+                logger.info("Customer deferred filling missing personal fields.")
+                return
+
+            if profile_completion_value is not None and (completion_stage == "collecting" or explicit_completion_field):
+                pending_field = explicit_completion_field or completion_state.get("current_field")
+                if pending_field:
+                    normalized_value = _normalize_personal_completion_value(pending_field, str(profile_completion_value))
+                    if normalized_value is not None:
+                        _apply_personal_completion_value(session, pending_field, normalized_value)
+                        completion_state = _get_personal_completion_state(session)
+                        if completion_state:
+                            session["profile_completion"] = completion_state
+                            session["profile_completion_stage"] = "collecting"
+                            logger.info("Captured missing personal field %s. Remaining: %s", pending_field, completion_state.get("missing_fields"))
+                        else:
+                            session.pop("profile_completion", None)
+                            session.pop("profile_completion_stage", None)
+                            logger.info("All personal details completed. Showing action buttons.")
+                    else:
+                        session["profile_completion"] = completion_state
+                        session["profile_completion_stage"] = "collecting"
+                        logger.info("Ignored invalid value for personal completion field %s.", pending_field)
+                return
+
+            if completion_state:
+                session["profile_completion"] = completion_state
+                session.setdefault("profile_completion_stage", "awaiting_proceed")
+                logger.info("Personal details still incomplete. Waiting for proceed gate.")
+                return
+
             if data.get("modify_requested"):
                 session["sub_step"] = "modify_section"
                 logger.info("Customer requested profile modification.")
-            else:
+            elif data.get("identity_complete") or data.get("loading_complete") or data.get("continue"):
                 # Step 7 is now mandatory before eligibility.
                 session["sub_step"] = "expenses"
                 session.setdefault("expenses", {})
+                if session.get("customerType") == CUSTOMER_TYPE_ETB or session.get("journeyMode") == JOURNEY_MODE_ETB_CORE:
+                    session["expenses_prefilled"] = True
+                    session["expenses_total"] = 7560
+                    session["expenses_breakdown"] = {
+                        "housing": "3000",
+                        "food": "1500",
+                        "utilities": "760",
+                        "healthcare": "500",
+                        "transportation": "1000",
+                        "education": "800",
+                    }
+                    session["expenses"]["breakdown"] = session["expenses_breakdown"]
+                    session["expenses"]["total"] = 7560
                 logger.info("Profile confirmed. Moving to expenses collection.")
 
         elif current_sub == "modify_section" and data.get("modify_section"):
             selected = str(data.get("modify_section", "")).strip().lower()
             if selected in {MODIFY_SECTION_PERSONAL, MODIFY_SECTION_ADDRESS, MODIFY_SECTION_EMPLOYMENT, MODIFY_SECTION_INCOME}:
-                session["sub_step"] = f"modify_{selected}"
+                if selected == MODIFY_SECTION_ADDRESS:
+                    session["sub_step"] = "modify_address_choice"
+                else:
+                    session["sub_step"] = f"modify_{selected}"
                 logger.info("Customer selected modification section: %s", selected)
+
+        elif current_sub == "modify_address_choice":
+            action = str(data.get("address_action", "")).strip().lower()
+            if action == "add_new":
+                session["modify_address_mode"] = "new"
+                session["sub_step"] = "modify_address"
+                logger.info("Customer chose to add a new address.")
+            elif action == "update_existing":
+                session["modify_address_mode"] = "existing"
+                session["sub_step"] = "modify_address"
+                logger.info("Customer chose to update existing address.")
 
         elif current_sub == "modify_personal":
             update = data.get("update_personal")
@@ -486,6 +687,13 @@ def _advance_session_state(extract: dict, session: dict) -> None:
             if not isinstance(update, dict):
                 update = _parse_structured_update_value(data.get("update_value"), "__SYS__UPDATE_ADDRESS")
             if isinstance(update, dict):
+                if session.get("modify_address_mode") == "new":
+                    previous_address = dict(session.get("customer_profile", {}).get("address", {}) or {})
+                    if any(value not in (None, "") for value in previous_address.values()):
+                        profile = _ensure_customer_profile(session)
+                        addresses = profile.setdefault("additionalAddresses", [])
+                        if isinstance(addresses, list):
+                            addresses.append(previous_address)
                 _persist_profile_update(session, "address", update)
                 _begin_updating(session, "Address details")
                 logger.info("Address update received and persisted.")
@@ -526,9 +734,13 @@ def _advance_session_state(extract: dict, session: dict) -> None:
 
         elif current_sub == "modify_income_proof_choice":
             if data.get("open_banking"):
+                session["income_verification_method"] = "open_banking"
+                session["ntb_open_banking_income_verified"] = True
                 session["sub_step"] = "open_banking_email_sent"
                 logger.info("Open Banking selected. Email step started.")
             elif data.get("upload_statement"):
+                session["income_verification_method"] = "upload_statement"
+                session["ntb_open_banking_income_verified"] = False
                 session["sub_step"] = "modify_income_upload_statement"
                 logger.info("Bank statement upload path selected. Waiting for document upload.")
 
@@ -536,11 +748,11 @@ def _advance_session_state(extract: dict, session: dict) -> None:
             _begin_updating(
                 session,
                 "Income details",
-                auto_advance_ms=3000,
+                auto_advance_ms=5000,
                 next_signal="open_banking_complete",
-                next_sub_step="expenses",
+                next_sub_step="personal_details",
             )
-            logger.info("Open Banking linked. Starting 3-second update loader.")
+            logger.info("Open Banking linked. Starting 5-second update loader.")
 
         elif current_sub == "updating_details" and (data.get("update_complete") or data.get("open_banking_complete")):
             updating = session.get("updating") or {}
@@ -552,10 +764,22 @@ def _advance_session_state(extract: dict, session: dict) -> None:
             elif updating.get("section") == "Income details":
                 pending_income = _consume_pending_profile_update(session, "income")
                 if pending_income:
+                    pending_income["monthly"] = "SAR 41250"
                     _persist_profile_update(session, "income", pending_income)
             if data.get("open_banking_complete"):
                 session["expenses_prefilled"] = True
                 session["expenses_total"] = 7560
+                session["expenses_breakdown"] = {
+                    "housing": "3000",
+                    "food": "1500",
+                    "utilities": "760",
+                    "healthcare": "500",
+                    "transportation": "1000",
+                    "education": "800",
+                }
+                session.setdefault("expenses", {})
+                session["expenses"]["breakdown"] = session["expenses_breakdown"]
+                session["expenses"]["total"] = 7560
 
             session["sub_step"] = next_sub_step
             session.pop("updating", None)
@@ -567,14 +791,49 @@ def _advance_session_state(extract: dict, session: dict) -> None:
 
         elif current_sub == "expenses" and data.get("expenses_confirmed"):
             total_expenses = data.get("total_expenses")
-            session.setdefault("expenses", {})
+            expenses = session.setdefault("expenses", {})
+            if "breakdown" not in expenses and session.get("expenses_breakdown"):
+                expenses["breakdown"] = session.get("expenses_breakdown")
             if total_expenses is not None:
-                session["expenses"]["total"] = total_expenses
+                expenses["total"] = total_expenses
             elif session.get("expenses_prefilled"):
-                session["expenses"]["total"] = session.get("expenses_total", 7560)
+                expenses["total"] = session.get("expenses_total", 7560)
+            elif "total" not in expenses and session.get("expenses_total") is not None:
+                expenses["total"] = session.get("expenses_total")
 
+            session["expenses_editing"] = False
             session["sub_step"] = "bureau_consent"
             logger.info("Expenses captured. Moving to mandatory bureau consent.")
+
+        elif current_sub == "expenses" and data.get("modify_expenses"):
+            session["expenses_editing"] = True
+            session.setdefault("expenses", {})
+            logger.info("Customer chose to edit expenses. Re-opening expenses widget in edit mode.")
+
+        elif current_sub == "expenses" and data.get("update_expenses"):
+            update = data.get("update_expenses")
+            if isinstance(update, dict):
+                breakdown = update.get("breakdown") if isinstance(update.get("breakdown"), dict) else {}
+                total_expenses = update.get("totalExpenses") or update.get("total_expenses") or update.get("total")
+                session.setdefault("expenses", {})
+                if breakdown:
+                    session["expenses"]["breakdown"] = breakdown
+                    session["expenses_breakdown"] = breakdown
+                if total_expenses is not None:
+                    session["expenses"]["total"] = total_expenses
+                    session["expenses_total"] = total_expenses
+                elif breakdown:
+                    total_calc = 0
+                    for value in breakdown.values():
+                        try:
+                            total_calc += float(value)
+                        except (TypeError, ValueError):
+                            continue
+                    session["expenses"]["total"] = int(total_calc)
+                    session["expenses_total"] = int(total_calc)
+                session["expenses_editing"] = False
+                session["sub_step"] = "bureau_consent"
+                logger.info("Expenses updated and saved. Moving to mandatory bureau consent.")
 
         elif current_sub == "slider":
             confirm_plan = data.get("confirm_finance_plan")
@@ -596,12 +855,12 @@ def _advance_session_state(extract: dict, session: dict) -> None:
                 logger.info("Finance plan confirmed from legacy payload. Summary computed for %s SAR over %s months.", amount, tenure)
 
         elif current_sub == "bureau_consent":
-            if data.get("bureau_consent_granted"):
+            if data.get("bureau_consent_granted") or data.get("bureau_consent") == "granted":
                 # Route based on journey mode (NTB vs ETB)
                 journey_mode = session.get("journeyMode", JOURNEY_MODE_PRE_DEDUPE)
                 session["sub_step"] = "eligibility_check"  
                 logger.info("Bureau consent granted. Starting eligibility check.")
-            elif data.get("bureau_consent_denied"):
+            elif data.get("bureau_consent_denied") or data.get("bureau_consent") == "denied":
                 # Step 8 is mandatory: re-ask consent until granted.
                 session["sub_step"] = "bureau_consent"
                 logger.info("Bureau consent denied. Re-asking mandatory consent.")
@@ -624,7 +883,7 @@ def _advance_session_state(extract: dict, session: dict) -> None:
             session["journeyMode"] = JOURNEY_MODE_ETB_CORE if session.get("customerType") == CUSTOMER_TYPE_ETB else JOURNEY_MODE_NTB_ENRICHMENT
             session["offer"] = {
                 "max_amount": eligibility_result["max_amount"],
-                "profit_rate": "12%",
+                "profit_rate": "6.1%",
                 "max_tenure": 60,
                 "foir_status": eligibility_result["foir_status"],
             }
@@ -655,30 +914,21 @@ def _advance_session_state(extract: dict, session: dict) -> None:
                 logger.info("Higher amount requested early. Redirecting to mandatory wants-more decision step.")
 
         elif current_sub == "wants_more_decision":
-            if data.get("accepted_max_offer"):
+            if data.get("accepted_max_offer") or data.get("accepted_offer"):
                 session["sub_step"] = "slider"
                 logger.info("Customer accepted maximum amount. Moving to slider.")
             elif data.get("higher_amount_requested"):
-                session["sub_step"] = "wants_more_open_banking"
-                logger.info("Customer requested higher amount. Moving to open banking path.")
+                session["sub_step"] = "wants_more_review"
+                logger.info("Customer requested higher amount. Moving to manual review confirmation.")
 
-        elif current_sub == "wants_more_open_banking" and data.get("open_banking_linked"):
+        elif current_sub in {"wants_more_review", "wants_more_open_banking"} and data.get("higher_amount_review_go_back"):
+            session["sub_step"] = "wants_more_decision"
+            logger.info("Customer returned from manual review confirmation to amount decision.")
+
+        elif current_sub in {"wants_more_review", "wants_more_open_banking"} and data.get("submit_higher_amount_review"):
             session["sub_step"] = "wants_more_backoffice"
-            session["backoffice_workitem"] = {
-                "customerId": session.get("collected", {}).get("id_number", ""),
-                "requestedAmount": session.get("requested_amount", "above_eligible_limit"),
-                "maxEligible": session.get("offer", {}).get("max_amount", 0),
-                "updatedIncome": "41250",
-                "obligations": "8750",
-                "timestamp": str(uuid.uuid4()),
-                "branch": "Riyadh",
-                "remarks": "Dummy workitem: customer requested amount above automatic eligible limit",
-            }
-            logger.info("Open banking linked for wants-more path. Dummy backoffice workitem created.")
-
-        elif current_sub == "wants_more_backoffice" and data.get("accepted_max_offer"):
-            session["sub_step"] = "slider"
-            logger.info("Backoffice flow acknowledged. Moving to slider for current eligible amount.")
+            _ensure_higher_amount_workitem(session)
+            logger.info("Higher amount request submitted for manual backoffice review.")
 
         elif current_sub == "slider":
             confirm_plan = data.get("confirm_finance_plan")
@@ -688,6 +938,7 @@ def _advance_session_state(extract: dict, session: dict) -> None:
                 offer_rate = session.get("offer", {}).get("profit_rate")
                 summary = _finance_summary(amount, tenure, confirm_plan.get("profitRate") or offer_rate)
                 session["finance_summary"] = summary
+                session["finance_amount"] = amount
                 session["sub_step"] = "summary"
                 logger.info("Finance plan confirmed. Summary computed for %s SAR over %s months.", amount, tenure)
             elif data.get("loan_amount"):
@@ -696,6 +947,7 @@ def _advance_session_state(extract: dict, session: dict) -> None:
                 offer_rate = session.get("offer", {}).get("profit_rate")
                 summary = _finance_summary(amount, tenure, offer_rate)
                 session["finance_summary"] = summary
+                session["finance_amount"] = amount
                 session["sub_step"] = "summary"
                 logger.info("Loan configured from legacy payload. Summary computed for %s SAR over %s months.", amount, tenure)
 
@@ -725,6 +977,15 @@ def _advance_session_state(extract: dict, session: dict) -> None:
             logger.info("Showing commodity transaction certificate")
 
         elif data.get("proceed_esign") and current_sub == "certificate":
+            profile = session.get("customer_profile") or {}
+            email = profile.get("email")
+            name = profile.get("name") or session.get("collected", {}).get("full_name") or "Customer"
+            if email and not session.get("docusign_email_sent"):
+                try:
+                    if send_docusign_email(email, name):
+                        session["docusign_email_sent"] = True
+                except Exception:
+                    logger.exception("Failed to trigger docusign email for session %s", session.get("session_id", ""))
             session["step"] = "esign"
             session["step_number"] = 4
             session["sub_step"] = "documents"

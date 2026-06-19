@@ -2,9 +2,17 @@
 
 import React, { useState } from "react";
 import { motion } from "framer-motion";
-import { StepIndicator } from "./StepIndicator";
 
-export function CommodityTradeAuthorizationWidget() {
+interface CommodityTradeAuthorizationWidgetProps {
+  data?: {
+    show_step_tracker?: boolean;
+    tracker_step?: number;
+    tracker_total?: number;
+  };
+}
+
+export function CommodityTradeAuthorizationWidget({ data }: CommodityTradeAuthorizationWidgetProps) {
+  void data;
   const [authorized, setAuthorized] = useState(false);
 
   const containerVariants = {
@@ -19,43 +27,38 @@ export function CommodityTradeAuthorizationWidget() {
       animate="visible"
       className="w-full max-w-sm mt-4"
     >
-      <StepIndicator currentStep={3} />
-      <div className="relative overflow-hidden rounded-3xl bg-slate-900 border border-slate-800 shadow-2xl p-6">
-        <div className="absolute top-0 right-0 w-64 h-64 bg-amber-500/10 rounded-full blur-[80px] pointer-events-none" />
-        <div className="absolute bottom-0 left-0 w-64 h-64 bg-orange-500/10 rounded-full blur-[80px] pointer-events-none" />
+      <div className="journey-surface p-6">
+        <div className="flex items-center gap-3 mb-5">
+          <div className="w-10 h-10 rounded-full bg-white border border-[#D5DCE3] flex items-center justify-center shadow-sm">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" className="text-[#1B739E]">
+              <path d="M13 10V3L4 14h7v7l9-11h-7z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </div>
+          <div>
+            <h3 className="journey-heading">Commodity Trade</h3>
+            <p className="journey-label mt-1">Authorization Required</p>
+          </div>
+        </div>
 
-        <div className="relative z-10">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="w-10 h-10 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-center shadow-inner">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" className="text-amber-400">
-                <path d="M13 10V3L4 14h7v7l9-11h-7z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+        <div className="journey-panel p-4 mb-5">
+          <div className="flex items-start gap-3">
+            <div className="relative flex items-center justify-center mt-0.5">
+              <input
+                type="checkbox"
+                id="trade-auth"
+                checked={authorized}
+                onChange={(e) => setAuthorized(e.target.checked)}
+                className="peer appearance-none w-5 h-5 border-2 border-[#D5DCE3] rounded-[6px] flex-shrink-0 checked:bg-[#1B739E] checked:border-[#1B739E] transition-colors cursor-pointer"
+              />
+              <svg className="absolute w-3 h-3 text-white pointer-events-none opacity-0 peer-checked:opacity-100" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="20 6 9 17 4 12" />
               </svg>
             </div>
-            <div>
-              <h3 className="text-lg font-semibold text-white tracking-tight leading-tight">Commodity Trade</h3>
-              <p className="text-[11px] font-medium text-slate-400 uppercase tracking-wider mt-0.5">Authorization Required</p>
-            </div>
+            <label htmlFor="trade-auth" className="journey-body cursor-pointer select-none">
+              I authorize the bank to complete the commodity trade required for my finance plan.
+            </label>
           </div>
-
-          <div className="bg-slate-800/50 rounded-2xl p-4 border border-slate-700/50 backdrop-blur-sm mb-6">
-            <div className="flex items-start gap-3 bg-slate-800/80 p-3 rounded-xl border border-slate-700">
-              <div className="relative flex items-center justify-center mt-0.5">
-                <input
-                  type="checkbox"
-                  id="trade-auth"
-                  checked={authorized}
-                  onChange={(e) => setAuthorized(e.target.checked)}
-                  className="peer appearance-none w-5 h-5 border-2 border-slate-500 rounded flex-shrink-0 checked:bg-amber-500 checked:border-amber-500 transition-colors cursor-pointer"
-                />
-                <svg className="absolute w-3 h-3 text-white pointer-events-none opacity-0 peer-checked:opacity-100" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="20 6 9 17 4 12" />
-                </svg>
-              </div>
-              <label htmlFor="trade-auth" className="text-xs text-slate-300 leading-relaxed cursor-pointer select-none">
-                I authorize the bank to complete the commodity trade required for my finance plan.
-              </label>
-            </div>
-          </div>
+        </div>
 
           <motion.button
             whileHover={authorized ? { scale: 1.02 } : {}}
@@ -63,21 +66,21 @@ export function CommodityTradeAuthorizationWidget() {
             onClick={() => {
               if (authorized) {
                 window.dispatchEvent(
-                  new CustomEvent("mock-send-message", { detail: "I authorize the commodity trade." })
+                  new CustomEvent("mock-send-message", {
+                    detail: {
+                      visibleText: "I authorize the commodity trade.",
+                      systemText: "__SYS__continue",
+                    },
+                  })
                 );
               }
             }}
             disabled={!authorized}
-            className={`w-full py-4 text-[14px] font-semibold rounded-2xl shadow-lg transition-all duration-300 ${
-              authorized
-                ? "bg-gradient-to-r from-amber-500 to-orange-400 text-white shadow-amber-500/25 hover:shadow-amber-500/40"
-                : "bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700"
-            }`}
+            className="w-full py-4 journey-widget-button text-[14px] shadow-lg transition-all duration-300"
           >
             Authorize Trade
           </motion.button>
         </div>
-      </div>
     </motion.div>
   );
 }

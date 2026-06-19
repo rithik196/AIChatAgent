@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
+import { ImportantText } from "../shared/ImportantText";
 
 interface LoadingWidgetProps {
   data?: {
@@ -70,16 +71,13 @@ export function LoadingWidget({ data }: LoadingWidgetProps) {
           />
         </div>
 
-        <h3 className="text-lg font-bold text-slate-900 mb-2">{title}</h3>
-        <p className="text-sm text-slate-500">{subtitle}</p>
+        <h3 className="journey-heading mb-2">{title}</h3>
+        <p className="journey-body text-[#425768]"><ImportantText text={subtitle} /></p>
 
         {!silent && readyToContinue && (
           <button
             onClick={handleContinue}
-            className="mt-5 px-5 py-2.5 text-white font-semibold rounded-full shadow-md hover:opacity-90 transition-all"
-            style={{
-              background: 'linear-gradient(90deg, #1B6A8A 0%, #4BA3C7 100%)',
-            }}
+            className="mt-5 px-5 py-2.5 journey-widget-button shadow-md hover:opacity-90 transition-all"
           >
             Continue
           </button>

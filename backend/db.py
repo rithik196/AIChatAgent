@@ -62,7 +62,7 @@ CUSTOMER_DB = {
     "5114886789": CustomerProfile(
         name="Faisal Rahman",
         phone="5114886789",
-        email="rishabh-mittal@newgensoft.com",
+        email="rithik.j@newgensoft.com",
         personal=PersonalDetails(
             id_number="1046403940",
             id_expiration_date="26/08/2027",
@@ -86,7 +86,7 @@ CUSTOMER_DB = {
             street="Al Jamiah Street",
             city="Riyadh",
             postal_code="12836",
-            house_type="Villa"
+            house_type=""
         ),
         employment=EmploymentDetails(
             type="Private Sector",
@@ -101,7 +101,7 @@ CUSTOMER_DB = {
         ),
         income=IncomeDetails(
             monthly="SAR 35650",
-            obligations="8750",
+            obligations="7560",
             credit_card_limit="SAR 20000"
         )
     )
@@ -204,6 +204,8 @@ def update_customer(national_id: str, updated_data: dict):
         customer.personal.marital_status = p_data.get("maritalStatus", customer.personal.marital_status)
         customer.personal.dependents = str(p_data.get("dependents", customer.personal.dependents))
         customer.personal.education = p_data.get("education", p_data.get("levelOfEducation", customer.personal.education))
+        if p_data.get("email") is not None:
+            customer.email = p_data.get("email")
 
     # Update address details
     if "address" in updated_data:
@@ -324,4 +326,3 @@ def get_etb_registered_ibans(customer_id: str) -> list:
     }
     
     return IBAN_MASTER_EXTENDED.get(customer_id, [])
-

@@ -7,34 +7,48 @@ export function ModifyPersonalWidget({ data }: any) {
   const [education, setEducation] = useState(data?.personal?.levelOfEducation || data?.personal?.education || "");
   const [marital, setMarital] = useState(data?.personal?.maritalStatus || "");
   const [dependents, setDependents] = useState(data?.personal?.dependents || "");
+  const [email, setEmail] = useState(
+    data?.email || data?.emailId || data?.personal?.email || data?.personal?.emailId || ""
+  );
 
   const handleSubmit = () => {
     window.dispatchEvent(
       new CustomEvent("mock-send-message", {
-        detail: {
-          visibleText: "Save updated personal details",
-          systemText: `__SYS__UPDATE_PERSONAL: ${JSON.stringify({
-            levelOfEducation: education,
-            maritalStatus: marital,
-            dependents: dependents,
-          })}`,
-        },
-      })
+          detail: {
+            visibleText: "Save updated personal details",
+            systemText: `__SYS__UPDATE_PERSONAL: ${JSON.stringify({
+              levelOfEducation: education,
+              maritalStatus: marital,
+              dependents: dependents,
+              email,
+            })}`,
+          },
+        })
     );
   };
 
   return (
     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-sm mt-3">
-      <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
-        <h3 className="text-sm font-semibold text-slate-800 mb-4">Update Personal Details</h3>
+      <div className="journey-surface p-5">
+        <h3 className="journey-heading mb-4">Update Personal Details</h3>
         
         <div className="flex flex-col gap-4">
           <div>
-            <label className="text-xs font-semibold text-slate-600 mb-2 block">Level of Education</label>
+            <label className="journey-label mb-2 block">Email Id</label>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="w-full rounded-[16px] border border-[#D5DCE3] bg-white px-3 py-2 text-[14px] leading-[16px] font-semibold text-[#0D141A] placeholder:text-slate-400 focus:outline-none focus:border-blue-400"
+            />
+          </div>
+
+          <div>
+            <label className="journey-label mb-2 block">Level of Education</label>
             <select 
               value={education} 
               onChange={(e) => setEducation(e.target.value)}
-              className="w-full p-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-blue-400"
+              className="w-full rounded-[16px] border border-[#D5DCE3] bg-white px-3 py-2 text-[14px] leading-[16px] font-semibold text-[#0D141A] focus:outline-none focus:border-blue-400"
             >
               <option></option>
               <option>Graduation</option>
@@ -49,11 +63,11 @@ export function ModifyPersonalWidget({ data }: any) {
           </div>
 
           <div>
-            <label className="text-xs font-semibold text-slate-600 mb-2 block">Marital Status</label>
+            <label className="journey-label mb-2 block">Marital Status</label>
             <select 
               value={marital} 
               onChange={(e) => setMarital(e.target.value)}
-              className="w-full p-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-blue-400"
+              className="w-full rounded-[16px] border border-[#D5DCE3] bg-white px-3 py-2 text-[14px] leading-[16px] font-semibold text-[#0D141A] focus:outline-none focus:border-blue-400"
             >
               <option></option>
               <option>Single</option>
@@ -66,11 +80,11 @@ export function ModifyPersonalWidget({ data }: any) {
           </div>
 
           <div>
-            <label className="text-xs font-semibold text-slate-600 mb-2 block">Number of Dependents</label>
+            <label className="journey-label mb-2 block">Number of Dependents</label>
             <select 
               value={dependents} 
               onChange={(e) => setDependents(e.target.value)}
-              className="w-full p-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-blue-400"
+              className="w-full rounded-[16px] border border-[#D5DCE3] bg-white px-3 py-2 text-[14px] leading-[16px] font-semibold text-[#0D141A] focus:outline-none focus:border-blue-400"
             >
               <option></option>
               <option>0</option>
@@ -85,8 +99,7 @@ export function ModifyPersonalWidget({ data }: any) {
 
           <button
             onClick={handleSubmit}
-            className="w-full mt-3 py-2.5 text-white font-semibold rounded-full hover:opacity-90 transition-all"
-            style={{ background: "linear-gradient(90deg, #1B6A8A 0%, #4BA3C7 100%)" }}
+            className="w-full mt-3 py-2.5 journey-widget-button hover:opacity-90 transition-all"
           >
             Save Changes
           </button>

@@ -17,12 +17,12 @@ export function OptionButtons({ options, onSelect }: OptionButtonsProps) {
   if (!options || options.length === 0) return null;
 
   return (
-    <div className="flex flex-wrap gap-2 justify-end w-full mt-2">
+    <div className="flex flex-wrap gap-2 w-full mt-2">
       {options.map((opt) => (
         <button
           key={opt.id}
           onClick={() => onSelect(opt.value)}
-          className="px-4 py-2 bg-white border border-blue-200 text-blue-700 text-sm font-medium rounded-full hover:bg-blue-50 transition-colors shadow-sm"
+          className="px-4 py-2 journey-widget-button type-label-sm border border-transparent transition-colors shadow-sm"
         >
           {opt.label}
         </button>

@@ -127,3 +127,179 @@
     @apply font-sans;
   }
 }
+
+@layer components {
+  .journey-surface {
+    border-radius: 16px;
+    border: 1px solid #D5DCE3;
+    box-shadow: 0 1px 2px rgba(13, 20, 26, 0.04);
+    background-image: linear-gradient(90deg, #EBF4F5 0%, #B9DCF2 100%);
+  }
+
+  .journey-panel {
+    border-radius: 16px;
+    border: 1px solid #D5DCE3;
+    background: #FFFFFF;
+    box-shadow: 0 1px 2px rgba(13, 20, 26, 0.04);
+  }
+
+  .journey-heading {
+    color: #0D141A;
+    font-size: 16px;
+    line-height: 16px;
+    font-weight: 600;
+    font-family: "Open Sans", sans-serif;
+    font-style: normal;
+    letter-spacing: 0;
+  }
+
+  .journey-label {
+    color: #425768;
+    font-size: 12px;
+    line-height: 100%;
+    font-weight: 400;
+    font-family: "Open Sans", sans-serif;
+    font-style: normal;
+    letter-spacing: 0;
+  }
+
+  .journey-value {
+    color: #0D141A;
+    font-size: 14px;
+    line-height: 16px;
+    font-weight: 600;
+    font-family: "Open Sans", sans-serif;
+    font-style: normal;
+    letter-spacing: 0;
+  }
+
+  .journey-body {
+    color: #0D141A;
+    font-size: 14px;
+    line-height: 24px;
+    font-weight: 400;
+    font-family: "Open Sans", sans-serif;
+    font-style: normal;
+    letter-spacing: 0;
+  }
+
+  .journey-muted {
+    color: #425768;
+    font-size: 14px;
+    line-height: 24px;
+    font-weight: 400;
+    font-family: "Open Sans", sans-serif;
+    font-style: normal;
+    letter-spacing: 0;
+  }
+
+  .journey-step-circle {
+    display: flex;
+    height: 24px;
+    width: 24px;
+    align-items: center;
+    justify-content: center;
+    border-radius: 9999px;
+    background: #1B739E;
+    color: #FFFFFF;
+    font-size: 12px;
+    line-height: 1;
+    font-weight: 600;
+    font-family: "Open Sans", sans-serif;
+    font-style: normal;
+    letter-spacing: 0;
+  }
+
+  .journey-widget-button {
+    border-radius: 16px;
+    background: linear-gradient(238.36deg, rgba(60, 194, 225, 0.3) 2.05%, rgba(24, 116, 183, 0.3) 83.77%);
+    color: #0B385A;
+    font-weight: 600;
+    font-family: "Open Sans", sans-serif;
+    font-style: normal;
+    letter-spacing: 0;
+    box-shadow: 0 1px 2px rgba(13, 20, 26, 0.06);
+  }
+
+  .journey-widget-button:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  .journey-range {
+    appearance: none;
+    -webkit-appearance: none;
+    background-color: transparent;
+  }
+
+  .journey-range::-webkit-slider-runnable-track {
+    height: 4px;
+    border-radius: 9999px;
+    background: transparent;
+  }
+
+  .journey-range::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 18px;
+    height: 18px;
+    margin-top: -7px;
+    border-radius: 9999px;
+    background: #FFFFFF;
+    border: 1px solid rgba(13, 20, 26, 0.18);
+    box-shadow: 0 1px 2px rgba(13, 20, 26, 0.14);
+  }
+
+  .journey-range::-moz-range-track {
+    height: 4px;
+    border-radius: 9999px;
+    background: transparent;
+  }
+
+  .journey-range::-moz-range-progress {
+    height: 4px;
+    border-radius: 9999px;
+    background: linear-gradient(261.63deg, #C24231 9.51%, #FB8B23 87.57%);
+  }
+
+  .journey-range::-moz-range-thumb {
+    width: 18px;
+    height: 18px;
+    border-radius: 9999px;
+    background: #FFFFFF;
+    border: 1px solid rgba(13, 20, 26, 0.18);
+    box-shadow: 0 1px 2px rgba(13, 20, 26, 0.14);
+  }
+
+  .type-display-sm {
+    @apply text-[18px] leading-5 font-semibold;
+  }
+
+  .type-title-md {
+    @apply text-[16px] leading-5 font-semibold;
+  }
+
+  .type-title-sm {
+    @apply text-[14px] leading-5 font-semibold;
+  }
+
+  .type-body-md {
+    @apply text-[14px] leading-6 font-normal;
+  }
+
+  .type-body-md-strong {
+    @apply text-[14px] leading-6 font-semibold;
+  }
+
+  .type-label-sm {
+    @apply text-[13px] leading-5 font-medium;
+  }
+
+  .type-caption-md {
+    @apply text-[12px] leading-4 font-medium;
+  }
+
+  .type-overline {
+    @apply text-[11px] leading-4 font-medium uppercase tracking-[0.06em];
+  }
+}

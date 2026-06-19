@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
+import { ImportantText } from "../shared/ImportantText";
 
 interface VerificationSuccessWidgetProps {
   data?: {
@@ -50,21 +51,16 @@ export function VerificationSuccessWidget({ data }: VerificationSuccessWidgetPro
       transition={{ duration: 0.4, ease: 'easeOut' }}
       className="w-full max-w-sm mt-3"
     >
-      <div
-        className="rounded-3xl p-10 text-center shadow-sm"
-        style={{
-          background: 'linear-gradient(180deg, #EBF4F5 0%, #D4E8EF 100%)',
-        }}
-      >
+      <div className="journey-surface p-10 text-center">
         {/* Green Checkmark Circle */}
         <div className="w-20 h-20 mx-auto mb-5 relative">
           <motion.div
             initial={{ scale: 0, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
             transition={{ delay: 0.2, type: 'spring', stiffness: 200, damping: 15 }}
-            className="w-full h-full rounded-full flex items-center justify-center"
+            className="w-full h-full rounded-full flex items-center justify-center bg-white"
             style={{
-              border: '4px solid #0D9488',
+              border: '4px solid #1B739E',
             }}
           >
             <motion.svg
@@ -74,7 +70,7 @@ export function VerificationSuccessWidget({ data }: VerificationSuccessWidgetPro
               className="w-10 h-10"
               viewBox="0 0 24 24"
               fill="none"
-              stroke="#0D9488"
+              stroke="#1B739E"
               strokeWidth="3"
               strokeLinecap="round"
               strokeLinejoin="round"
@@ -93,7 +89,7 @@ export function VerificationSuccessWidget({ data }: VerificationSuccessWidgetPro
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.6 }}
-          className="text-lg font-bold text-slate-900 mb-2"
+          className="journey-heading mb-2"
         >
           {title}
         </motion.h3>
@@ -101,18 +97,15 @@ export function VerificationSuccessWidget({ data }: VerificationSuccessWidgetPro
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ delay: 0.8 }}
-          className="text-sm text-slate-500"
+          className="journey-body text-[#425768]"
         >
-          {subtitle}
+          <ImportantText text={subtitle} />
         </motion.p>
 
         {!silent && readyToContinue && (
           <button
             onClick={handleContinue}
-            className="mt-5 px-5 py-2.5 text-white font-semibold rounded-full shadow-md hover:opacity-90 transition-all"
-            style={{
-              background: 'linear-gradient(90deg, #1B6A8A 0%, #4BA3C7 100%)',
-            }}
+            className="mt-5 px-5 py-2.5 journey-widget-button shadow-md hover:opacity-90 transition-all"
           >
             Continue
           </button>

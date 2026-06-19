@@ -6,6 +6,11 @@ import { motion } from "framer-motion";
 export function ModifyEmploymentWidget({ data }: any) {
   const [employerType, setEmployerType] = useState(data?.employment?.type || "Private Sector");
   const [industry, setIndustry] = useState(data?.employment?.industry || "Banking & Finance");
+  const [employerName, setEmployerName] = useState(data?.employment?.employer || "Newgen Software");
+  const [experience, setExperience] = useState(data?.employment?.experience || "7 years");
+  const [workLine1, setWorkLine1] = useState(data?.employment?.workAddress?.line1 || "Kingdom Tower, Office 1205");
+  const [workCity, setWorkCity] = useState(data?.employment?.workAddress?.city || "Riyadh");
+  const [workPostalCode, setWorkPostalCode] = useState(data?.employment?.workAddress?.postalCode || "12214");
 
   const handleSubmit = () => {
     window.dispatchEvent(
@@ -15,6 +20,13 @@ export function ModifyEmploymentWidget({ data }: any) {
           systemText: `__SYS__UPDATE_EMPLOYMENT: ${JSON.stringify({
             type: employerType,
             industry,
+            employer: employerName,
+            experience,
+            workAddress: {
+              line1: workLine1,
+              city: workCity,
+              postalCode: workPostalCode,
+            },
           })}`,
         },
       })
@@ -23,16 +35,16 @@ export function ModifyEmploymentWidget({ data }: any) {
 
   return (
     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-sm mt-3">
-      <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
-        <h3 className="text-sm font-semibold text-slate-800 mb-4">Update Employment Details</h3>
+      <div className="journey-surface p-5">
+        <h3 className="journey-heading mb-4">Update Employment Details</h3>
 
         <div className="flex flex-col gap-4">
           <div>
-            <label className="text-xs font-semibold text-slate-600 mb-2 block">Employer Type</label>
+            <label className="journey-label mb-2 block">Employer Type</label>
             <select
               value={employerType}
               onChange={(e) => setEmployerType(e.target.value)}
-              className="w-full p-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-blue-400"
+              className="w-full rounded-[16px] border border-[#D5DCE3] bg-white px-3 py-2 text-[14px] leading-[16px] font-semibold text-[#0D141A] focus:outline-none focus:border-blue-400"
             >
               <option>Private Sector</option>
               <option>Government (Ministry / Semi-Government)</option>
@@ -44,11 +56,21 @@ export function ModifyEmploymentWidget({ data }: any) {
           </div>
 
           <div>
-            <label className="text-xs font-semibold text-slate-600 mb-2 block">Industry Type</label>
+            <label className="journey-label mb-2 block">Employer Name</label>
+            <input
+              type="text"
+              value={employerName}
+              onChange={(e) => setEmployerName(e.target.value)}
+              className="w-full rounded-[16px] border border-[#D5DCE3] bg-white px-3 py-2 text-[14px] leading-[16px] font-semibold text-[#0D141A] focus:outline-none focus:border-blue-400"
+            />
+          </div>
+
+          <div>
+            <label className="journey-label mb-2 block">Industry Type</label>
             <select
               value={industry}
               onChange={(e) => setIndustry(e.target.value)}
-              className="w-full p-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-blue-400"
+              className="w-full rounded-[16px] border border-[#D5DCE3] bg-white px-3 py-2 text-[14px] leading-[16px] font-semibold text-[#0D141A] focus:outline-none focus:border-blue-400"
             >
               <option>Banking & Finance</option>
               <option>Oil & Gas / Energy</option>
@@ -65,10 +87,56 @@ export function ModifyEmploymentWidget({ data }: any) {
             </select>
           </div>
 
+          <div>
+            <label className="journey-label mb-2 block">Total Experience</label>
+            <input
+              type="text"
+              value={experience}
+              onChange={(e) => setExperience(e.target.value)}
+              className="w-full rounded-[16px] border border-[#D5DCE3] bg-white px-3 py-2 text-[14px] leading-[16px] font-semibold text-[#0D141A] focus:outline-none focus:border-blue-400"
+            />
+          </div>
+
+          <div>
+            <label className="journey-label mb-2 block">Work Address</label>
+            <input
+              type="text"
+              value={workLine1}
+              onChange={(e) => setWorkLine1(e.target.value)}
+              className="w-full rounded-[16px] border border-[#D5DCE3] bg-white px-3 py-2 text-[14px] leading-[16px] font-semibold text-[#0D141A] focus:outline-none focus:border-blue-400"
+            />
+          </div>
+
+          <div>
+            <label className="journey-label mb-2 block">Work City</label>
+            <select
+              value={workCity}
+              onChange={(e) => setWorkCity(e.target.value)}
+              className="w-full rounded-[16px] border border-[#D5DCE3] bg-white px-3 py-2 text-[14px] leading-[16px] font-semibold text-[#0D141A] focus:outline-none focus:border-blue-400"
+            >
+              <option value="">Select city</option>
+              <option>Riyadh</option>
+              <option>Jeddah</option>
+              <option>Dammam</option>
+              <option>Mecca</option>
+              <option>Medina</option>
+              <option>Al Khobar</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="journey-label mb-2 block">Work Post code</label>
+            <input
+              type="text"
+              value={workPostalCode}
+              onChange={(e) => setWorkPostalCode(e.target.value)}
+              className="w-full rounded-[16px] border border-[#D5DCE3] bg-white px-3 py-2 text-[14px] leading-[16px] font-semibold text-[#0D141A] focus:outline-none focus:border-blue-400"
+            />
+          </div>
+
           <button
             onClick={handleSubmit}
-            className="w-full mt-2 py-2.5 text-white font-semibold rounded-full hover:opacity-90 transition-all"
-            style={{ background: "linear-gradient(90deg, #1B6A8A 0%, #4BA3C7 100%)" }}
+            className="w-full mt-2 py-2.5 journey-widget-button hover:opacity-90 transition-all"
           >
             Save Changes
           </button>

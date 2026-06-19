@@ -2,6 +2,7 @@
 
 import React from "react";
 import { motion } from "framer-motion";
+import { ImportantText } from "../shared/ImportantText";
 
 interface WantsMoreDecisionWidgetProps {
   data?: {
@@ -19,20 +20,13 @@ export function WantsMoreDecisionWidget({ data }: WantsMoreDecisionWidgetProps) 
       transition={{ duration: 0.35 }}
       className="w-full max-w-sm mt-3"
     >
-      <div
-        className="rounded-3xl p-5 shadow-sm border border-slate-100"
-        style={{
-          backgroundColor: "#FFFFFF",
-          backgroundImage:
-            "linear-gradient(125.41deg, rgba(185, 220, 242, 0.15) -6.53%, rgba(235, 244, 245, 0.15) 110.14%)",
-        }}
-      >
-        <h3 className="text-base font-bold text-slate-900 mb-2">Amount Confirmation</h3>
-        <p className="text-sm text-slate-700 mb-1">
-          Your maximum eligible amount is {maxAmount.toLocaleString("en-IN")} SAR.
+      <div className="journey-surface p-5">
+        <h3 className="journey-heading mb-2">Amount Confirmation</h3>
+        <p className="journey-body mb-1">
+          <ImportantText text={`Your maximum eligible amount is ${maxAmount.toLocaleString("en-IN")} SAR.`} />
         </p>
-        <p className="text-sm text-slate-700 mb-4">
-          Is this amount okay for you, or do you want more?
+        <p className="journey-body mb-4">
+          <ImportantText text="Is this amount okay for you, or do you want more?" />
         </p>
 
         <div className="flex flex-col gap-3">
@@ -47,25 +41,24 @@ export function WantsMoreDecisionWidget({ data }: WantsMoreDecisionWidgetProps) 
                 })
               );
             }}
-            className="w-full py-3 text-white font-semibold rounded-full shadow-md hover:opacity-90 transition-all"
-            style={{ background: "linear-gradient(90deg, #1B6A8A 0%, #4BA3C7 100%)" }}
+            className="w-full py-3 journey-widget-button hover:opacity-90 transition-all"
           >
-            Amount is Okay
+          Accept eligible finance offer
           </button>
           <button
             onClick={() => {
               window.dispatchEvent(
                 new CustomEvent("mock-send-message", {
                   detail: {
-                    visibleText: "I want more amount",
+                    visibleText: "Request for a higher amount",
                     systemText: "__SYS__higher_amount_requested",
                   },
                 })
               );
             }}
-            className="w-full py-3 text-slate-600 font-semibold rounded-full border-2 border-slate-200 hover:bg-slate-50 transition-all"
+            className="w-full py-3 journey-widget-button border-2 border-transparent hover:opacity-90 transition-all"
           >
-            I Want More
+           Request for Higher Amount
           </button>
         </div>
       </div>

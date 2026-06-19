@@ -2,6 +2,7 @@
 
 import React from "react";
 import { motion } from "framer-motion";
+import { ImportantText } from "../shared/ImportantText";
 
 export function BureauConsentWidget() {
   return (
@@ -11,38 +12,40 @@ export function BureauConsentWidget() {
       transition={{ duration: 0.35 }}
       className="w-full max-w-sm mt-3"
     >
-      <div
-        className="rounded-3xl p-5 shadow-sm border border-slate-100"
-        style={{
-          backgroundColor: "#FFFFFF",
-          backgroundImage:
-            "linear-gradient(125.41deg, rgba(185, 220, 242, 0.15) -6.53%, rgba(235, 244, 245, 0.15) 110.14%)",
-        }}
-      >
-        <h3 className="text-base font-bold text-slate-900 mb-2">Bureau Consent</h3>
-        <p className="text-sm text-slate-700 mb-4">
-          We want to take your consent for fetching bureau records. Do you want to proceed?
+      <div className="journey-surface p-5">
+        <h3 className="journey-heading mb-2">Bureau Consent</h3>
+        <p className="journey-body mb-4">
+          <ImportantText text="We want to take your consent for fetching bureau records. Do you want to proceed?" />
         </p>
 
         <div className="flex flex-col gap-3">
           <button
             onClick={() => {
               window.dispatchEvent(
-                new CustomEvent("mock-send-message", { detail: "Yes, I consent to fetch bureau records" })
+                new CustomEvent("mock-send-message", {
+                  detail: {
+                    visibleText: "Yes, I consent to fetch bureau records",
+                    systemText: "__SYS__bureau_consent_granted",
+                  },
+                })
               );
             }}
-            className="w-full py-3 text-white font-semibold rounded-full shadow-md hover:opacity-90 transition-all"
-            style={{ background: "linear-gradient(90deg, #1B6A8A 0%, #4BA3C7 100%)" }}
+            className="w-full py-3 journey-widget-button hover:opacity-90 transition-all"
           >
             Yes, I Consent
           </button>
           <button
             onClick={() => {
               window.dispatchEvent(
-                new CustomEvent("mock-send-message", { detail: "No, I do not consent" })
+                new CustomEvent("mock-send-message", {
+                  detail: {
+                    visibleText: "No, I do not consent",
+                    systemText: "__SYS__bureau_consent_denied",
+                  },
+                })
               );
             }}
-            className="w-full py-3 text-slate-600 font-semibold rounded-full border-2 border-slate-200 hover:bg-slate-50 transition-all"
+            className="w-full py-3 journey-widget-button border-2 border-transparent hover:opacity-90 transition-all"
           >
             No
           </button>

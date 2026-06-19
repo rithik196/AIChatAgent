@@ -75,8 +75,9 @@ The customer has approved Nafath. Verification is in progress.
 """,
         ("identity", "verified"): """
 Identity verification is complete!
-- Congratulate the customer.
-- The system will run a dedupe check next.
+- Congratulate the customer briefly.
+- The system will run a dedupe check automatically next, so do not ask the customer to confirm continuation.
+- Use a status-style line such as: "Your identity has been verified successfully. We are moving to the dedupe check now."
 - DO NOT mention offers, limits, profit rates, or tenures in this sub-step.
 - Extract: {"identity_complete": true}
 """,
@@ -91,7 +92,7 @@ The system is running a dedupe check to verify existing records.
 The customer is viewing the Journey Overview for onboarding.
 - The system will show a widget with the 5 steps of the journey and ask if they would like to proceed.
 - You must wait for the customer to confirm their intent. 
-- If they type or say "Yes", "Proceed", "Okay", etc., extract: {"proceed": true}.
+- If they type or say "Yes", "Yes proceed", "Proceed", "Okay", "Sure", "Go ahead", "Continue", etc., extract: {"proceed": true}.
 - If they type or say "No", "Cancel", etc., extract: {"cancel": true}.
 """,
         ("identity", "personal_details"): """
@@ -100,6 +101,9 @@ DO NOT present any finance offers yet! You must wait for the customer to confirm
 - The system is showing a widget with the customer's personal details.
 - Say exactly: "I have retrieved your current profile details. Please review them to make sure everything is correct to proceed."
 - DO NOT mention any loan amounts, profit rates, or tenures at this stage.
+- If there are missing personal fields, first ask whether the customer wants to proceed with filling those missing details.
+- Treat natural confirmations like "yes", "yes proceed", "okay", "sure", or "go ahead" as agreement to continue.
+- Only after the customer agrees, ask for the first missing field and wait for them to select one of the provided options before proceeding to the next missing field.
 - Extract: {"identity_complete": true} when they confirm the details are correct.
 """,
         ("identity", "modify_section"): """
@@ -113,8 +117,16 @@ Collect updated Personal Details fields from the customer.
 """,
         ("identity", "modify_address"): """
 Collect updated Address Details from the customer.
-- IMPORTANT: Ask the customer to type their new full address directly in this chat.
+- First ask whether they want to update their existing address or add a new address.
+- If they choose update existing, show the address form with the current values.
+- If they choose add new, show the address form with blank fields.
 - Extract any provided value as: {"update_value": "..."}
+""",
+        ("identity", "modify_address_choice"): """
+The customer needs to choose how to update their address.
+- Ask whether they want to update the existing address or add a new address.
+- Treat a natural yes/okay/continue as updating the existing address.
+- Treat phrases like add new, new address, or another address as adding a new address.
 """,
         ("identity", "modify_employment"): """
 Collect updated Employment Details from the customer.
@@ -130,6 +142,7 @@ Employment details have been captured and the customer must now upload proof.
         ("identity", "modify_income"): """
 Collect updated Income Details.
 - Ask the customer to enter their updated monthly income first.
+- Do not ask for obligations in the chat or in the widget; keep that field hidden.
 - After they provide it, present two options for proof:
   1. Upload Bank Statement
   2. Open Banking
@@ -150,8 +163,9 @@ The customer chose the bank statement path.
 """,
         ("identity", "open_banking_email_sent"): """
 Open Banking email has been sent.
-- Ask customer to link account and confirm when done.
-- Extract: {"open_banking_linked": true}
+- Tell the customer exactly: "An email has been sent to your registered ID. Please link your account"
+- Do not ask them to type linked/done/complete.
+- The system will continue automatically after a short wait.
 """,
         ("identity", "updating_details"): """
 System is updating customer details.
@@ -182,22 +196,34 @@ Present the pre-approved/eligible finance offer.
 - Ask customer to continue for the next mandatory decision step; the next widget will handle the confirmation flow.
 - If they continue/accept: Extract: {{"accepted_offer": true}}
 """,
+        ("offer", "pre_approved_offer"): """
+Present the ETB pre-approved offer.
+- Tell the customer they are pre-approved and ask whether they want to proceed.
+- If they click "Go with offer" or say they accept, extract {"accepted_pre_approved_offer": true}.
+- If they want a higher amount, extract {"higher_amount_requested": true}.
+""",
         ("offer", "wants_more_decision"): """
 This is mandatory Step 11.
 - Ask: "Is this maximum amount okay or do you want more?"
 - If maximum is okay: Extract {"accepted_max_offer": true}
 - If customer wants more: Extract {"higher_amount_requested": true}
 """,
-        ("offer", "wants_more_open_banking"): """
+        ("offer", "wants_more_review"): """
 Customer requested more than max eligible amount.
-- Inform customer we are running Open Banking refresh.
-- When linking is complete, extract {"open_banking_linked": true}
+- The system is showing a manual review confirmation widget.
+- If customer submits for review, extract {"submit_higher_amount_review": true}.
+- If customer goes back, extract {"higher_amount_review_go_back": true}.
+""",
+        ("offer", "wants_more_open_banking"): """
+Legacy state only. Treat this as the manual review confirmation step.
+- Do not mention Open Banking.
+- If customer submits for review, extract {"submit_higher_amount_review": true}.
+- If customer goes back, extract {"higher_amount_review_go_back": true}.
 """,
         ("offer", "wants_more_backoffice"): """
 Backoffice workitem has been created for higher amount request.
-- Inform customer RM will connect with them.
-- Ask customer if they want to continue with current eligible amount.
-- Extract {"accepted_max_offer": true} when they agree to continue.
+- Inform customer the specialist team will connect with them.
+- This branch is complete; do not ask them to continue with the current eligible amount.
 """,
         ("offer", "slider"): """
 The customer has accepted the offer. Now let them configure the exact amount and tenure.
@@ -323,6 +349,14 @@ This is an EXISTING customer (ETB) with a pre-approved offer.
 - Ask: "Does this pre-approved amount work for you, or would you like to explore higher options?"
 - If accepted: Extract: {"accepted_offer": true}
 - If wants more: Extract: {"higher_amount_requested": true}
+"""
+
+    if is_etb and step == "offer" and sub_step == "pre_approved_offer":
+        return """
+This is an EXISTING customer (ETB) with a pre-approved offer.
+- Present the pre-approved offer naturally and ask if they want to proceed.
+- If they click "Go with offer" or say they accept, extract {"accepted_pre_approved_offer": true}.
+- If they want a higher amount, extract {"higher_amount_requested": true}.
 """
     
     if is_etb and step == "disburse" and sub_step == "account":

@@ -19,18 +19,22 @@ _PASSWORD = os.getenv("MSSQL_PASSWORD", "system123#")
 _DRIVER = os.getenv("MSSQL_DRIVER", "ODBC Driver 17 for SQL Server")
 _ENCRYPT = os.getenv("MSSQL_ENCRYPT", "no").lower()
 _TRUST_SERVER_CERT = os.getenv("MSSQL_TRUST_SERVER_CERTIFICATE", "yes").lower()
+_BYPASS_SSL = os.getenv("MSSQL_BYPASS_SSL", "true").lower() == "true"
 
 logger = logging.getLogger(__name__)
 
-_CONNECTION_STRING = (
-    f"DRIVER={{{_DRIVER}}};"
-    f"SERVER={_SERVER},{_PORT};"
-    f"DATABASE={_DATABASE};"
-    f"UID={_USERNAME};"
-    f"PWD={_PASSWORD};"
-    f"TrustServerCertificate={_TRUST_SERVER_CERT};"
-    f"Encrypt={_ENCRYPT};"
-)
+def _build_connection_string(bypass_ssl: bool = _BYPASS_SSL) -> str:
+    encrypt = "no" if bypass_ssl else _ENCRYPT
+    trust_server_cert = "yes" if bypass_ssl else _TRUST_SERVER_CERT
+    return (
+        f"DRIVER={{{_DRIVER}}};"
+        f"SERVER={_SERVER},{_PORT};"
+        f"DATABASE={_DATABASE};"
+        f"UID={_USERNAME};"
+        f"PWD={_PASSWORD};"
+        f"TrustServerCertificate={trust_server_cert};"
+        f"Encrypt={encrypt};"
+    )
 
 # ---------------------------------------------------------------------------
 # Connection helper
@@ -39,21 +43,15 @@ _CONNECTION_STRING = (
 def get_connection() -> pyodbc.Connection:
     """Return a new pyodbc connection to the MSSQL database."""
     try:
-        return pyodbc.connect(_CONNECTION_STRING, timeout=10)
+        if _BYPASS_SSL:
+            logger.info("MSSQL connection requested with SSL bypass enabled")
+        return pyodbc.connect(_build_connection_string(), timeout=10)
     except pyodbc.Error as exc:
         # Local/dev fallback: retry without TLS enforcement if the server or
         # client stack rejects the encrypted handshake.
         if "Encryption not supported on the client" in str(exc) or "SSL Provider" in str(exc):
-            fallback = (
-                f"DRIVER={{{_DRIVER}}};"
-                f"SERVER={_SERVER},{_PORT};"
-                f"DATABASE={_DATABASE};"
-                f"UID={_USERNAME};"
-                f"PWD={_PASSWORD};"
-                "TrustServerCertificate=yes;"
-                "Encrypt=no;"
-            )
-            logger.warning("MSSQL TLS handshake failed, retrying without encryption")
+            fallback = _build_connection_string(True)
+            logger.warning("MSSQL TLS handshake failed, retrying with SSL bypass: %s", exc)
             return pyodbc.connect(fallback, timeout=10)
         raise
 

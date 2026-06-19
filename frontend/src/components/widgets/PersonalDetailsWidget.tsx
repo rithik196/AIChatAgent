@@ -2,7 +2,6 @@
 
 import React from "react";
 import { motion } from "framer-motion";
-import { StepIndicator } from "./StepIndicator";
 
 export interface PersonalDetailsWidgetProps {
   data: {
@@ -38,24 +37,37 @@ export interface PersonalDetailsWidgetProps {
     };
     income: {
       monthly?: string;
-      obligations?: string;
       creditCardLimit?: string;
     };
+    showActions?: boolean;
+    missingFields?: string[];
+    show_step_tracker?: boolean;
+    tracker_step?: number;
+    tracker_total?: number;
   };
 }
 
 export function PersonalDetailsWidget({ data }: PersonalDetailsWidgetProps) {
+  const showActions = data.showActions !== false;
+
   const handleModify = () => {
-    // Trigger conversational flow by sending a message that triggers modify_requested
-    window.dispatchEvent(new CustomEvent("mock-send-message", { detail: "I would like to modify my details" }));
+    // Use an explicit system intent so the journey can route deterministically.
+    window.dispatchEvent(
+      new CustomEvent("mock-send-message", {
+        detail: {
+          visibleText: "Modify Details",
+          systemText: "__SYS__modify_section",
+        },
+      })
+    );
   };
 
   const handleConfirm = () => {
     window.dispatchEvent(
       new CustomEvent("mock-send-message", {
         detail: {
-          visibleText: "Details confirmed, proceed",
-          systemText: "__SYS__Details confirmed, proceed",
+          visibleText: "Details confirmed",
+          systemText: "__SYS__continue",
         },
       })
     );
@@ -63,21 +75,19 @@ export function PersonalDetailsWidget({ data }: PersonalDetailsWidgetProps) {
 
   return (
     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-sm mt-3 pb-6">
-      <StepIndicator currentStep={1} />
-
-      <Section title="Personal Details" source="(Fetched from Yakeen)">
+      <Section title="Personal Details" source="(Fetched from Yakeen)" icon="/assets/personal_details_logo.png">
         <Detail label="ID Number" value={data.personal.idNumber} />
         <Detail label="Name" value={data.name} />
         <Detail label="Contact Number" value={data.phone} />
         <Detail label="Email Id" value={data.email} wrap />
         <Detail label="Nationality" value={data.personal.nationality || ""} />
         <Detail label="ID expiration date" value={data.personal.idExpirationDate || ""} />
-        <Detail label="Level of education" value={data.personal.levelOfEducation || ""} />
-        <Detail label="Marital Status" value={data.personal.maritalStatus || ""} />
-        <Detail label="No. of dependents" value={data.personal.dependents || ""} />
+        <Detail label="Level of education" value={data.personal.levelOfEducation || "-"} />
+        <Detail label="Marital Status" value={data.personal.maritalStatus || "-"} />
+        <Detail label="No. of dependents" value={data.personal.dependents || "-"} />
       </Section>
 
-      <Section title="Address Details" source="(Fetched from Saudi Post)">
+      <Section title="Address Details" source="(Fetched from Saudi Post)" icon="/assets/address_details_logo.png">
         <Detail label="Address Line 1" value={data.address?.line1 || "-"} wrap />
         <Detail label="Address Line 2" value={data.address?.line2 || "-"} wrap />
         <Detail label="Street" value={data.address?.street || "-"} />
@@ -86,7 +96,7 @@ export function PersonalDetailsWidget({ data }: PersonalDetailsWidgetProps) {
         <Detail label="House Type" value={data.address?.houseType || "-"} />
       </Section>
 
-      <Section title="Employment Details" source="(Fetched from GOSI)">
+      <Section title="Employment Details" source="(Fetched from GOSI)" icon="/assets/employment_det_logo.png">
         <Detail label="Employer type" value={data.employment.type || "-"} />
         <Detail label="Employer name" value={data.employment.employer || "-"} />
         <Detail label="Industry type" value={data.employment.industry || "-"} />
@@ -96,56 +106,79 @@ export function PersonalDetailsWidget({ data }: PersonalDetailsWidgetProps) {
         <Detail label="Work Post code" value={data.employment.workAddress?.postalCode || "-"} />
       </Section>
 
-      <Section title="Income Details" source="(Fetched from GOSI)">
+      <Section title="Income Details" source="(Fetched from GOSI)" icon="/assets/income_det_logo.png">
         <Detail label="Monthly Income" value={data.income.monthly || "-"} />
-        <Detail label="Obligations" value={data.income.obligations || "-"} />
       </Section>
 
-      <div className="flex gap-2 mt-4">
-        <button
-          onClick={handleModify}
-          className="flex-1 py-3 bg-slate-100 text-slate-700 font-semibold rounded-full hover:bg-slate-200 transition-all shadow-sm"
-        >
-          Modify Details
-        </button>
-        <button
-          onClick={handleConfirm}
-          className="flex-1 py-3 text-white font-semibold rounded-full shadow-md hover:opacity-90 transition-all"
-          style={{ background: "linear-gradient(90deg, #1B6A8A 0%, #4BA3C7 100%)" }}
-        >
-          Confirm & Continue
-        </button>
-      </div>
+      {!showActions && (
+        <div className="mt-4 rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-xs font-medium text-blue-700">
+         Please complete the missing details in chat to continue.
+        </div>
+      )}
+
+      {showActions && (
+        <div className="flex gap-2 mt-4">
+          <button
+            onClick={handleModify}
+            className="flex-1 py-3 journey-widget-button transition-all shadow-sm"
+          >
+            Modify Details
+          </button>
+          <button
+            onClick={handleConfirm}
+            className="flex-1 py-3 journey-widget-button shadow-md hover:opacity-90 transition-all"
+          >
+            Confirm & Continue
+          </button>
+        </div>
+      )}
     </motion.div>
   );
 }
 
 // --- Subcomponents ---
 
-function Section({ title, source, children }: any) {
+type SectionProps = {
+  title: string;
+  source?: string;
+  icon?: string;
+  children: React.ReactNode;
+};
+
+function Section({ title, source, icon, children }: SectionProps) {
   return (
-    <div className="bg-white rounded-2xl p-4 mb-3 border border-slate-100 shadow-sm">
+    <div className="journey-panel p-4 mb-3">
       <div className="flex flex-col mb-3">
-        <div className="flex items-center gap-2">
-          <span className="text-blue-500">
-           <svg width="18" height="18" fill="none" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" /><path d="M12 7v5l3 3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
-          </span>
-          <span className="text-xs font-semibold text-slate-700 uppercase tracking-wide">{title}</span>
+        <div className="flex items-center gap-2 ">
+          {icon ? (
+            <img
+              src={icon}
+              alt=""
+              className="h-7 w-7 rounded-full object-cover flex-shrink-0 mt-2 "
+            />
+          ) : null}
+          <span className="journey-heading">{title}</span>
         </div>
-        {source && <span className="text-[10px] text-slate-400 font-medium ml-7">{source}</span>}
+        {source && <span className={`journey-label mt-1 ${icon ? "ml-9" : "ml-0"}`}>{source}</span>}
       </div>
-      <div className="grid grid-cols-2 gap-x-2 gap-y-2 text-xs">
+      <div className="grid grid-cols-2 gap-x-2 gap-y-2">
          {children}
       </div>
     </div>
   );
 }
 
-function Detail({ label, value, wrap = false }: any) {
+type DetailProps = {
+  label: string;
+  value?: string | null;
+  wrap?: boolean;
+};
+
+function Detail({ label, value, wrap = false }: DetailProps) {
   return (
-    <div className={`flex flex-col ${wrap ? 'col-span-2' : ''}`}>
-      <span className="text-slate-500 font-medium text-[10px] uppercase">{label}</span>
-      <span className={`text-slate-900 font-semibold mt-0.5 ${wrap ? 'whitespace-normal' : 'truncate'}`}>{value ?? ""}</span>
+    <div className={`flex flex-col gap-2 ${wrap ? 'col-span-2' : ''}`}>
+      <span className="journey-label">{label}</span>
+      <span className={`journey-value ${wrap ? 'whitespace-normal' : 'truncate'}`}>{value ?? ""}</span>
     </div>
   );
 }

@@ -5,31 +5,54 @@ import { motion } from "framer-motion";
 
 export function ModifySectionWidget() {
   const sections = [
-    { value: "personal", label: "Personal Details", desc: "Education, Marital Status, Dependents" },
-    { value: "address", label: "Address Details", desc: "City, House Type, Address" },
-    { value: "employment", label: "Employment Details", desc: "Employer Type, Industry" },
-    { value: "income", label: "Income Details", desc: "Income Amount, Proof of Income" }
+    { value: "personal", label: "Personal Details", desc: "Email Id,Education, Marital Status, Dependents" },
+    { value: "address", label: "Address Details", desc: "Modify Address or Add a New One" },
+    { value: "employment", label: "Employment Details", desc: "Update Employment Information" },
+    { value: "income", label: "Income Details", desc: "Monthly Income, Proof of Income" }
   ];
 
   const handleSelect = (section: string) => {
-    window.dispatchEvent(new CustomEvent("mock-send-message", { detail: section }));
+    const sectionIntentMap: Record<string, { visibleText: string; systemText: string }> = {
+      personal: {
+        visibleText: "Personal Details",
+        systemText: "__SYS__modify_personal",
+      },
+      address: {
+        visibleText: "Address Details",
+        systemText: "__SYS__modify_address",
+      },
+      employment: {
+        visibleText: "Employment Details",
+        systemText: "__SYS__modify_employment",
+      },
+      income: {
+        visibleText: "Income Details",
+        systemText: "__SYS__modify_income",
+      },
+    };
+
+    window.dispatchEvent(
+      new CustomEvent("mock-send-message", {
+        detail: sectionIntentMap[section] || { visibleText: section, systemText: section },
+      })
+    );
   };
 
   return (
     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-sm mt-3">
-      <div className="bg-white rounded-2xl p-5 mb-4 border border-slate-200 shadow-sm">
-        <h3 className="text-sm font-semibold text-slate-800 mb-1">Which section would you like to update?</h3>
-        <p className="text-xs text-slate-500 mb-4">Select the section you want to modify:</p>
+      <div className="journey-surface p-5 mb-4">
+        <h3 className="journey-heading mb-1">Which section would you like to update?</h3>
+        <p className="journey-label mb-4">Select the section you want to modify:</p>
         
         <div className="flex flex-col gap-2">
           {sections.map((sec) => (
             <button
               key={sec.value}
               onClick={() => handleSelect(sec.value)}
-              className="text-left p-3 rounded-lg border border-slate-200 hover:border-blue-400 hover:bg-blue-50 transition-all"
+              className="text-left p-3 rounded-[16px] border border-[#D5DCE3] bg-white hover:bg-[#F8FAFC] transition-all shadow-sm"
             >
-              <div className="text-sm font-semibold text-slate-800">{sec.label}</div>
-              <div className="text-xs text-slate-500 mt-0.5">{sec.desc}</div>
+              <div className="journey-value leading-5">{sec.label}</div>
+              <div className="journey-label mt-2 leading-5">{sec.desc}</div>
             </button>
           ))}
         </div>
