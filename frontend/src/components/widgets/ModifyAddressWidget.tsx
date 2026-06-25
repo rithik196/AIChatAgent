@@ -2,8 +2,21 @@
 
 import React, { useState } from "react";
 import { motion } from "framer-motion";
+import { VOICE_WIDGET_FIELD_UPDATE_EVENT, type VoiceWidgetFieldUpdate } from "@/lib/voiceWidgetFields";
 
-export function ModifyAddressWidget({ data }: any) {
+type ModifyAddressWidgetData = {
+  addressMode?: string;
+  address?: {
+    line1?: string;
+    line2?: string;
+    street?: string;
+    city?: string;
+    postalCode?: string;
+    houseType?: string;
+  };
+};
+
+export function ModifyAddressWidget({ data, messageId }: { data?: ModifyAddressWidgetData; messageId?: string }) {
   const isNewAddress = data?.addressMode === "new";
   const [line1, setLine1] = useState(isNewAddress ? "" : (data?.address?.line1 || ""));
   const [line2, setLine2] = useState(isNewAddress ? "" : (data?.address?.line2 || ""));
@@ -11,6 +24,23 @@ export function ModifyAddressWidget({ data }: any) {
   const [city, setCity] = useState(isNewAddress ? "" : (data?.address?.city || "Riyadh"));
   const [postalCode, setPostalCode] = useState(isNewAddress ? "" : (data?.address?.postalCode || "12836"));
   const [houseType, setHouseType] = useState(isNewAddress ? "" : (data?.address?.houseType || "Villa"));
+
+  React.useEffect(() => {
+    const handleVoiceUpdate = (event: Event) => {
+      const detail = (event as CustomEvent<VoiceWidgetFieldUpdate>).detail;
+      if (!detail || detail.widget !== "ModifyAddressWidget" || detail.messageId !== messageId) return;
+
+      if (typeof detail.updates.line1 === "string") setLine1(detail.updates.line1);
+      if (typeof detail.updates.line2 === "string") setLine2(detail.updates.line2);
+      if (typeof detail.updates.street === "string") setStreet(detail.updates.street);
+      if (typeof detail.updates.city === "string") setCity(detail.updates.city);
+      if (typeof detail.updates.postalCode === "string") setPostalCode(detail.updates.postalCode);
+      if (typeof detail.updates.houseType === "string") setHouseType(detail.updates.houseType);
+    };
+
+    window.addEventListener(VOICE_WIDGET_FIELD_UPDATE_EVENT, handleVoiceUpdate);
+    return () => window.removeEventListener(VOICE_WIDGET_FIELD_UPDATE_EVENT, handleVoiceUpdate);
+  }, [messageId]);
 
   const handleSubmit = () => {
     window.dispatchEvent(

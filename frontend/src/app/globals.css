@@ -302,4 +302,94 @@
   .type-overline {
     @apply text-[11px] leading-4 font-medium uppercase tracking-[0.06em];
   }
+
+  @media (max-width: 640px) {
+    .journey-surface,
+    .journey-panel {
+      border-radius: 14px;
+      padding: 1rem !important;
+    }
+
+    .journey-heading {
+      font-size: 14px;
+      line-height: 1.15rem;
+    }
+
+    .journey-label {
+      font-size: 11px;
+      line-height: 1rem;
+    }
+
+    .journey-value {
+      font-size: 12.5px;
+      line-height: 1rem;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+
+    .journey-body,
+    .journey-muted {
+      font-size: 12.5px;
+      line-height: 1.45rem;
+      overflow-wrap: anywhere;
+    }
+
+    .journey-widget-button {
+      border-radius: 14px;
+      font-size: 12.5px;
+      line-height: 1rem;
+      padding: 0.72rem 1rem !important;
+      min-height: 42px;
+    }
+
+    .type-display-sm {
+      @apply text-[16px] leading-5 font-semibold;
+    }
+
+    .type-title-md {
+      @apply text-[15px] leading-5 font-semibold;
+    }
+
+    .type-title-sm {
+      @apply text-[13px] leading-5 font-semibold;
+    }
+
+    .type-body-md,
+    .type-body-md-strong {
+      @apply text-[13px] leading-5;
+    }
+
+    .type-label-sm {
+      @apply text-[12px] leading-4 font-medium;
+    }
+
+    .type-caption-md,
+    .type-overline {
+      @apply text-[10px] leading-4 font-medium;
+    }
+  }
+
+  .voice-wave-bar {
+    animation: voice-wave-pulse 960ms ease-in-out infinite;
+    transform-origin: bottom;
+  }
+
+  .voice-wave-ai {
+    background-image: linear-gradient(180deg, #39B7D7 0%, #0E5D88 100%);
+  }
+
+  .voice-wave-user {
+    background-image: linear-gradient(180deg, #FF8B3D 0%, #D9542B 100%);
+  }
+}
+
+@keyframes voice-wave-pulse {
+  0%, 100% {
+    transform: scaleY(0.72);
+    opacity: 0.72;
+  }
+  50% {
+    transform: scaleY(1.16);
+    opacity: 1;
+  }
 }

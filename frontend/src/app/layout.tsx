@@ -8,7 +8,7 @@ const openSans = Open_Sans({
 });
 
 export const metadata: Metadata = {
-  title: "FAB Finance Agent",
+  title: "Finance Agent",
   description: "Agentic Customer Journey",
 };
 

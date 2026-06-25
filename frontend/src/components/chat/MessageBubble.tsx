@@ -41,7 +41,7 @@ import { PreApprovedOfferWidget } from "../widgets/PreApprovedOfferWidget";
 import { DelayTriggerWidget } from "../widgets/DelayTriggerWidget";
 import { ImportantText } from "../shared/ImportantText";
 
-type WidgetData = any;
+type WidgetData = unknown;
 
 interface WidgetSpec {
   widget: string;
@@ -61,9 +61,8 @@ interface MessageMetadata {
   postText?: string;
 }
 
-type WidgetComponent = React.ComponentType<{ data?: WidgetData }>;
+type WidgetComponent = React.ComponentType<{ data?: WidgetData; messageId?: string; widgetName?: string }>;
 
-// Widget registry - maps widget name to component
 const WIDGET_REGISTRY: Record<string, WidgetComponent> = {
   NafathWidget,
   OfferSliderWidget,
@@ -101,13 +100,16 @@ const WIDGET_REGISTRY: Record<string, WidgetComponent> = {
 };
 
 interface MessageBubbleProps {
+  messageId?: string;
   role: "user" | "assistant";
   content?: string;
   parts?: MessagePart[];
   metadata?: MessageMetadata;
+  showWidget?: boolean;
+  onWidgetShown?: (element: HTMLDivElement) => void;
 }
 
-/** Render lightweight inline markdown: **bold**, *italic*, `code` */
+/** Render lightweight markdown: lists, bold, italic, and inline code. */
 function renderInlineMarkdown(text: string): React.ReactNode {
   const lines = text.split("\n");
   const elements: React.ReactNode[] = [];
@@ -139,7 +141,7 @@ function renderInlineMarkdown(text: string): React.ReactNode {
     const trimmed = line.trim();
 
     const olMatch = trimmed.match(/^(\d+)\.\s+(.+)/);
-    const ulMatch = trimmed.match(/^[-•]\s+(.+)/);
+    const ulMatch = trimmed.match(/^[-*•+]\s+(.+)/);
 
     if (olMatch) {
       if (listType !== "ol") flushList();
@@ -155,8 +157,19 @@ function renderInlineMarkdown(text: string): React.ReactNode {
         if (elements.length > 0) {
           elements.push(<div key={`br-${i}`} className="h-2" />);
         }
+      } else if (/^#{1,3}\s+/.test(trimmed)) {
+        const heading = trimmed.replace(/^#{1,3}\s+/, "");
+        elements.push(
+          <p key={`h-${i}`} className="my-1 text-[15px] font-semibold text-[#0D141A]">
+            {renderInlineSpans(heading)}
+          </p>
+        );
       } else {
-        elements.push(<p key={`p-${i}`} className="my-0.5">{renderInlineSpans(trimmed)}</p>);
+        elements.push(
+          <p key={`p-${i}`} className="my-0.5 whitespace-pre-wrap break-words leading-6">
+            {renderInlineSpans(trimmed)}
+          </p>
+        );
       }
     }
   }
@@ -165,7 +178,7 @@ function renderInlineMarkdown(text: string): React.ReactNode {
   return <>{elements}</>;
 }
 
-/** Render inline spans: **bold**, *italic*, `code` within a single line */
+/** Render inline spans: **bold**, *italic*, `code` within a single line. */
 function renderInlineSpans(text: string): React.ReactNode[] {
   const parts: React.ReactNode[] = [];
   const regex = /(\*\*(.+?)\*\*|\*(.+?)\*|`(.+?)`)/g;
@@ -174,7 +187,7 @@ function renderInlineSpans(text: string): React.ReactNode[] {
 
   while ((match = regex.exec(text)) !== null) {
     if (match.index > lastIndex) {
-    parts.push(<ImportantText key={`t-${match.index}`} text={text.slice(lastIndex, match.index)} />);
+      parts.push(<ImportantText key={`t-${match.index}`} text={text.slice(lastIndex, match.index)} />);
     }
 
     if (match[2]) {
@@ -203,10 +216,12 @@ function renderInlineSpans(text: string): React.ReactNode[] {
   return parts;
 }
 
-export function MessageBubble({ role, content, parts, metadata }: MessageBubbleProps) {
+export function MessageBubble({ messageId, role, content, parts, metadata, showWidget = true, onWidgetShown }: MessageBubbleProps) {
   const isUser = role === "user";
   const speak = useSpeakContext();
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const widgetRef = React.useRef<HTMLDivElement>(null);
+  const widgetReportedRef = React.useRef(false);
 
   const displayText =
     content ||
@@ -236,58 +251,68 @@ export function MessageBubble({ role, content, parts, metadata }: MessageBubbleP
   }
 
   const sanitizedText = displayText.replace(/<WIDGET_DATA>[\s\S]*?<\/WIDGET_DATA>/g, "").trim();
+  const WidgetComponent = widgetSpec ? WIDGET_REGISTRY[widgetSpec.widget] : null;
+
+  React.useEffect(() => {
+    if (!WidgetComponent || !showWidget || !widgetRef.current || widgetReportedRef.current) return;
+    widgetReportedRef.current = true;
+    onWidgetShown?.(widgetRef.current);
+  }, [WidgetComponent, onWidgetShown, showWidget]);
 
   if (isUser && sanitizedText.startsWith("__SYS__")) return null;
-  if (!sanitizedText && !widgetSpec) return null;
+  if (!sanitizedText && (!widgetSpec || !showWidget)) return null;
 
-  const WidgetComponent = widgetSpec ? WIDGET_REGISTRY[widgetSpec.widget] : null;
-  const renderTextBlock = () => sanitizedText && (
-    <div
-      className={cn(
-        "max-w-[85%] px-5 py-3.5 rounded-[16px] shadow-sm",
-        isUser
-          ? "rounded-br-none text-[14px] leading-[16px] font-normal text-[#15212B]"
-          : "rounded-bl-none type-body-md-strong text-slate-900"
-      )}
-      style={{
-        backgroundImage: isUser
-          ? "linear-gradient(90deg, #FB8B23 0%, #C24231 100%)"
-          : "linear-gradient(90deg, #EBF4F5 0%, #B9DCF2 100%)",
-      }}
-    >
-      {isUser ? sanitizedText : renderInlineMarkdown(sanitizedText)}
-      {!isUser && speak && (
-        <button
-          onClick={handleSpeak}
-          className="mt-2 flex items-center gap-1 text-xs text-blue-500 hover:text-blue-700 transition-colors"
-          aria-label={isSpeaking ? "Stop speaking" : "Read aloud"}
-        >
-          {isSpeaking ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
-        </button>
-      )}
-    </div>
-  );
+  const renderTextBlock = () =>
+    sanitizedText && (
+      <div
+        className={cn(
+          "max-w-[85%] px-5 py-3.5 rounded-[16px] shadow-sm whitespace-pre-wrap break-words",
+          isUser
+            ? "rounded-br-none text-[14px] leading-[16px] font-normal text-[#15212B]"
+            : "rounded-bl-none type-body-md-strong text-slate-900"
+        )}
+        style={{
+          backgroundImage: isUser
+            ? "linear-gradient(90deg, #FB8B23 0%, #C24231 100%)"
+            : "linear-gradient(90deg, #EBF4F5 0%, #B9DCF2 100%)",
+        }}
+      >
+        {isUser ? sanitizedText : renderInlineMarkdown(sanitizedText)}
+        {!isUser && speak && (
+          <button
+            onClick={handleSpeak}
+            className="mt-2 flex items-center gap-1 text-xs text-blue-500 hover:text-blue-700 transition-colors"
+            aria-label={isSpeaking ? "Stop speaking" : "Read aloud"}
+          >
+            {isSpeaking ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+          </button>
+        )}
+      </div>
+    );
 
-  const renderOptions = () => !isUser && metadata?.options && metadata.options.length > 0 && (
-    <OptionButtons
-      options={metadata.options}
-      onSelect={(value) => {
-        const field = metadata.optionContext?.field;
-        if (metadata.optionContext?.type === "profile_completion" && field) {
-          window.dispatchEvent(
-            new CustomEvent("mock-send-message", {
-              detail: {
-                visibleText: value,
-                systemText: `__SYS__PROFILE_COMPLETION: ${JSON.stringify({ field, value })}`,
-              },
-            })
-          );
-          return;
-        }
-        window.dispatchEvent(new CustomEvent("mock-send-message", { detail: value }));
-      }}
-    />
-  );
+  const renderOptions = () =>
+    !isUser &&
+    metadata?.options &&
+    metadata.options.length > 0 && (
+      <OptionButtons
+        options={metadata.options}
+        onSelect={(value) => {
+          const field = metadata.optionContext?.field;
+          if (metadata.optionContext?.type === "profile_completion" && field) {
+            window.dispatchEvent(
+              new CustomEvent("mock-send-message", {
+                detail: {
+                  visibleText: value,
+                  systemText: `__SYS__PROFILE_COMPLETION: ${JSON.stringify({ field, value })}`,
+                },
+              })
+            );
+            return;
+          }
+          window.dispatchEvent(new CustomEvent("mock-send-message", { detail: value }));
+        }}
+      />
+    );
 
   const renderPostText = () => {
     const postText = metadata?.postText?.trim();
@@ -295,9 +320,7 @@ export function MessageBubble({ role, content, parts, metadata }: MessageBubbleP
 
     return (
       <div
-        className={cn(
-          "max-w-[85%] px-5 py-3.5 rounded-[16px] rounded-bl-none shadow-sm type-body-md-strong text-slate-900"
-        )}
+        className={cn("max-w-[85%] px-5 py-3.5 rounded-[16px] rounded-bl-none shadow-sm type-body-md-strong text-slate-900")}
         style={{
           backgroundImage: "linear-gradient(90deg, #EBF4F5 0%, #B9DCF2 100%)",
         }}
@@ -342,9 +365,13 @@ export function MessageBubble({ role, content, parts, metadata }: MessageBubbleP
   };
 
   return (
-    <div className={cn("flex flex-col w-full gap-2", isUser ? "items-end" : "items-start")}>
+    <div className={cn("flex flex-col w-full gap-2", isUser ? "items-end" : "items-start")} data-message-id={messageId}>
       {renderTextBlock()}
-      {WidgetComponent && <WidgetComponent data={widgetSpec?.data} />}
+      {WidgetComponent && showWidget && (
+        <div ref={widgetRef} className="w-full" data-widget-message-id={messageId} data-widget-name={widgetSpec?.widget || ""}>
+          <WidgetComponent data={widgetSpec?.data} messageId={messageId} widgetName={widgetSpec?.widget || ""} />
+        </div>
+      )}
       {renderPostText()}
       {renderOptions()}
     </div>
