@@ -43,6 +43,11 @@ function getSpeechRecognition(): (new () => SpeechRecognitionInstance) | null {
 // ── Hook ────────────────────────────────────────────────────────────
 export type VoiceState = "idle" | "listening" | "processing" | "speaking";
 
+type SpeakOptions = {
+  onEnd?: () => void;
+  onError?: () => void;
+};
+
 interface UseVoiceOptions {
   language?: string;
   ttsEnabled?: boolean;
@@ -177,10 +182,20 @@ export function useVoice({
 
   // ── Speak (TTS) ──────────────────────────────────────────────────
   const speak = useCallback(
-    (text: string) => {
-      if (!ttsEnabled || !window.speechSynthesis) return;
+    (text: string, options?: SpeakOptions) => {
+      const finishWithoutSpeech = () => {
+        window.setTimeout(() => options?.onEnd?.(), 0);
+      };
+
+      if (!ttsEnabled || !window.speechSynthesis) {
+        finishWithoutSpeech();
+        return;
+      }
       const clean = text.replace(/\*\*/g, "").replace(/[#_~`>]/g, "");
-      if (!clean.trim()) return;
+      if (!clean.trim()) {
+        finishWithoutSpeech();
+        return;
+      }
 
       window.speechSynthesis.cancel();
       const utterance = new SpeechSynthesisUtterance(clean);
@@ -190,8 +205,15 @@ export function useVoice({
       utterance.rate = 1.0;
       utterance.pitch = 1.1;
       utterance.onstart = () => setVoiceState("speaking");
-      utterance.onend = () => setVoiceState("idle");
-      utterance.onerror = () => setVoiceState("idle");
+      utterance.onend = () => {
+        setVoiceState("idle");
+        options?.onEnd?.();
+      };
+      utterance.onerror = () => {
+        setVoiceState("idle");
+        options?.onError?.();
+        options?.onEnd?.();
+      };
       window.speechSynthesis.speak(utterance);
     },
     [language, ttsEnabled]

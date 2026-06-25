@@ -2,8 +2,23 @@
 
 import React, { useState } from "react";
 import { motion } from "framer-motion";
+import { VOICE_WIDGET_FIELD_UPDATE_EVENT, type VoiceWidgetFieldUpdate } from "@/lib/voiceWidgetFields";
 
-export function ModifyEmploymentWidget({ data }: any) {
+type ModifyEmploymentWidgetData = {
+  employment?: {
+    type?: string;
+    industry?: string;
+    employer?: string;
+    experience?: string;
+    workAddress?: {
+      line1?: string;
+      city?: string;
+      postalCode?: string;
+    };
+  };
+};
+
+export function ModifyEmploymentWidget({ data, messageId }: { data?: ModifyEmploymentWidgetData; messageId?: string }) {
   const [employerType, setEmployerType] = useState(data?.employment?.type || "Private Sector");
   const [industry, setIndustry] = useState(data?.employment?.industry || "Banking & Finance");
   const [employerName, setEmployerName] = useState(data?.employment?.employer || "Newgen Software");
@@ -11,6 +26,24 @@ export function ModifyEmploymentWidget({ data }: any) {
   const [workLine1, setWorkLine1] = useState(data?.employment?.workAddress?.line1 || "Kingdom Tower, Office 1205");
   const [workCity, setWorkCity] = useState(data?.employment?.workAddress?.city || "Riyadh");
   const [workPostalCode, setWorkPostalCode] = useState(data?.employment?.workAddress?.postalCode || "12214");
+
+  React.useEffect(() => {
+    const handleVoiceUpdate = (event: Event) => {
+      const detail = (event as CustomEvent<VoiceWidgetFieldUpdate>).detail;
+      if (!detail || detail.widget !== "ModifyEmploymentWidget" || detail.messageId !== messageId) return;
+
+      if (typeof detail.updates.employerType === "string") setEmployerType(detail.updates.employerType);
+      if (typeof detail.updates.employerName === "string") setEmployerName(detail.updates.employerName);
+      if (typeof detail.updates.industry === "string") setIndustry(detail.updates.industry);
+      if (typeof detail.updates.experience === "string") setExperience(detail.updates.experience);
+      if (typeof detail.updates.workAddress === "string") setWorkLine1(detail.updates.workAddress);
+      if (typeof detail.updates.workCity === "string") setWorkCity(detail.updates.workCity);
+      if (typeof detail.updates.workPostalCode === "string") setWorkPostalCode(detail.updates.workPostalCode);
+    };
+
+    window.addEventListener(VOICE_WIDGET_FIELD_UPDATE_EVENT, handleVoiceUpdate);
+    return () => window.removeEventListener(VOICE_WIDGET_FIELD_UPDATE_EVENT, handleVoiceUpdate);
+  }, [messageId]);
 
   const handleSubmit = () => {
     window.dispatchEvent(

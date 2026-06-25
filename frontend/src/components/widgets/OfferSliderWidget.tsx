@@ -2,6 +2,7 @@
 
 import React, { useState, useMemo } from 'react';
 import { motion } from 'framer-motion';
+import { VOICE_WIDGET_FIELD_UPDATE_EVENT, type VoiceWidgetFieldUpdate } from "@/lib/voiceWidgetFields";
 
 interface OfferSliderWidgetProps {
   data?: {
@@ -16,7 +17,7 @@ interface OfferSliderWidgetProps {
 
 const TENURE_OPTIONS = [12, 24, 36, 48, 60];
 
-export function OfferSliderWidget({ data }: OfferSliderWidgetProps) {
+export function OfferSliderWidget({ data, messageId }: OfferSliderWidgetProps & { messageId?: string }) {
   const maxAmount = data?.max_amount || 250000;
   const minAmount = data?.min_amount || 5000;
   const profitRateStr = data?.profit_rate || '6.1%';
@@ -30,6 +31,27 @@ export function OfferSliderWidget({ data }: OfferSliderWidgetProps) {
   const [amount, setAmount] = useState(defaultAmount);
   const [tenure, setTenure] = useState(defaultTenure);
   const [showTenureDropdown, setShowTenureDropdown] = useState(false);
+
+  React.useEffect(() => {
+    const handleVoiceUpdate = (event: Event) => {
+      const detail = (event as CustomEvent<VoiceWidgetFieldUpdate>).detail;
+      if (!detail || detail.widget !== "OfferSliderWidget" || detail.messageId !== messageId) return;
+
+      if (typeof detail.updates.amount === "number") {
+        setAmount(Math.min(maxAmount, Math.max(minAmount, detail.updates.amount)));
+      }
+      if (typeof detail.updates.tenure === "number") {
+        const closestTenure = TENURE_OPTIONS.reduce((best, option) =>
+          Math.abs(option - detail.updates.tenure as number) < Math.abs(best - detail.updates.tenure as number) ? option : best
+        );
+        setTenure(closestTenure);
+        setShowTenureDropdown(false);
+      }
+    };
+
+    window.addEventListener(VOICE_WIDGET_FIELD_UPDATE_EVENT, handleVoiceUpdate);
+    return () => window.removeEventListener(VOICE_WIDGET_FIELD_UPDATE_EVENT, handleVoiceUpdate);
+  }, [maxAmount, messageId, minAmount]);
 
   const monthlyInstallment = useMemo(() => {
     const monthlyRate = profitRate / 12;

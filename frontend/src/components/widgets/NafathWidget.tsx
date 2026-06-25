@@ -19,7 +19,7 @@ export function NafathWidget({ data }: NafathWidgetProps) {
       setDone(true);
       const event = new CustomEvent("mock-send-message", { detail: "__SYS__Nafath Approved" });
       window.dispatchEvent(event);
-    }, 3000);
+    }, 5000);
     return () => clearTimeout(timer);
   }, []);
 
@@ -51,7 +51,7 @@ export function NafathWidget({ data }: NafathWidgetProps) {
         <div className="flex items-center gap-2 journey-label">
           <motion.div
             animate={{ rotate: 360 }}
-            transition={{ repeat: Infinity, duration: 1.5, ease: "linear" }}
+            transition={{ repeat: Infinity, duration: 5, ease: "linear" }}
             className="w-4 h-4 rounded-full border-2 border-slate-300 border-t-slate-600"
           />
           <ImportantText text="Waiting for Nafath approval..." />

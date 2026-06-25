@@ -7,6 +7,7 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import List, Dict, Any
+from contextvars import ContextVar
 import httpx
 import html
 import json
@@ -31,8 +32,13 @@ from utils.eligibility import calculate_max_eligible_amount
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+_STREAM_SESSION_ID: ContextVar[str | None] = ContextVar("stream_session_id", default=None)
+_STREAM_USER_TEXT: ContextVar[str | None] = ContextVar("stream_user_text", default=None)
+
 AGENT_URL = os.getenv("AGENT_URL", "http://localhost:8001")
 REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.append(str(REPO_ROOT))
 AGENT_DIR = REPO_ROOT / "agent"
 if str(AGENT_DIR) not in sys.path:
     sys.path.append(str(AGENT_DIR))
@@ -40,6 +46,17 @@ try:
     from knowledge.faq_engine import answer_general_query as answer_gateway_general_query
 except Exception:
     answer_gateway_general_query = None
+
+try:
+    from shared.journey_fallback import compose_fallback_response, looks_like_fallback_interruption
+except Exception:
+    compose_fallback_response = None
+    looks_like_fallback_interruption = None
+
+try:
+    from shared.persistence import mongo_journey
+except Exception:
+    mongo_journey = None
 
 COMMODITY_CERTIFICATE_TEMPLATE = REPO_ROOT / "frontend" / "public" / "assets" / "CommodityCertificate.html"
 COMMODITY_CERTIFICATE_OUTPUT_DIR = REPO_ROOT / "frontend" / "public" / "generated"
@@ -168,6 +185,9 @@ def _gateway_session_path(session_id: str) -> Path:
 
 
 def _load_gateway_session(session_id: str) -> dict | None:
+    if mongo_journey and mongo_journey.is_available():
+        return mongo_journey.get_session(session_id)
+
     path = _gateway_session_path(session_id)
     if not path.exists():
         return None
@@ -182,11 +202,52 @@ def _load_gateway_session(session_id: str) -> dict | None:
 def _store_gateway_session(session_id: str, session: dict) -> None:
     session["session_id"] = session_id
     SESSION_STORE[session_id] = session
+    if mongo_journey and mongo_journey.is_available():
+        mongo_journey.save_session(session_id, session)
+        return
+
     path = _gateway_session_path(session_id)
     try:
         path.write_text(json.dumps({**session, "_saved_at": time.time()}, ensure_ascii=False, default=str), encoding="utf-8")
     except OSError:
         logger.exception("Failed to persist gateway session %s", session_id)
+
+
+def _is_completed_journey_session(session: dict | None) -> bool:
+    return bool(session and session.get("step") == "done" and session.get("sub_step") == "complete")
+
+
+def _default_gateway_session(session_id: str) -> dict:
+    return {
+        "session_id": session_id,
+        "region": "SA",
+        "step": "identity",
+        "sub_step": "awaiting_id",
+        "step_number": 1,
+        "total_steps": 5,
+        "product": "cash_finance",
+        "user_type": "unknown",
+        "customerType": "UNKNOWN",
+        "journeyMode": "PRE_DEDUPE",
+        "journeyOrigin": "UNKNOWN",
+        "transitionReason": None,
+        "collected": {},
+        "offer": {},
+        "finance_summary": {},
+        "disbursement": {},
+        "_lastWidgetState": "identity/awaiting_id",
+    }
+
+
+def _delete_gateway_journey(session_id: str) -> None:
+    SESSION_STORE.pop(session_id, None)
+    if mongo_journey and mongo_journey.is_available():
+        mongo_journey.delete_journey(session_id)
+
+    try:
+        _gateway_session_path(session_id).unlink(missing_ok=True)
+    except OSError:
+        logger.exception("Failed to delete gateway session %s", session_id)
 
 
 def _is_missing_value(value: Any) -> bool:
@@ -288,7 +349,7 @@ def _is_continuation_message(text: str) -> bool:
     return any(_contains_phrase(normalized, phrase) for phrase in CONTINUATION_PHRASES)
 
 
-def _looks_like_general_question(raw_text: str) -> bool:
+def _looks_like_general_question(raw_text: str, session: dict | None = None) -> bool:
     text = (raw_text or "").strip()
     normalized = _normalize_chat_text(text)
     if not normalized:
@@ -297,6 +358,8 @@ def _looks_like_general_question(raw_text: str) -> bool:
         return False
     if re.fullmatch(r"[12]\d{9}", normalized) or re.fullmatch(r"\d{6}", normalized):
         return False
+    if looks_like_fallback_interruption and looks_like_fallback_interruption(raw_text, session or {}):
+        return True
     if _is_continuation_message(normalized) or _is_decline_message(normalized):
         return False
     if normalized.startswith(("update_personal", "update_address", "update_employment", "update_income", "update_expenses")):
@@ -315,24 +378,28 @@ def _looks_like_general_question(raw_text: str) -> bool:
 
 
 def _answer_gateway_question(raw_text: str, session: dict) -> str | None:
-    if not _looks_like_general_question(raw_text):
+    is_question = _looks_like_general_question(raw_text, session)
+    if not is_question:
         return None
     if answer_gateway_general_query:
         try:
             faq = answer_gateway_general_query(raw_text, session)
             if faq and faq.get("text"):
-                return str(faq["text"])
+                answer = str(faq["text"])
+                return compose_fallback_response(answer, session) if compose_fallback_response else answer
         except Exception:
             logger.exception("Failed to answer gateway FAQ question")
-    return (
+    answer = (
         "I do not have an exact prepared answer for that question yet, but I have kept your application "
         "at the same step. Please rephrase it around the Cash Finance journey, documents, eligibility, "
         "verification, offer, signing, or disbursement and I will help from there."
     )
+    return compose_fallback_response(answer, session) if compose_fallback_response else answer
 
 
 async def _answer_gateway_question_with_agent(raw_text: str, session_id: str, session: dict) -> str | None:
-    if not _looks_like_general_question(raw_text):
+    is_question = _looks_like_general_question(raw_text, session)
+    if not is_question:
         return None
     try:
         async with httpx.AsyncClient(timeout=20.0) as client:
@@ -348,7 +415,7 @@ async def _answer_gateway_question_with_agent(raw_text: str, session_id: str, se
             data = resp.json()
             answer = (data.get("response") or "").strip()
             if answer:
-                return answer
+                return compose_fallback_response(answer, session) if compose_fallback_response else answer
         logger.warning("Agent question endpoint returned status=%s body=%s", resp.status_code, resp.text[:500])
     except Exception:
         logger.exception("Failed to answer question through agent endpoint")
@@ -943,13 +1010,13 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
         return {"widget": "NafathWidget", "data": {"nafath_code": session.get("nafath_code", math.floor(10 + random.random() * 89))}}
 
     if step == "identity" and sub_step == "loading":
-        return {"widget": "LoadingWidget", "data": {"title": "Verifying OTP...", "subtitle": "Processing your secure request", "auto_advance_ms": 3000, "next_message": "loading_complete", "silent": True}}
+        return {"widget": "LoadingWidget", "data": {"title": "Validating Credentials...", "subtitle": "Processing your secure request", "auto_advance_ms": 5000, "next_message": "loading_complete", "silent": True}}
 
     if step == "identity" and sub_step == "verified":
-        return {"widget": "VerificationSuccessWidget", "data": {"title": "OTP Verified", "subtitle": "Your identity has been verified.", "auto_advance_ms": 3000, "next_message": "continue", "silent": True}}
+        return {"widget": "VerificationSuccessWidget", "data": {"title": "Identity Verified", "subtitle": "Your identity has been verified.", "auto_advance_ms": 3000, "next_message": "continue", "silent": True}}
 
     if step == "identity" and sub_step == "dedupe_check":
-        return {"widget": "LoadingWidget", "data": {"title": "Running Dedupe Check...", "subtitle": "Verifying your records", "auto_advance_ms": 3000, "next_message": "dedupe_complete", "silent": True}}
+        return {"widget": "LoadingWidget", "data": {"title": "Running Dedupe Check...", "subtitle": "Fetching and Verifying your records", "auto_advance_ms": 3000, "next_message": "dedupe_complete", "silent": True}}
 
     if step == "identity" and sub_step == "identify_yourself":
         return {"widget": "NTBIntroductionWidget", "data": {}}
@@ -1051,7 +1118,7 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
         return {
             "widget": "DelayTriggerWidget",
             "data": {
-                "auto_advance_ms": 3000,
+                "auto_advance_ms": 10000,
                 "next_message": "open_banking_linked",
                 "silent": True,
             },
@@ -1276,7 +1343,7 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
             "data": {
                 "title": "Verifying OTP...",
                 "subtitle": "Checking the 6-digit code you entered in chat.",
-                "auto_advance_ms": 3000,
+                "auto_advance_ms": 5000,
                 "next_message": "otp_verification_complete",
                 "silent": True,
             },
@@ -1405,36 +1472,85 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
 
 # ── SSE stream builder (AI SDK v6 UIMessageStream protocol) ─────────
 
+def _persist_streamed_turn(
+    session_id: str | None,
+    user_text: str | None,
+    response_text: str,
+    widget_spec: dict | None,
+    ui_flags: dict | None = None,
+) -> None:
+    if not session_id or not mongo_journey or not mongo_journey.is_available():
+        return
+
+    messages: list[dict[str, Any]] = []
+    cleaned_user = (user_text or "").strip()
+    if cleaned_user and not cleaned_user.startswith("__SYS__"):
+        messages.append({"role": "user", "content": cleaned_user})
+
+    cleaned_response = (response_text or "").strip()
+    metadata: dict[str, Any] = {}
+    if widget_spec:
+        metadata["widget"] = widget_spec
+    if ui_flags:
+        metadata.update(ui_flags)
+
+    if cleaned_response or metadata:
+        messages.append(
+            {
+                "role": "assistant",
+                "content": cleaned_response,
+                **({"metadata": metadata} if metadata else {}),
+                **({"widget": metadata["widget"]} if metadata.get("widget") else {}),
+            }
+        )
+
+    if messages:
+        mongo_journey.append_messages(session_id, messages)
+
+
 def _build_sse_stream(response_text: str, widget_spec: dict | None, ui_flags: dict | None = None):
     """Generate SSE events in AI SDK v6 UIMessageStream protocol."""
+    session_id = _STREAM_SESSION_ID.get()
+    user_text = _STREAM_USER_TEXT.get()
     msg_id = f"msg_{int(time.time()*1000)}_{random.randint(1000,9999)}"
     text_part_id = f"text_{int(time.time()*1000)}_{random.randint(1000,9999)}"
 
     def _event(data: str) -> str:
         return f"data: {data}\n\n"
 
-    yield _event(json.dumps({"type": "start", "messageId": msg_id}))
-    yield _event(json.dumps({"type": "start-step"}))
-    yield _event(json.dumps({"type": "text-start", "id": text_part_id}))
+    def _stream():
+        _persist_streamed_turn(
+            session_id,
+            user_text,
+            response_text,
+            widget_spec,
+            ui_flags,
+        )
 
-    # Stream text in ~20 char chunks
-    chunks = re.findall(r".{1,20}", response_text) or [response_text]
-    for chunk in chunks:
-        yield _event(json.dumps({"type": "text-delta", "id": text_part_id, "delta": chunk}))
+        yield _event(json.dumps({"type": "start", "messageId": msg_id}))
+        yield _event(json.dumps({"type": "start-step"}))
+        yield _event(json.dumps({"type": "text-start", "id": text_part_id}))
 
-    yield _event(json.dumps({"type": "text-end", "id": text_part_id}))
+        # Stream text in ~20 char chunks
+        chunks = re.findall(r".{1,20}", response_text) or [response_text]
+        for chunk in chunks:
+            yield _event(json.dumps({"type": "text-delta", "id": text_part_id, "delta": chunk}))
 
-    metadata: dict[str, Any] = {}
-    if widget_spec:
-        metadata["widget"] = widget_spec
-    if ui_flags:
-        metadata.update(ui_flags)
-    if metadata:
-        yield _event(json.dumps({"type": "message-metadata", "messageMetadata": metadata}))
+        yield _event(json.dumps({"type": "text-end", "id": text_part_id}))
 
-    yield _event(json.dumps({"type": "finish-step"}))
-    yield _event(json.dumps({"type": "finish"}))
-    yield "data: [DONE]\n\n"
+        metadata: dict[str, Any] = {}
+        if widget_spec:
+            metadata["widget"] = widget_spec
+        if ui_flags:
+            metadata.update(ui_flags)
+        if metadata:
+            yield _event(json.dumps({"type": "message-metadata", "messageMetadata": metadata}))
+
+        yield _event(json.dumps({"type": "finish-step"}))
+        yield _event(json.dumps({"type": "finish"}))
+        yield "data: [DONE]\n\n"
+
+    return _stream()
 
 
 def _stream_widget_response(response_text: str, widget_spec: dict | None, ui_flags: dict | None = None) -> StreamingResponse:
@@ -1944,6 +2060,8 @@ async def chat(request: ChatRequest):
     session_id = request.session_id
     last_user_msg = (request.messages[-1].get("content", "") if request.messages else "").strip()
     normalized_user_msg = _normalize_chat_text(last_user_msg)
+    _STREAM_SESSION_ID.set(session_id)
+    _STREAM_USER_TEXT.set(last_user_msg)
 
     # Get or create session
     current_session = SESSION_STORE.get(session_id)
@@ -1972,25 +2090,12 @@ async def chat(request: ChatRequest):
             current_session.setdefault("disbursement", {})
             current_session.setdefault("_lastWidgetState", "identity/awaiting_id")
         else:
-            current_session = {
-                "session_id": session_id,
-                "region": "SA",
-                "step": "identity",
-                "sub_step": "awaiting_id",
-                "step_number": 1,
-                "total_steps": 5,
-                "product": "cash_finance",
-                "user_type": "unknown",
-                "customerType": "UNKNOWN",
-                "journeyMode": "PRE_DEDUPE",
-                "journeyOrigin": "UNKNOWN",
-                "transitionReason": None,
-                "collected": {},
-                "offer": {},
-                "finance_summary": {},
-                "disbursement": {},
-                "_lastWidgetState": "identity/awaiting_id",
-            }
+            current_session = _default_gateway_session(session_id)
+        _store_gateway_session(session_id, current_session)
+
+    if _is_completed_journey_session(current_session):
+        _delete_gateway_journey(session_id)
+        current_session = _default_gateway_session(session_id)
         _store_gateway_session(session_id, current_session)
     else:
         current_session["session_id"] = session_id
@@ -2244,7 +2349,7 @@ async def chat(request: ChatRequest):
             current_session["sub_step"] = "updating_details"
             current_session["updating"] = {
                 "section": "Income Details",
-                "auto_advance_ms": 10000,
+                "auto_advance_ms": 11000,
                 "next_message": "open_banking_update_complete",
                 "silent": True,
             }
@@ -2766,13 +2871,37 @@ async def get_history(session_id: str):
     """Return saved conversation history from agent persistence."""
     async with httpx.AsyncClient(timeout=10.0) as client:
         try:
+            gateway_session = SESSION_STORE.get(session_id) or _load_gateway_session(session_id)
+            if _is_completed_journey_session(gateway_session):
+                _delete_gateway_journey(session_id)
+                await client.delete(f"{AGENT_URL}/conversation/{session_id}")
+                return {"messages": [], "session": None, "reset": True}
+
             resp = await client.get(f"{AGENT_URL}/conversation/{session_id}")
             if resp.status_code == 200:
                 data = resp.json()
-                return {"messages": data.get("messages", []), "session": data.get("session")}
+                session = data.get("session")
+                if _is_completed_journey_session(session):
+                    _delete_gateway_journey(session_id)
+                    await client.delete(f"{AGENT_URL}/conversation/{session_id}")
+                    return {"messages": [], "session": None, "reset": True}
+                return {"messages": data.get("messages", []), "session": session}
         except httpx.RequestError:
             pass
     return {"messages": [], "session": None}
+
+
+@router.delete("/chat/history/{session_id}")
+async def delete_history(session_id: str):
+    """Delete the current journey session and conversation history."""
+    _delete_gateway_journey(session_id)
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        try:
+            await client.delete(f"{AGENT_URL}/conversation/{session_id}")
+        except httpx.RequestError:
+            logger.exception("Failed to delete agent conversation %s", session_id)
+    return {"deleted": True}
+
 
 @router.post("/update_customer")
 async def api_update_customer(request: UpdateCustomerRequest):
@@ -2863,4 +2992,3 @@ async def api_send_docusign_email_alt(request: DocusignEmailRequest):
         success,
     )
     return {"success": success}
-

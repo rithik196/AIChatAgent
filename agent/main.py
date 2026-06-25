@@ -1,7 +1,13 @@
 import os
+import sys
+from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv()
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.append(str(REPO_ROOT))
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -9,7 +15,8 @@ from typing import List, Dict, Any, Optional
 from graph.graph import agent_app
 from graph.nodes import _chat, RESPOND_MODEL
 from knowledge.faq_engine import answer_general_query, retrieve_general_query_context
-from persistence import get_session, save_session, append_messages, get_conversation
+from shared.journey_fallback import compose_fallback_response
+from persistence import get_session, save_session, append_messages, get_conversation, delete_journey
 
 app = FastAPI(title="RLOS LangGraph Agent")
 
@@ -46,6 +53,13 @@ async def get_conversation_history(session_id: str):
     messages = get_conversation(session_id)
     session = get_session(session_id)
     return ConversationResponse(messages=messages, session=session)
+
+@app.delete("/conversation/{session_id}")
+async def delete_conversation_history(session_id: str):
+    """Delete a completed journey so the customer can start a new one."""
+    SESSION_CACHE.pop(session_id, None)
+    delete_journey(session_id)
+    return {"deleted": True}
 
 @app.post("/invoke", response_model=InvokeResponse)
 async def invoke_agent(req: InvokeRequest):
@@ -129,13 +143,7 @@ async def answer_question(req: QuestionRequest):
         session = dict(req.session or {})
         retrieved = retrieve_general_query_context(req.message, session, limit=4)
         matches = retrieved.get("matches", [])
-
-        if not matches and not retrieved.get("is_banking_context"):
-            return QuestionResponse(
-                response=retrieved.get("out_of_scope_message", "I can only assist with banking-related queries."),
-                domain="out_of_scope",
-                confidence=0,
-            )
+        is_casual_voice_chat = not matches and not retrieved.get("is_banking_context")
 
         knowledge_lines = []
         for match in matches:
@@ -149,9 +157,11 @@ async def answer_question(req: QuestionRequest):
                 "role": "system",
                 "content": (
                     "You are answering a customer's question during a Cash Finance digital journey. "
-                    "Classify the message as a banking/journey question, then answer it using the supplied knowledge and session context. "
+                    "Answer both banking questions and harmless casual voice-mode conversation naturally and warmly. "
+                    "If the customer greets you, asks how you are, or makes small talk, respond like Raya as a friendly human assistant. "
+                    "If the message is banking/journey related, answer it using the supplied knowledge and session context. "
                     "Do not advance, reset, or change the journey. Do not ask the customer to proceed unless the question explicitly asks for the next action. "
-                    "If the knowledge is insufficient, give a concise safe answer and say the bank will confirm final policy during verification. "
+                    "If the knowledge is insufficient for a banking question, give a concise safe answer and say the bank will confirm final policy during verification. "
                     "Keep the answer short, clear, and specific to the user's question."
                 ),
             },
@@ -174,6 +184,8 @@ async def answer_question(req: QuestionRequest):
         if not response_text:
             fallback = answer_general_query(req.message, session)
             response_text = fallback["text"] if fallback else "I can answer questions about your Cash Finance journey while keeping your application at the same step."
+        if not is_casual_voice_chat:
+            response_text = compose_fallback_response(response_text, session)
 
         top = matches[0] if matches else {}
         return QuestionResponse(
@@ -185,7 +197,7 @@ async def answer_question(req: QuestionRequest):
         fallback = answer_general_query(req.message, req.session or {})
         if fallback:
             return QuestionResponse(
-                response=fallback["text"],
+                response=compose_fallback_response(fallback["text"], req.session or {}),
                 domain=fallback.get("domain"),
                 confidence=fallback.get("score"),
             )

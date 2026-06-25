@@ -2,8 +2,17 @@
 
 import React, { useState } from "react";
 import { motion } from "framer-motion";
+import { VOICE_WIDGET_FIELD_UPDATE_EVENT, type VoiceWidgetFieldUpdate } from "@/lib/voiceWidgetFields";
 
-export function ModifyIncomeWidget({ data }: any) {
+type ModifyIncomeWidgetData = {
+  income?: {
+    monthly?: string;
+    obligations?: string;
+    creditCardLimit?: string;
+  };
+};
+
+export function ModifyIncomeWidget({ data, messageId }: { data?: ModifyIncomeWidgetData; messageId?: string }) {
   const initialMonthly = String(data?.income?.monthly || "35650").replace(/\D/g, "");
   const [monthlyIncome, setMonthlyIncome] = useState(initialMonthly || "35650");
   const obligations = data?.income?.obligations || "8750";
@@ -12,6 +21,20 @@ export function ModifyIncomeWidget({ data }: any) {
   const normalizedMonthly = monthlyIncome.replace(/\D/g, "");
   const monthlyValue = Number(normalizedMonthly || "0");
   const isWithinRange = monthlyValue >= 5000 && monthlyValue <= 200000;
+
+  React.useEffect(() => {
+    const handleVoiceUpdate = (event: Event) => {
+      const detail = (event as CustomEvent<VoiceWidgetFieldUpdate>).detail;
+      if (!detail || detail.widget !== "ModifyIncomeWidget" || detail.messageId !== messageId) return;
+
+      if (typeof detail.updates.monthlyIncome === "string") {
+        setMonthlyIncome(detail.updates.monthlyIncome.replace(/\D/g, ""));
+      }
+    };
+
+    window.addEventListener(VOICE_WIDGET_FIELD_UPDATE_EVENT, handleVoiceUpdate);
+    return () => window.removeEventListener(VOICE_WIDGET_FIELD_UPDATE_EVENT, handleVoiceUpdate);
+  }, [messageId]);
 
   const handleSubmit = () => {
     window.dispatchEvent(
