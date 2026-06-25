@@ -41,6 +41,7 @@ export interface PersonalDetailsWidgetProps {
     };
     showActions?: boolean;
     missingFields?: string[];
+    hideMissingMessage?: boolean;
     show_step_tracker?: boolean;
     tracker_step?: number;
     tracker_total?: number;
@@ -111,7 +112,7 @@ export function PersonalDetailsWidget({ data }: PersonalDetailsWidgetProps) {
         <Detail label="Monthly Income" value={data.income.monthly || "-"} />
       </Section>
 
-      {!showActions && (
+      {!showActions && !data.hideMissingMessage && (
         <div className="mt-4 rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-xs font-medium text-blue-700">
          Please complete the missing details in chat to continue.
         </div>

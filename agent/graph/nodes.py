@@ -2,12 +2,20 @@ import os
 import re
 import json
 import logging
+import sys
+from pathlib import Path
 from openai import AsyncOpenAI
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.append(str(REPO_ROOT))
+
 from prompts.builder import build_system_prompt
 from extractors.parser import parse_agent_response
 from extractors.router import route_to_temporal
 from graph.state import ConversationState
 from knowledge.faq_engine import answer_general_query
+from shared.journey_fallback import compose_fallback_response, looks_like_fallback_interruption
 
 logger = logging.getLogger(__name__)
 
@@ -133,6 +141,10 @@ async def classify_intent(state: ConversationState) -> ConversationState:
     sub_step = session.get("sub_step", "awaiting_id")
 
     # ── Fast-path: deterministic extraction (no LLM needed) ──────────
+    if looks_like_fallback_interruption(last_user_msg, session):
+        logger.info("[classify] Fallback interruption at %s/%s", step, sub_step)
+        return {"intent": "GENERAL_QUERY", "classified_data": None}
+
     deterministic = _deterministic_classify(last_user_msg, step, sub_step, session)
     if deterministic:
         logger.info(f"[classify] Deterministic: intent={deterministic['intent']}, data={deterministic.get('data')}")
@@ -464,7 +476,7 @@ async def build_response(state: ConversationState) -> ConversationState:
                 faq.get("score"),
                 last_user_raw,
             )
-            return {"last_response": faq["text"]}
+            return {"last_response": compose_fallback_response(faq["text"], session)}
 
     # Build system prompt with UPDATED session (post-extraction)
     sys_prompt = build_system_prompt(session)
@@ -485,6 +497,8 @@ async def build_response(state: ConversationState) -> ConversationState:
 
     # Strip any <extract> blocks from response text (defensive)
     customer_message = re.sub(r'<extract>.*?</extract>', '', text, flags=re.DOTALL).strip()
+    if intent == "GENERAL_QUERY":
+        customer_message = compose_fallback_response(customer_message, session)
 
     return {"last_response": customer_message}
 

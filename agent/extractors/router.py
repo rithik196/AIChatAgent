@@ -748,11 +748,11 @@ def _advance_session_state(extract: dict, session: dict) -> None:
             _begin_updating(
                 session,
                 "Income details",
-                auto_advance_ms=5000,
+                auto_advance_ms=10000,
                 next_signal="open_banking_complete",
                 next_sub_step="personal_details",
             )
-            logger.info("Open Banking linked. Starting 5-second update loader.")
+            logger.info("Open Banking linked. Starting 10-second update loader.")
 
         elif current_sub == "updating_details" and (data.get("update_complete") or data.get("open_banking_complete")):
             updating = session.get("updating") or {}

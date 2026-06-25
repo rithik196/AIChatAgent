@@ -1,10 +1,16 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Check, PencilLine } from "lucide-react";
 import { motion } from "framer-motion";
+import {
+  VOICE_WIDGET_FIELD_UPDATE_EVENT,
+  VOICE_WIDGET_PROMPT_EVENT,
+  type VoiceWidgetFieldUpdate,
+} from "@/lib/voiceWidgetFields";
 
 export interface ExpensesWidgetProps {
+  messageId?: string;
   data?: {
     mode?: "review" | "edit";
     prefilled?: boolean;
@@ -31,29 +37,54 @@ const OPEN_BANKING_VALUES: Record<string, string> = {
   education: "800",
 };
 
-export function ExpensesWidget({ data }: ExpensesWidgetProps) {
-  const isEditMode = data?.mode === "edit";
+const CONFIRM_PROMPT = "Are these monthly expenses correct, or would you like to modify them?";
 
-  const initialValues = useMemo(() => {
-    const source =
-      data?.breakdown && Object.keys(data.breakdown).length > 0
-        ? data.breakdown
-        : data?.prefilled
-          ? OPEN_BANKING_VALUES
-          : {};
+function buildInitialValues(data?: ExpensesWidgetProps["data"]): Record<string, string> {
+  const source =
+    data?.breakdown && Object.keys(data.breakdown).length > 0
+      ? data.breakdown
+      : data?.prefilled
+        ? OPEN_BANKING_VALUES
+        : {};
 
-    return Object.fromEntries(
-      EXPENSE_CATEGORIES.map((c) => [c.key, String(source[c.key] ?? "")])
-    ) as Record<string, string>;
-  }, [data?.breakdown, data?.prefilled]);
+  return Object.fromEntries(EXPENSE_CATEGORIES.map((c) => [c.key, String(source[c.key] ?? "")])) as Record<
+    string,
+    string
+  >;
+}
 
-  const [values, setValues] = useState<Record<string, string>>(initialValues);
+export function ExpensesWidget({ data, messageId }: ExpensesWidgetProps) {
+  const [mode, setMode] = useState<"review" | "edit" | "confirm">(data?.mode === "edit" ? "edit" : "review");
+  const [values, setValues] = useState<Record<string, string>>(() => buildInitialValues(data));
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    setValues(initialValues);
-    setIsSubmitting(false);
-  }, [initialValues, isEditMode]);
+    const handleVoiceUpdate = (event: Event) => {
+      const detail = (event as CustomEvent<VoiceWidgetFieldUpdate>).detail;
+      if (!detail || detail.widget !== "ExpensesWidget") return;
+      if (messageId && detail.messageId !== messageId) return;
+
+      setValues((prev) => {
+        let changed = false;
+        const next = { ...prev };
+
+        for (const [key, value] of Object.entries(detail.updates)) {
+          if (!EXPENSE_CATEGORIES.some((cat) => cat.key === key)) continue;
+          const stringValue = String(value);
+          if (next[key] !== stringValue) {
+            next[key] = stringValue;
+            changed = true;
+          }
+        }
+
+        return changed ? next : prev;
+      });
+    };
+
+    window.addEventListener(VOICE_WIDGET_FIELD_UPDATE_EVENT, handleVoiceUpdate);
+    return () => window.removeEventListener(VOICE_WIDGET_FIELD_UPDATE_EVENT, handleVoiceUpdate);
+  }, [messageId]);
 
   const total = Object.values(values)
     .map((v) => parseFloat(v) || 0)
@@ -61,18 +92,31 @@ export function ExpensesWidget({ data }: ExpensesWidgetProps) {
 
   const allFilled = EXPENSE_CATEGORIES.every((c) => values[c.key] && parseFloat(values[c.key]) > 0);
 
-  const handleModify = () => {
+  const speakConfirmPrompt = () => {
+    if (typeof document === "undefined") return;
+    if (document.documentElement.dataset.voiceModeOpen !== "true") return;
+
     window.dispatchEvent(
-      new CustomEvent("mock-send-message", {
+      new CustomEvent(VOICE_WIDGET_PROMPT_EVENT, {
         detail: {
-          visibleText: "Modify Expenses",
-          systemText: "__SYS__EXPENSES_MODIFY",
+          messageId,
+          widget: "ExpensesWidget",
+          text: CONFIRM_PROMPT,
         },
       })
     );
   };
 
+  const handleModify = () => {
+    setMode("edit");
+    setIsSubmitting(false);
+    window.requestAnimationFrame(() => {
+      rootRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  };
+
   const handleConfirm = () => {
+    setIsSubmitting(true);
     window.dispatchEvent(
       new CustomEvent("mock-send-message", {
         detail: {
@@ -85,7 +129,8 @@ export function ExpensesWidget({ data }: ExpensesWidgetProps) {
 
   const handleSubmit = () => {
     if (!allFilled) return;
-    setIsSubmitting(true);
+    setMode("confirm");
+    setIsSubmitting(false);
     window.dispatchEvent(
       new CustomEvent("mock-send-message", {
         detail: {
@@ -97,6 +142,7 @@ export function ExpensesWidget({ data }: ExpensesWidgetProps) {
         },
       })
     );
+    speakConfirmPrompt();
   };
 
   return (
@@ -106,15 +152,17 @@ export function ExpensesWidget({ data }: ExpensesWidgetProps) {
       transition={{ duration: 0.4, ease: "easeOut" }}
       className="w-full max-w-sm mt-3"
     >
-      <div className="journey-surface p-5">
+      <div ref={rootRef} className="journey-surface p-5">
         <div className="flex items-center gap-2 mb-1">
           <span className="text-2xl">📊</span>
           <h3 className="journey-heading">Monthly Expenses</h3>
         </div>
         <p className="journey-label mb-4 ml-9">
-          {isEditMode
+          {mode === "edit"
             ? "Edit the category amounts below, then save your changes."
-            : "Review the category breakdown below and confirm to continue."}
+            : mode === "confirm"
+              ? CONFIRM_PROMPT
+              : "Review the category breakdown below and confirm to continue."}
         </p>
 
         <div className="flex flex-col gap-3">
@@ -125,7 +173,7 @@ export function ExpensesWidget({ data }: ExpensesWidgetProps) {
                 <div className="journey-label mb-0.5">{cat.label}</div>
                 <div
                   className={`flex items-center border rounded-[16px] overflow-hidden ${
-                    isEditMode
+                    mode === "edit"
                       ? "bg-white border-[#D5DCE3] focus-within:ring-2 focus-within:ring-blue-400"
                       : "bg-slate-50 border-[#D5DCE3]"
                   }`}
@@ -138,10 +186,10 @@ export function ExpensesWidget({ data }: ExpensesWidgetProps) {
                     value={values[cat.key]}
                     onChange={(e) => setValues((prev) => ({ ...prev, [cat.key]: e.target.value }))}
                     placeholder={cat.placeholder}
-                    disabled={!isEditMode}
-                    readOnly={!isEditMode}
+                    disabled={mode !== "edit"}
+                    readOnly={mode !== "edit"}
                     className={`flex-1 py-2 pr-3 text-[14px] leading-[16px] bg-transparent border-none focus:outline-none ${
-                      isEditMode ? "text-[#0D141A] font-semibold" : "text-[#0D141A] font-normal cursor-default"
+                      mode === "edit" ? "text-[#0D141A] font-semibold" : "text-[#0D141A] font-normal cursor-default"
                     }`}
                   />
                 </div>
@@ -155,29 +203,31 @@ export function ExpensesWidget({ data }: ExpensesWidgetProps) {
           <span className="journey-value text-blue-700">SAR {total.toLocaleString()}</span>
         </div>
 
-        {isEditMode ? (
+        {mode === "edit" ? (
           <button
             onClick={handleSubmit}
-            disabled={!allFilled || isSubmitting}
+            disabled={!allFilled}
             className="w-full mt-4 py-3 journey-widget-button shadow-md hover:opacity-90 transition-all disabled:opacity-40"
           >
-            {isSubmitting ? "Saving..." : "Save Changes"}
+            Save Changes
           </button>
         ) : (
           <div className="grid grid-cols-2 gap-3 mt-4">
             <button
               onClick={handleModify}
-              className="w-full py-3 journey-widget-button border border-transparent transition-all flex items-center justify-center gap-2"
+              disabled={isSubmitting}
+              className="w-full py-3 journey-widget-button border border-transparent transition-all flex items-center justify-center gap-2 disabled:opacity-50"
             >
               <PencilLine size={16} />
               Modify
             </button>
             <button
               onClick={handleConfirm}
-              className="w-full py-3 journey-widget-button shadow-md hover:opacity-90 transition-all flex items-center justify-center gap-2"
+              disabled={isSubmitting}
+              className="w-full py-3 journey-widget-button shadow-md hover:opacity-90 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
             >
               <Check size={16} />
-              Confirm
+              {isSubmitting ? "Confirming..." : "Confirm"}
             </button>
           </div>
         )}

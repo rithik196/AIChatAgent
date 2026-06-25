@@ -2,14 +2,43 @@
 
 import React, { useState } from "react";
 import { motion } from "framer-motion";
+import { VOICE_WIDGET_FIELD_UPDATE_EVENT, type VoiceWidgetFieldUpdate } from "@/lib/voiceWidgetFields";
 
-export function ModifyPersonalWidget({ data }: any) {
+type ModifyPersonalWidgetData = {
+  email?: string;
+  emailId?: string;
+  personal?: {
+    levelOfEducation?: string;
+    education?: string;
+    maritalStatus?: string;
+    dependents?: string;
+    email?: string;
+    emailId?: string;
+  };
+};
+
+export function ModifyPersonalWidget({ data, messageId }: { data?: ModifyPersonalWidgetData; messageId?: string }) {
   const [education, setEducation] = useState(data?.personal?.levelOfEducation || data?.personal?.education || "");
   const [marital, setMarital] = useState(data?.personal?.maritalStatus || "");
   const [dependents, setDependents] = useState(data?.personal?.dependents || "");
   const [email, setEmail] = useState(
     data?.email || data?.emailId || data?.personal?.email || data?.personal?.emailId || ""
   );
+
+  React.useEffect(() => {
+    const handleVoiceUpdate = (event: Event) => {
+      const detail = (event as CustomEvent<VoiceWidgetFieldUpdate>).detail;
+      if (!detail || detail.widget !== "ModifyPersonalWidget" || detail.messageId !== messageId) return;
+
+      if (typeof detail.updates.email === "string") setEmail(detail.updates.email);
+      if (typeof detail.updates.levelOfEducation === "string") setEducation(detail.updates.levelOfEducation);
+      if (typeof detail.updates.maritalStatus === "string") setMarital(detail.updates.maritalStatus);
+      if (typeof detail.updates.dependents === "string") setDependents(detail.updates.dependents);
+    };
+
+    window.addEventListener(VOICE_WIDGET_FIELD_UPDATE_EVENT, handleVoiceUpdate);
+    return () => window.removeEventListener(VOICE_WIDGET_FIELD_UPDATE_EVENT, handleVoiceUpdate);
+  }, [messageId]);
 
   const handleSubmit = () => {
     window.dispatchEvent(
@@ -56,8 +85,8 @@ export function ModifyPersonalWidget({ data }: any) {
               <option>Intermediate (Middle School)</option>
               <option>Secondary (High School)</option>
               <option>Diploma (Associate / Intermediate)</option>
-              <option>Bachelor's Degree</option>
-              <option>Master's Degree</option>
+              <option>Bachelor&apos;s Degree</option>
+              <option>Master&apos;s Degree</option>
               <option>Doctorate (PhD)</option>
             </select>
           </div>
