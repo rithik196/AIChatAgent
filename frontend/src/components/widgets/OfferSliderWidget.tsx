@@ -41,8 +41,9 @@ export function OfferSliderWidget({ data, messageId }: OfferSliderWidgetProps & 
         setAmount(Math.min(maxAmount, Math.max(minAmount, detail.updates.amount)));
       }
       if (typeof detail.updates.tenure === "number") {
+        const targetTenure = detail.updates.tenure;
         const closestTenure = TENURE_OPTIONS.reduce((best, option) =>
-          Math.abs(option - detail.updates.tenure as number) < Math.abs(best - detail.updates.tenure as number) ? option : best
+          Math.abs(option - targetTenure) < Math.abs(best - targetTenure) ? option : best
         );
         setTenure(closestTenure);
         setShowTenureDropdown(false);

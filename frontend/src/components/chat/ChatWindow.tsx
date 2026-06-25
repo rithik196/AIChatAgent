@@ -3,18 +3,19 @@
 import React, { useRef, useEffect, useMemo, useState } from 'react';
 import { MessageBubble } from './MessageBubble';
 import { TypingIndicator } from './TypingIndicator';
+import type { MessageBubbleProps } from './MessageBubble';
 
-interface Message {
+export interface ChatWindowMessage {
   id: string;
   role: 'user' | 'assistant';
   content?: string;
-  parts?: Array<{ type?: string; text?: string; data?: unknown }>;
+  parts?: MessageBubbleProps['parts'];
   annotations?: unknown[];
-  metadata?: unknown;
+  metadata?: MessageBubbleProps['metadata'];
 }
 
 interface ChatWindowProps {
-  messages: Message[];
+  messages: ChatWindowMessage[];
   isLoading: boolean;
   forceVisibleAssistantIds?: string[];
   onWidgetShown?: (messageId: string, element: HTMLDivElement) => void;
@@ -23,7 +24,7 @@ interface ChatWindowProps {
 const MESSAGE_REVEAL_DELAY_MS = 1000;
 const WIDGET_REVEAL_DELAY_MS = 1000;
 
-function getMessageText(message: Message): string {
+function getMessageText(message: ChatWindowMessage): string {
   return (
     message.content ||
     message.parts
@@ -35,7 +36,7 @@ function getMessageText(message: Message): string {
   );
 }
 
-function hasWidget(message: Message): boolean {
+function hasWidget(message: ChatWindowMessage): boolean {
   const metadata = message.metadata as { widget?: unknown } | undefined;
   if (metadata?.widget) return true;
   if (message.parts?.some((part) => part?.type === "data-widget" && part.data)) return true;

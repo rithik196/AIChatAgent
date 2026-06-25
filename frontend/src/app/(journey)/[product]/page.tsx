@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useChat, type UIMessage } from '@ai-sdk/react'
 import { DefaultChatTransport } from 'ai';
 import { ChatWindow } from '@/components/chat/ChatWindow';
+import type { ChatWindowMessage } from '@/components/chat/ChatWindow';
 import { ChatInputBar } from '@/components/chat/ChatInputBar';
 import { VoiceModePanel } from '@/components/chat/VoiceModePanel';
 import { LogOut } from 'lucide-react';
@@ -15,6 +16,8 @@ import { buildVoicePreviewText, buildVoiceSpeechText } from '@/lib/voicePrompt';
 import { resolveVoiceJourneyAction, type VoiceResolvedAction } from '@/lib/voiceActions';
 import { dispatchVoiceWidgetFieldUpdate, resolveVisibleVoiceWidgetUpdate, VOICE_WIDGET_PROMPT_EVENT } from '@/lib/voiceWidgetFields';
 import { PersonalDetailsWidget } from '@/components/widgets/PersonalDetailsWidget';
+import type { PersonalDetailsWidgetProps } from '@/components/widgets/PersonalDetailsWidget';
+import type { MessageBubbleProps } from '@/components/chat/MessageBubble';
 
 /** Convert saved conversation messages → UIMessage format for useChat */
 function toUIMessages(saved: { role: string; content: string; timestamp?: number; widget?: unknown; metadata?: unknown }[]): UIMessage[] {
@@ -50,7 +53,64 @@ type WidgetSpec = {
   data?: Record<string, unknown>;
 };
 
-function extractLatestPersonalDetails(messages: UIMessage[]): Record<string, unknown> | null {
+type PersonalDetailsData = NonNullable<PersonalDetailsWidgetProps["data"]>;
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isWidgetSpec(value: unknown): value is WidgetSpec {
+  return isObject(value) && typeof value.widget === "string";
+}
+
+function isPersonalDetailsData(value: unknown): value is PersonalDetailsData {
+  if (!isObject(value)) return false;
+  const personal = value.personal;
+  const address = value.address;
+  const employment = value.employment;
+  const income = value.income;
+
+  return (
+    typeof value.name === "string" &&
+    typeof value.phone === "string" &&
+    typeof value.email === "string" &&
+    isObject(personal) &&
+    typeof personal.idNumber === "string" &&
+    isObject(address) &&
+    isObject(employment) &&
+    isObject(income)
+  );
+}
+
+function toChatWindowMessage(message: UIMessage): ChatWindowMessage {
+  const parts = (message.parts ?? []).map((part) => {
+    const next: NonNullable<MessageBubbleProps["parts"]>[number] = {};
+
+    if ("type" in part && typeof part.type === "string") {
+      next.type = part.type;
+    }
+    if ("text" in part && typeof part.text === "string") {
+      next.text = part.text;
+    }
+    if ("data" in part) {
+      next.data = part.data;
+    }
+
+    return next;
+  });
+
+  const metadata = message.metadata as MessageBubbleProps["metadata"];
+
+  return {
+    id: message.id,
+    role: message.role as "user" | "assistant",
+    parts,
+    metadata,
+    content: getMessageText(message) || undefined,
+  };
+}
+
+function extractLatestPersonalDetails(messages: UIMessage[]): PersonalDetailsData | null {
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i];
     const metadata = msg.metadata as { widget?: WidgetSpec } | undefined;
@@ -58,7 +118,9 @@ function extractLatestPersonalDetails(messages: UIMessage[]): Record<string, unk
 
     if (!widgetSpec) {
       const widgetDataPart = msg.parts?.find((part) => part.type === "data-widget");
-      widgetSpec = widgetDataPart?.data as WidgetSpec | undefined;
+      if (widgetDataPart && "data" in widgetDataPart && isWidgetSpec(widgetDataPart.data)) {
+        widgetSpec = widgetDataPart.data;
+      }
     }
 
     if (!widgetSpec) {
@@ -73,7 +135,7 @@ function extractLatestPersonalDetails(messages: UIMessage[]): Record<string, unk
       }
     }
 
-    if (widgetSpec?.widget === 'PersonalDetailsWidget' && widgetSpec?.data) {
+    if (widgetSpec?.widget === 'PersonalDetailsWidget' && isPersonalDetailsData(widgetSpec.data)) {
       return { ...widgetSpec.data, showActions: false, hideMissingMessage: true };
     }
   }
@@ -615,6 +677,11 @@ function ChatView({ product, sessionId, initialMessages, initialSession }: {
     [messages, activeVoicePreviewId, bufferedAssistantIds, instantRevealAssistantIds, knownMessageIds, voiceModeOpen]
   );
 
+  const chatWindowMessages = useMemo(
+    () => displayMessages.map(toChatWindowMessage),
+    [displayMessages]
+  );
+
   // Auto-speak new assistant messages when in voice mode, and reset processing state
   useEffect(() => {
     messages.forEach((message) => {
@@ -948,7 +1015,7 @@ function ChatView({ product, sessionId, initialMessages, initialSession }: {
 
       <div className={voiceModeOpen ? "flex-1 overflow-hidden pt-0 pb-[300px]" : "flex-1 overflow-hidden pt-0 pb-24"}>
         <ChatWindow
-          messages={displayMessages as unknown as { id: string; role: 'user' | 'assistant'; content?: string; parts?: unknown[]; annotations?: unknown[] }[]}
+          messages={chatWindowMessages}
           isLoading={chatWindowIsLoading}
           forceVisibleAssistantIds={[...instantRevealAssistantIds]}
           onWidgetShown={handleWidgetShown}

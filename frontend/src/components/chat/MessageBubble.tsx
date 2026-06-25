@@ -43,25 +43,25 @@ import { ImportantText } from "../shared/ImportantText";
 
 type WidgetData = unknown;
 
-interface WidgetSpec {
+export interface WidgetSpec {
   widget: string;
   data?: WidgetData;
 }
 
-interface MessagePart {
+export interface MessagePart {
   type?: string;
   text?: string;
-  data?: WidgetSpec | null;
+  data?: unknown;
 }
 
-interface MessageMetadata {
-  widget?: WidgetSpec | null;
+export interface MessageMetadata {
+  widget?: unknown;
   options?: Array<{ id: string; label: string; value: string }>;
   optionContext?: { type?: string; field?: string };
   postText?: string;
 }
 
-type WidgetComponent = React.ComponentType<{ data?: WidgetData; messageId?: string; widgetName?: string }>;
+type WidgetComponent = React.ComponentType<any>;
 
 const WIDGET_REGISTRY: Record<string, WidgetComponent> = {
   NafathWidget,
@@ -99,7 +99,7 @@ const WIDGET_REGISTRY: Record<string, WidgetComponent> = {
   DelayTriggerWidget,
 };
 
-interface MessageBubbleProps {
+export interface MessageBubbleProps {
   messageId?: string;
   role: "user" | "assistant";
   content?: string;
@@ -232,11 +232,16 @@ export function MessageBubble({ messageId, role, content, parts, metadata, showW
       .join("") ||
     "";
 
-  let widgetSpec: WidgetSpec | null = metadata?.widget || null;
+  let widgetSpec: WidgetSpec | null =
+    metadata?.widget && typeof metadata.widget === "object" && "widget" in metadata.widget
+      ? (metadata.widget as WidgetSpec)
+      : null;
 
   if (!widgetSpec) {
     const widgetDataPart = parts?.find((part) => part.type === "data-widget");
-    widgetSpec = widgetDataPart?.data || null;
+    if (widgetDataPart?.data && typeof widgetDataPart.data === "object" && "widget" in widgetDataPart.data) {
+      widgetSpec = widgetDataPart.data as WidgetSpec;
+    }
   }
 
   if (!widgetSpec) {
