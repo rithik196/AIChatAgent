@@ -16,6 +16,7 @@ import { PersonalDetailsWidget } from "../widgets/PersonalDetailsWidget";
 import { EligibleOfferWidget } from "../widgets/EligibleOfferWidget";
 import { FinanceSummaryWidget } from "../widgets/FinanceSummaryWidget";
 import { DocumentPreviewWidget } from "../widgets/DocumentPreviewWidget";
+import { GenerateContractWidget } from "../widgets/GenerateContractWidget";
 import { OtpVerificationWidget } from "../widgets/OtpVerificationWidget";
 import { AccountSelectorWidget } from "../widgets/AccountSelectorWidget";
 import { DisbursementWidget } from "../widgets/DisbursementWidget";
@@ -28,7 +29,6 @@ import { ModifyPersonalWidget } from "../widgets/ModifyPersonalWidget";
 import { ModifyAddressWidget } from "../widgets/ModifyAddressWidget";
 import { ModifyEmploymentWidget } from "../widgets/ModifyEmploymentWidget";
 import { ModifyIncomeWidget } from "../widgets/ModifyIncomeWidget";
-import { BureauConsentWidget } from "../widgets/BureauConsentWidget";
 import { EligibilityCheckWidget } from "../widgets/EligibilityCheckWidget";
 import { WantsMoreDecisionWidget } from "../widgets/WantsMoreDecisionWidget";
 import { HigherAmountReviewWidget } from "../widgets/HigherAmountReviewWidget";
@@ -61,7 +61,7 @@ export interface MessageMetadata {
   postText?: string;
 }
 
-type WidgetComponent = React.ComponentType<any>;
+type WidgetComponent = React.ComponentType<{ data?: WidgetData; messageId?: string; widgetName?: string }>;
 
 const WIDGET_REGISTRY: Record<string, WidgetComponent> = {
   NafathWidget,
@@ -74,6 +74,7 @@ const WIDGET_REGISTRY: Record<string, WidgetComponent> = {
   EligibleOfferWidget,
   FinanceSummaryWidget,
   DocumentPreviewWidget,
+  GenerateContractWidget,
   OtpVerificationWidget,
   AccountSelectorWidget,
   DisbursementWidget,
@@ -86,7 +87,6 @@ const WIDGET_REGISTRY: Record<string, WidgetComponent> = {
   ModifyAddressWidget,
   ModifyEmploymentWidget,
   ModifyIncomeWidget,
-  BureauConsentWidget,
   EligibilityCheckWidget,
   WantsMoreDecisionWidget,
   HigherAmountReviewWidget,
@@ -264,7 +264,14 @@ export function MessageBubble({ messageId, role, content, parts, metadata, showW
     onWidgetShown?.(widgetRef.current);
   }, [WidgetComponent, onWidgetShown, showWidget]);
 
-  if (isUser && sanitizedText.startsWith("__SYS__")) return null;
+  if (
+    isUser &&
+    (sanitizedText.startsWith("__SYS__") ||
+      sanitizedText.toLowerCase().startsWith("account_selected::") ||
+      sanitizedText.toLowerCase().startsWith("iban_entered::"))
+  ) {
+    return null;
+  }
   if (!sanitizedText && (!widgetSpec || !showWidget)) return null;
 
   const renderTextBlock = () =>

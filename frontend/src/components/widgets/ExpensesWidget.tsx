@@ -120,8 +120,11 @@ export function ExpensesWidget({ data, messageId }: ExpensesWidgetProps) {
     window.dispatchEvent(
       new CustomEvent("mock-send-message", {
         detail: {
-          visibleText: "Confirm Expenses",
-          systemText: "__SYS__EXPENSES_CONFIRM",
+          visibleText: "Continue",
+          systemText: `__SYS__UPDATE_EXPENSES_CONFIRM: ${JSON.stringify({
+            breakdown: values,
+            totalExpenses: total,
+          })}`,
         },
       })
     );
@@ -131,17 +134,6 @@ export function ExpensesWidget({ data, messageId }: ExpensesWidgetProps) {
     if (!allFilled) return;
     setMode("confirm");
     setIsSubmitting(false);
-    window.dispatchEvent(
-      new CustomEvent("mock-send-message", {
-        detail: {
-          visibleText: "Save updated expenses",
-          systemText: `__SYS__UPDATE_EXPENSES: ${JSON.stringify({
-            breakdown: values,
-            totalExpenses: total,
-          })}`,
-        },
-      })
-    );
     speakConfirmPrompt();
   };
 
@@ -227,7 +219,7 @@ export function ExpensesWidget({ data, messageId }: ExpensesWidgetProps) {
               className="w-full py-3 journey-widget-button shadow-md hover:opacity-90 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
             >
               <Check size={16} />
-              {isSubmitting ? "Confirming..." : "Confirm"}
+              {isSubmitting ? "Continuing..." : "Continue"}
             </button>
           </div>
         )}

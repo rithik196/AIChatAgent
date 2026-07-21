@@ -179,15 +179,6 @@ function widgetAction(message: UIMessage | undefined, transcript: string): Voice
       }
       return null;
 
-    case "BureauConsentWidget":
-      if (matchesAnyPhrase(normalized, ["yes i consent", "i consent", "consent", "proceed"])) {
-        return action(["Yes, I Consent", "Yes"]);
-      }
-      if (matchesAnyPhrase(normalized, ["no", "do not consent", "not consent"])) {
-        return action(["No"]);
-      }
-      return null;
-
     case "OtpVerificationWidget":
       if (matchesAnyPhrase(normalized, ["sms otp", "otp verification", "otp", "sms"])) {
         return action(["SMS OTP"]);
@@ -258,8 +249,8 @@ function widgetAction(message: UIMessage | undefined, transcript: string): Voice
       if (matchesAnyPhrase(normalized, ["save changes", "save updated expenses", "save"])) {
         return action(["Save Changes"]);
       }
-      if (matchesAnyPhrase(normalized, ["confirm expenses", "confirm", "proceed"])) {
-        return action(["Confirm"]);
+      if (matchesAnyPhrase(normalized, ["continue", "confirm expenses", "confirm", "proceed"])) {
+        return action(["Continue"]);
       }
       return null;
 

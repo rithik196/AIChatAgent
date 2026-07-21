@@ -871,6 +871,18 @@ def _deterministic_classify(msg: str, step: str, sub_step: str, session: dict) -
 
         elif sub_step == "certificate":
             if _is_continuation_message(msg_lower):
+                return {"step": "trade", "intent": "STEP_DATA", "data": {"proceed_contract_prompt": True}}
+            signals = [
+                "proceed_contract_prompt",
+                "proceed to next step",
+                "next step",
+            ]
+            if any(s in msg_lower for s in signals):
+                return {"step": "trade", "intent": "STEP_DATA",
+                        "data": {"proceed_contract_prompt": True}}
+
+        elif sub_step == "contract_prompt":
+            if _is_continuation_message(msg_lower):
                 return {"step": "trade", "intent": "STEP_DATA", "data": {"proceed_esign": True}}
             signals = [
                 "proceed_esign",

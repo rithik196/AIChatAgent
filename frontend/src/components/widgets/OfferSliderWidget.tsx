@@ -204,7 +204,7 @@ export function OfferSliderWidget({ data, messageId }: OfferSliderWidgetProps & 
             >
               Confirm Finance Plan
             </motion.button>
-            <motion.button
+            {/* <motion.button
               whileHover={{ scale: 1.01 }}
               whileTap={{ scale: 0.98 }}
               onClick={() => {
@@ -213,7 +213,7 @@ export function OfferSliderWidget({ data, messageId }: OfferSliderWidgetProps & 
               className="w-full py-3 journey-widget-button border border-transparent text-[14px] hover:opacity-90 transition-all duration-300"
             >
               Request higher amount
-            </motion.button>
+            </motion.button> */}
           </div>
         </div>
       </div>

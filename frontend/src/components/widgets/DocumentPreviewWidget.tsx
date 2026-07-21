@@ -21,10 +21,51 @@ interface DocumentPreviewWidgetProps {
   };
 }
 
+const APP_BASE_PATH = "/customer_agent";
+const DEFAULT_DOCUMENT_URL = "/assets/ContractSaudi.pdf";
+
+function withAppBasePath(path: string) {
+  if (path.startsWith(APP_BASE_PATH)) return path;
+  return `${APP_BASE_PATH}${path.startsWith("/") ? path : `/${path}`}`;
+}
+
+function resolveDocumentUrl(url?: string) {
+  const rawUrl = url || DEFAULT_DOCUMENT_URL;
+
+  if (/^https?:\/\//i.test(rawUrl) || rawUrl.startsWith("blob:") || rawUrl.startsWith("data:")) {
+    return rawUrl;
+  }
+
+  // Preserve older chat history that stored generated PDFs as frontend-static paths.
+  if (rawUrl.startsWith("/generated/")) {
+    const filename = rawUrl.split("/").pop() || "";
+    return withAppBasePath(`/api/chat/generated-documents/${encodeURIComponent(filename)}`);
+  }
+
+  if (rawUrl.startsWith("/")) {
+    return withAppBasePath(rawUrl);
+  }
+
+  return rawUrl;
+}
+
+function buildDownloadUrl(url: string) {
+  if (!url.includes("/api/chat/generated-documents/")) {
+    return url;
+  }
+
+  const separator = url.includes("?") ? "&" : "?";
+  return `${url}${separator}download=1`;
+}
+
+function filenameForDocument(doc: Document) {
+  return `${doc.name.replace(/[^\w.-]+/g, "_")}.pdf`;
+}
+
 export function DocumentPreviewWidget({ data }: DocumentPreviewWidgetProps) {
   const currentStep = data?.current_step || 4;
   const isCertificateStep = currentStep === 3;
-  const actionLabel = isCertificateStep ? "Generate Contract & Promissory Note" : "Proceed to e-sign";
+  const actionLabel = isCertificateStep ? "Proceed to next step" : "E-Sign via Nafath";
 
   const documents = data?.documents || [
     { name: "Contract Letter", type: "pdf", url: "/customer_agent/assets/ContractSaudi.pdf" },
@@ -34,26 +75,28 @@ export function DocumentPreviewWidget({ data }: DocumentPreviewWidgetProps) {
   const subtitle = data?.subtitle || "Ready for E-Sign";
 
   const openDocument = (doc: Document) => {
-    const url = encodeURI(doc.url || "/customer_agent/assets/ContractSaudi.pdf");
+    const url = encodeURI(resolveDocumentUrl(doc.url));
     window.open(url, "_blank", "noopener,noreferrer");
   };
 
   const downloadDocument = (doc: Document) => {
-    const url = encodeURI(doc.url || "/customer_agent/assets/ContractSaudi.pdf");
+    const url = encodeURI(buildDownloadUrl(resolveDocumentUrl(doc.url)));
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${doc.name.replace(/\s+/g, "_")}.pdf`;
+    a.download = filenameForDocument(doc);
+    a.rel = "noopener noreferrer";
     document.body.appendChild(a);
     a.click();
     a.remove();
   };
 
   const handleAction = () => {
+    const systemText = isCertificateStep ? "__SYS__proceed_contract_prompt" : "__SYS__proceed_esign";
     window.dispatchEvent(
       new CustomEvent("mock-send-message", {
         detail: {
           visibleText: actionLabel,
-          systemText: "__SYS__proceed_esign",
+          systemText: systemText,
         },
       })
     );
@@ -94,7 +137,7 @@ export function DocumentPreviewWidget({ data }: DocumentPreviewWidgetProps) {
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-3 mb-5">
+        <div className="grid grid-cols-1 min-[360px]:grid-cols-2 gap-3 mb-5">
             {documents.map((doc) => (
               <motion.div
                 key={doc.name}
@@ -116,18 +159,20 @@ export function DocumentPreviewWidget({ data }: DocumentPreviewWidgetProps) {
                 </div>
 
                 <button
+                  type="button"
                   onClick={(e) => {
                     e.stopPropagation();
                     downloadDocument(doc);
                   }}
-                  className="absolute top-2 right-2 p-1.5 journey-widget-button opacity-0 group-hover:opacity-100 transition-opacity border border-transparent"
+                  className="absolute top-5 right-5 p-1.5 bg-[#EBF4F5] rounded-[8px] hover:bg-[#B9DCF2] opacity-100 transition-colors border border-transparent  z-1"
+                  aria-label={`Download ${doc.name}`}
                 >
-                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <svg className="w-3.5 h-3.5 text-[#1B739E]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
                   </svg>
                 </button>
 
-                <p className="journey-label leading-tight line-clamp-2">{doc.name}</p>
+                <p className="journey-label leading-tight line-clamp-2 pr-8">{doc.name}</p>
               </motion.div>
             ))}
         </div>

@@ -113,7 +113,7 @@ function toChatWindowMessage(message: UIMessage): ChatWindowMessage {
 function extractLatestPersonalDetails(messages: UIMessage[]): PersonalDetailsData | null {
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i];
-    const metadata = msg.metadata as { widget?: WidgetSpec } | undefined;
+    const metadata = msg.metadata as { widget?: WidgetSpec; customerProfile?: unknown } | undefined;
     let widgetSpec = metadata?.widget;
 
     if (!widgetSpec) {
@@ -138,9 +138,19 @@ function extractLatestPersonalDetails(messages: UIMessage[]): PersonalDetailsDat
     if (widgetSpec?.widget === 'PersonalDetailsWidget' && isPersonalDetailsData(widgetSpec.data)) {
       return { ...widgetSpec.data, showActions: false, hideMissingMessage: true };
     }
+
+    if (isPersonalDetailsData(metadata?.customerProfile)) {
+      return { ...metadata.customerProfile, showActions: false, hideMissingMessage: true };
+    }
   }
 
   return null;
+}
+
+function extractSessionPersonalDetails(session: Record<string, unknown> | null): PersonalDetailsData | null {
+  const profile = session?.customer_profile;
+  if (!isPersonalDetailsData(profile)) return null;
+  return { ...profile, showActions: false, hideMissingMessage: true };
 }
 
 const VOICE_POST_SPEECH_HOLD_MS = 1000;
@@ -281,7 +291,7 @@ function ChatView({ product, sessionId, initialMessages, initialSession }: {
     }),
   });
 
-  const latestPersonalDetails = extractLatestPersonalDetails(messages);
+  const latestPersonalDetails = extractLatestPersonalDetails(messages) ?? extractSessionPersonalDetails(initialSession);
   const isLoading = status === 'submitted' || status === 'streaming';
 
   // Track whether voice mode is active (user initiated via mic button)

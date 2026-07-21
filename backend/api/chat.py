@@ -3,8 +3,8 @@ Chat API gateway — proxies to LangGraph agent (port 8001),
 handles session management, widget resolution, and SSE streaming.
 """
 
-from fastapi import APIRouter
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from typing import List, Dict, Any
 from contextvars import ContextVar
@@ -27,6 +27,7 @@ import datetime
 
 from db import get_customer_by_phone, get_customer_by_national_id, update_customer, get_etb_customer_profile, get_etb_registered_ibans
 from services.mail import send_open_banking_email, send_docusign_email
+from services.otp import send_otp, verify_otp
 from utils.eligibility import calculate_max_eligible_amount
 
 router = APIRouter()
@@ -59,7 +60,7 @@ except Exception:
     mongo_journey = None
 
 COMMODITY_CERTIFICATE_TEMPLATE = REPO_ROOT / "frontend" / "public" / "assets" / "CommodityCertificate.html"
-COMMODITY_CERTIFICATE_OUTPUT_DIR = REPO_ROOT / "frontend" / "public" / "generated"
+COMMODITY_CERTIFICATE_OUTPUT_DIR = Path(os.getenv("COMMODITY_CERTIFICATE_OUTPUT_DIR", REPO_ROOT / ".data" / "generated_documents"))
 CHROME_CANDIDATES = (
     Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),
     Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"),
@@ -71,6 +72,29 @@ GATEWAY_SESSION_DIR = REPO_ROOT / ".data" / "sessions"
 GATEWAY_SESSION_DIR.mkdir(parents=True, exist_ok=True)
 
 COMMODITY_CERTIFICATE_PRICE = 3710.80
+
+
+@router.get("/chat/generated-documents/{filename}")
+async def get_generated_document(filename: str, download: bool = False):
+    safe_name = Path(filename).name
+    if safe_name != filename or not safe_name.lower().endswith(".pdf"):
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    document_path = COMMODITY_CERTIFICATE_OUTPUT_DIR / safe_name
+    if not document_path.exists() or not document_path.is_file():
+        legacy_document_path = REPO_ROOT / "frontend" / "public" / "generated" / safe_name
+        if legacy_document_path.exists() and legacy_document_path.is_file():
+            document_path = legacy_document_path
+        else:
+            raise HTTPException(status_code=404, detail="Document not found")
+
+    disposition = "attachment" if download else "inline"
+    return FileResponse(
+        path=document_path,
+        media_type="application/pdf",
+        filename=safe_name,
+        headers={"Content-Disposition": f'{disposition}; filename="{safe_name}"'},
+    )
 
 PERSONAL_COMPLETION_FIELDS = [
     "levelOfEducation",
@@ -134,6 +158,11 @@ EXPENSE_BREAKDOWN_DEFAULT = {
 }
 
 ETB_EXPENSES_TOTAL = 7560
+
+BUREAU_CONSENT_OTP_PROMPT = (
+    "Before we proceed, please provide your consent to retrieve your credit bureau records from SIMAH. "
+    "Please enter the Absher OTP sent to your registered mobile number to verify your consent and enable us to fetch your SIMAH bureau data."
+)
 
 CONTINUATION_PHRASES = (
     "yes",
@@ -516,6 +545,27 @@ def _ensure_session_customer_profile(session: dict) -> dict[str, Any]:
     return session["customer_profile"]
 
 
+def _hydrate_customer_profile_if_available(session: dict, session_id: str) -> dict[str, Any] | None:
+    profile = session.get("customer_profile")
+    if isinstance(profile, dict) and profile:
+        return profile
+
+    national_id = session.get("collected", {}).get("id_number")
+    if not national_id:
+        return None
+
+    customer = get_customer_by_national_id(national_id)
+    if not customer:
+        phone = _get_phone_from_session_id(session_id) or session.get("collected", {}).get("phone_number", "")
+        customer = get_customer_by_phone(phone) if phone else None
+
+    if not customer:
+        return None
+
+    session["customer_profile"] = _customer_to_widget_data(customer)
+    return session["customer_profile"]
+
+
 def _persist_profile_update(session: dict, section: str, updates: dict[str, Any]) -> dict[str, Any]:
     """Persist widget edits into the session profile and best-effort mock DB."""
     profile = _ensure_session_customer_profile(session)
@@ -632,6 +682,31 @@ def _apply_personal_completion_value(session: dict, field_key: str, value: str) 
 def _get_phone_from_session_id(session_id: str) -> str:
     """Session IDs are formatted as '<phone>_<product>' for this app."""
     return session_id.split("_", 1)[0] if session_id else ""
+
+
+def _clean_otp_phone(phone: str) -> str:
+    return (phone or "").strip().replace(" ", "").removeprefix("+966")
+
+
+def _ensure_bureau_otp_sent(session: dict, session_id: str) -> None:
+    if session.get("bureau_otp_sent"):
+        return
+    phone = _clean_otp_phone(_get_phone_from_session_id(session_id) or session.get("collected", {}).get("phone_number", ""))
+    if not phone:
+        logger.warning("Unable to send bureau OTP because phone is missing for session %s", session_id)
+        return
+    result = send_otp(phone, purpose="bureau")
+    session["bureau_otp_sent"] = bool(result.get("success"))
+    session["bureau_otp_whatsapp_sent"] = bool(result.get("whatsapp_sent"))
+    if not result.get("success"):
+        session["bureau_otp_error"] = result.get("error") or "Unable to send OTP. Please try again."
+
+
+def _verify_bureau_otp(session: dict, session_id: str, otp: str) -> bool:
+    phone = _clean_otp_phone(_get_phone_from_session_id(session_id) or session.get("collected", {}).get("phone_number", ""))
+    if not phone or not otp:
+        return False
+    return verify_otp(phone, otp, purpose="bureau")
 
 
 def _customer_to_widget_data(customer: Any) -> dict:
@@ -842,15 +917,17 @@ def _render_commodity_certificate_html(session: dict) -> str:
 def _ensure_commodity_certificate_pdf(session: dict) -> str:
     existing_url = session.get("commodity_certificate_url")
     if existing_url:
-        existing_path = REPO_ROOT / "frontend" / "public" / existing_url.lstrip("/")
+        existing_filename = session.get("commodity_certificate", {}).get("pdf_filename") or Path(str(existing_url)).name
+        existing_path = COMMODITY_CERTIFICATE_OUTPUT_DIR / existing_filename
         if existing_path.exists():
             return existing_url
 
     COMMODITY_CERTIFICATE_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    session_id = session.get("session_id", "session")
+    session_id = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(session.get("session_id", "session")))
     pdf_path = COMMODITY_CERTIFICATE_OUTPUT_DIR / f"CommodityCertificate_{session_id}.pdf"
     _write_commodity_certificate_pdf(session, pdf_path)
-    session["commodity_certificate_url"] = f"/generated/{pdf_path.name}"
+    session["commodity_certificate_url"] = f"/api/chat/generated-documents/{pdf_path.name}"
+    session.setdefault("commodity_certificate", {})["pdf_filename"] = pdf_path.name
     session.setdefault("commodity_certificate", {})["pdf_url"] = session["commodity_certificate_url"]
     return session["commodity_certificate_url"]
 
@@ -1156,7 +1233,33 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
         }
 
     if step == "identity" and sub_step == "bureau_consent":
-        return {"widget": "BureauConsentWidget", "data": {}}
+        _ensure_bureau_otp_sent(session, session.get("session_id", ""))
+        session.pop("bureau_otp_error", None)
+        return None
+
+    if step == "identity" and sub_step == "bureau_otp_verifying":
+        return {
+            "widget": "LoadingWidget",
+            "data": {
+                "title": "Verifying Absher OTP",
+                "subtitle": "Please wait while we verify your SIMAH consent.",
+                "auto_advance_ms": 1000,
+                "next_message": "bureau_otp_verified",
+                "silent": True,
+            },
+        }
+
+    if step == "identity" and sub_step == "bureau_success":
+        return {
+                "widget": "VerificationSuccessWidget",
+            "data": {
+                "title": "Consent Verified",
+                "subtitle": "Thank you. Your consent has been successfully verified. We are now fetching your bureau records from SIMAH.",
+                "auto_advance_ms": 3000,
+                "next_message": "bureau_success_complete",
+                "silent": True,
+            },
+        }
 
     if step == "identity" and sub_step == "eligibility_check":
         return {"widget": "LoadingWidget", "data": {"title": "Initiating eligibility check for you", "subtitle": "Running due diligence and regulatory checks", "auto_advance_ms": 3000, "next_message": "eligibility_check_complete", "silent": True}}
@@ -1331,7 +1434,7 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
             "data": _build_application_summary_data(session),
         }
 
-    if step == "disburse" and sub_step in {"ivr_consent", "otp_entry"}:
+    if step == "disburse" and sub_step == "ivr_consent":
         return {
             "widget": "FinalIVRConsentWidget",
             "data": {},
@@ -1412,6 +1515,12 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
                 "current_step": 3,
                 "documents": [{"name": "Commodity Transaction Certificate", "type": "pdf", "url": certificate_url}],
             },
+        }
+
+    if step == "trade" and sub_step == "contract_prompt":
+        return {
+            "widget": "GenerateContractWidget",
+            "data": {}
         }
 
     if step == "esign" and sub_step == "documents":
@@ -1514,6 +1623,11 @@ def _build_sse_stream(response_text: str, widget_spec: dict | None, ui_flags: di
     user_text = _STREAM_USER_TEXT.get()
     msg_id = f"msg_{int(time.time()*1000)}_{random.randint(1000,9999)}"
     text_part_id = f"text_{int(time.time()*1000)}_{random.randint(1000,9999)}"
+    stream_flags = dict(ui_flags or {})
+    stream_session = (SESSION_STORE.get(session_id) or _load_gateway_session(session_id)) if session_id else None
+    customer_profile = stream_session.get("customer_profile") if isinstance(stream_session, dict) else None
+    if isinstance(customer_profile, dict) and customer_profile:
+        stream_flags.setdefault("customerProfile", customer_profile)
 
     def _event(data: str) -> str:
         return f"data: {data}\n\n"
@@ -1524,7 +1638,7 @@ def _build_sse_stream(response_text: str, widget_spec: dict | None, ui_flags: di
             user_text,
             response_text,
             widget_spec,
-            ui_flags,
+            stream_flags,
         )
 
         yield _event(json.dumps({"type": "start", "messageId": msg_id}))
@@ -1541,8 +1655,8 @@ def _build_sse_stream(response_text: str, widget_spec: dict | None, ui_flags: di
         metadata: dict[str, Any] = {}
         if widget_spec:
             metadata["widget"] = widget_spec
-        if ui_flags:
-            metadata.update(ui_flags)
+        if stream_flags:
+            metadata.update(stream_flags)
         if metadata:
             yield _event(json.dumps({"type": "message-metadata", "messageMetadata": metadata}))
 
@@ -1627,7 +1741,8 @@ def _handle_active_widget_text_action(
                 expenses["total"] = session.get("expenses_total")
             session["expenses_editing"] = False
             session["sub_step"] = "bureau_consent"
-            return done("Please review and confirm the bureau consent to continue.")
+            _ensure_bureau_otp_sent(session, session.get("session_id", ""))
+            return done(BUREAU_CONSENT_OTP_PROMPT)
         if any(_contains_phrase(normalized_msg, phrase) for phrase in ("modify expenses", "edit expenses", "change expenses")):
             session["expenses_editing"] = True
             session.setdefault("expenses", {})
@@ -1862,10 +1977,19 @@ def _handle_widget_event(session: dict, session_id: str, raw_msg: str, normalize
             return done("Let's proceed to your monthly expenses review.")
 
         if signal == "bureau_consent_granted":
-            session["sub_step"] = "eligibility_check"
+            session["sub_step"] = "bureau_consent"
             session.pop("profile_completion", None)
             session.pop("profile_completion_stage", None)
-            return done("Thank you. We are starting the next verification step now.")
+            _ensure_bureau_otp_sent(session, session_id)
+            return done(BUREAU_CONSENT_OTP_PROMPT)
+
+        if signal == "bureau_otp_verified":
+            session["sub_step"] = "bureau_success"
+            return done("Thank you. Your consent has been successfully verified. We are now fetching your bureau records from SIMAH.")
+
+        if signal == "bureau_success_complete":
+            session["sub_step"] = "eligibility_check"
+            return done("Initiating eligibility check. Running due-diligence and regulatory checks.")
 
         if signal == "bureau_consent_denied":
             session["sub_step"] = "bureau_consent"
@@ -1882,7 +2006,8 @@ def _handle_widget_event(session: dict, session_id: str, raw_msg: str, normalize
             if signal == "accepted_pre_approved_offer":
                 session["step"] = "identity"
                 session["sub_step"] = "bureau_consent"
-                return done("Please review and confirm the bureau consent to continue.")
+                _ensure_bureau_otp_sent(session, session.get("session_id", ""))
+                return done(BUREAU_CONSENT_OTP_PROMPT)
             if signal in {"higher_amount_requested", "need higher amount", "request for a higher amount"}:
                 session["wants_more"] = True
                 session["journeyMode"] = "NTB_ENRICHMENT"
@@ -1928,7 +2053,7 @@ def _handle_widget_event(session: dict, session_id: str, raw_msg: str, normalize
             session["step_number"] = 3
             session["sub_step"] = "authorize"
             return done(
-                "Murabaha financing uses an asset-backed trade structure. The bank purchases the commodity and sells it to you at the agreed cost plus profit. Please review and authorize the commodity trade."
+                "To finalize your finance, I will now initiate the commodity trade on your behalf. This step ensures your application remains fully Shariah-compliant. Do you authorize me to execute this trade for you?"
             )
 
     if step == "trade":
@@ -1944,7 +2069,11 @@ def _handle_widget_event(session: dict, session_id: str, raw_msg: str, normalize
             session["sub_step"] = "certificate"
             return done("Your Commodity Transaction Certificate has been generated.")
 
-        if sub_step == "certificate" and signal == "proceed_esign":
+        if sub_step == "certificate" and signal == "proceed_contract_prompt":
+            session["sub_step"] = "contract_prompt"
+            return done("Please review the final requirements before generating the contract.")
+
+        if sub_step == "contract_prompt" and signal == "proceed_esign":
             session["step"] = "esign"
             session["step_number"] = 4
             session["sub_step"] = "documents"
@@ -1952,15 +2081,20 @@ def _handle_widget_event(session: dict, session_id: str, raw_msg: str, normalize
 
     if step == "esign":
         if sub_step == "documents" and signal == "proceed_esign":
-            _send_docusign_for_session(session, session_id)
+            try:
+                _send_docusign_for_session(session, session_id)
+            except Exception as e:
+                logger.error("Exception in _send_docusign_for_session (continuing anyway): %s", e)
             session["sub_step"] = "email_sent"
-            return done("The e-sign email has been sent. Please complete the signature from your email.")
+            return done(
+                "Please complete the signature from your email. We will continue once it is verified."
+            )
 
         if sub_step == "email_sent" and signal == "esign_email_complete":
             session["step"] = "disburse"
             session["step_number"] = 5
             session["sub_step"] = "account"
-            return done("Please select the disbursement account for your finance amount.")
+            return done("**Congratulations!** \n\n Your documents have been successfully signed and verified.\n\n Next, please select the account that should be created with the approved funds.")
 
     if step == "disburse":
         if sub_step == "account":
@@ -2100,6 +2234,9 @@ async def chat(request: ChatRequest):
     else:
         current_session["session_id"] = session_id
 
+    if _hydrate_customer_profile_if_available(current_session, session_id):
+        _store_gateway_session(session_id, current_session)
+
     widget_event_response = _handle_widget_event(current_session, session_id, last_user_msg, normalized_user_msg)
     if widget_event_response is not None:
         return widget_event_response
@@ -2134,6 +2271,41 @@ async def chat(request: ChatRequest):
             response_text = "OTP verification successful. Proceeding to disbursement account selection."
             return _stream_widget_response(response_text, widget_spec)
 
+    bureau_otp_payload = _extract_prefixed_json_payload(last_user_msg, "BUREAU_OTP_VERIFY")
+    if bureau_otp_payload is not None and current_session.get("step") == "identity":
+        otp = str(bureau_otp_payload.get("otp", "")).strip()
+        if current_session.get("sub_step") == "bureau_consent" and _verify_bureau_otp(current_session, session_id, otp):
+            current_session["sub_step"] = "bureau_otp_verifying"
+            current_session.pop("bureau_otp_error", None)
+            _store_gateway_session(session_id, current_session)
+            widget_spec = resolve_widget(current_session, None)
+            response_text = "We are verifying your Absher OTP now."
+            return _stream_widget_response(response_text, widget_spec)
+
+        current_session["sub_step"] = "bureau_consent"
+        current_session["bureau_otp_error"] = "Invalid or expired OTP. Please try again."
+        _store_gateway_session(session_id, current_session)
+        widget_spec = resolve_widget(current_session, None)
+        response_text = f"The OTP entered is invalid or expired. Please try again. {BUREAU_CONSENT_OTP_PROMPT}"
+        return _stream_widget_response(response_text, widget_spec)
+
+    if last_user_msg and re.fullmatch(r"\d{4}", last_user_msg):
+        sub = current_session.get("sub_step", "")
+        if current_session.get("step") == "identity" and sub == "bureau_consent":
+            if _verify_bureau_otp(current_session, session_id, last_user_msg):
+                current_session["sub_step"] = "bureau_otp_verifying"
+                current_session.pop("bureau_otp_error", None)
+                _store_gateway_session(session_id, current_session)
+                widget_spec = resolve_widget(current_session, None)
+                response_text = "We are verifying your Absher OTP now."
+                return _stream_widget_response(response_text, widget_spec)
+
+            current_session["bureau_otp_error"] = "Invalid or expired OTP. Please try again."
+            _store_gateway_session(session_id, current_session)
+            widget_spec = resolve_widget(current_session, None)
+            response_text = f"The OTP entered is invalid or expired. Please try again. {BUREAU_CONSENT_OTP_PROMPT}"
+            return _stream_widget_response(response_text, widget_spec)
+
     # Quick-path: internal widget signals should not fall through to the LLM layer.
     # This keeps button clicks deterministic even if the session is momentarily behind
     # the widget that emitted the signal.
@@ -2141,12 +2313,16 @@ async def chat(request: ChatRequest):
     if current_session.get("step") == "identity" and direct_signal in {
         "bureau_consent_granted",
         "bureau_consent_denied",
+        "bureau_otp_verified",
+        "bureau_success_complete",
         "eligibility_check_complete",
     }:
         current_sub = current_session.get("sub_step", "")
         if direct_signal == "eligibility_check_complete" and current_sub in {
             "personal_details",
             "bureau_consent",
+            "bureau_otp_verifying",
+            "bureau_success",
             "eligibility_check",
         }:
             offer = current_session.get("offer", {}) or {}
@@ -2193,14 +2369,45 @@ async def chat(request: ChatRequest):
                 },
             )
 
+        if direct_signal == "bureau_otp_verified" and current_sub == "bureau_otp_verifying":
+            current_session["sub_step"] = "bureau_success"
+            _store_gateway_session(session_id, current_session)
+            widget_spec = resolve_widget(current_session, None)
+            response_text = "Thank you. Your consent has been successfully verified. We are now fetching your bureau records from SIMAH."
+            return StreamingResponse(
+                _build_sse_stream(response_text, widget_spec),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "x-vercel-ai-ui-message-stream": "v1",
+                },
+            )
+
+        if direct_signal == "bureau_success_complete" and current_sub == "bureau_success":
+            current_session["sub_step"] = "eligibility_check"
+            _store_gateway_session(session_id, current_session)
+            widget_spec = resolve_widget(current_session, None)
+            response_text = "Initiating eligibility check. Running due-diligence and regulatory checks."
+            return StreamingResponse(
+                _build_sse_stream(response_text, widget_spec),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "x-vercel-ai-ui-message-stream": "v1",
+                },
+            )
+
         if current_sub in {"personal_details", "bureau_consent"}:
             if direct_signal == "bureau_consent_granted":
-                current_session["sub_step"] = "eligibility_check"
+                current_session["sub_step"] = "bureau_consent"
                 current_session.pop("profile_completion", None)
                 current_session.pop("profile_completion_stage", None)
+                _ensure_bureau_otp_sent(current_session, session_id)
                 _store_gateway_session(session_id, current_session)
                 widget_spec = resolve_widget(current_session, None)
-                response_text = "Thank you. We are starting the next verification step now."
+                response_text = BUREAU_CONSENT_OTP_PROMPT
                 return StreamingResponse(
                     _build_sse_stream(response_text, widget_spec),
                     media_type="text/event-stream",
@@ -2410,9 +2617,10 @@ async def chat(request: ChatRequest):
         if normalized_user_msg == "expenses_confirm":
             current_session["sub_step"] = "bureau_consent"
             current_session["expenses_editing"] = False
+            _ensure_bureau_otp_sent(current_session, session_id)
             _store_gateway_session(session_id, current_session)
             widget_spec = resolve_widget(current_session, None)
-            response_text = "Please review and confirm the bureau consent to continue."
+            response_text = BUREAU_CONSENT_OTP_PROMPT
             return StreamingResponse(
                 _build_sse_stream(response_text, widget_spec),
                 media_type="text/event-stream",
@@ -2486,6 +2694,25 @@ async def chat(request: ChatRequest):
             ui_flags = {"allow_upload": target_sub_step == "modify_income_upload_statement"}
             return StreamingResponse(
                 _build_sse_stream(prompt_map.get(target_sub_step, "Please continue."), widget_spec, ui_flags),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "x-vercel-ai-ui-message-stream": "v1",
+                },
+            )
+
+        expenses_confirm_payload = _extract_prefixed_json_payload(last_user_msg, "UPDATE_EXPENSES_CONFIRM")
+        if expenses_confirm_payload is not None:
+            _apply_deterministic_profile_update(current_session, "UPDATE_EXPENSES", expenses_confirm_payload)
+            current_session["sub_step"] = "bureau_consent"
+            current_session["expenses_editing"] = False
+            _ensure_bureau_otp_sent(current_session, session_id)
+            _store_gateway_session(session_id, current_session)
+            widget_spec = resolve_widget(current_session, None)
+            response_text = BUREAU_CONSENT_OTP_PROMPT
+            return StreamingResponse(
+                _build_sse_stream(response_text, widget_spec),
                 media_type="text/event-stream",
                 headers={
                     "Cache-Control": "no-cache",
@@ -2676,23 +2903,7 @@ async def chat(request: ChatRequest):
     # Update session
     updated_session = data.get("session", current_session)
     updated_session["session_id"] = session_id
-
-    # Attach DB-backed customer profile only when needed.
-    # This avoids repeated DB round-trips on every chat turn.
-    need_profile = (
-        updated_session.get("step") == "identity"
-        and updated_session.get("sub_step") == "personal_details"
-        and not updated_session.get("customer_profile")
-    )
-    if need_profile:
-        national_id = updated_session.get("collected", {}).get("id_number")
-        customer = get_customer_by_national_id(national_id) if national_id else None
-        if not customer:
-            phone = _get_phone_from_session_id(session_id)
-            if phone:
-                customer = get_customer_by_phone(phone)
-        if customer:
-            updated_session["customer_profile"] = _customer_to_widget_data(customer)
+    _hydrate_customer_profile_if_available(updated_session, session_id)
 
     _store_gateway_session(session_id, updated_session)
 

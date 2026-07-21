@@ -29,7 +29,7 @@ export function FinalIVRConsentWidget() {
       <div className="journey-surface p-6">
         <div className="flex items-center gap-3 mb-5">
           <div className="w-10 h-10 rounded-full bg-white border border-[#D5DCE3] flex items-center justify-center shadow-sm">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" className="text-[#1B739E]">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" className="text-[#1B739E]">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
             </svg>
           </div>
@@ -40,7 +40,7 @@ export function FinalIVRConsentWidget() {
         </div>
 
         <div className="journey-panel p-4 mb-5">
-          <p className="journey-body text-center">
+          <p className="journey-body">
             <ImportantText text="For your security, we need a final verification before disbursing funds. Please choose your preferred method." />
           </p>
         </div>
@@ -51,7 +51,7 @@ export function FinalIVRConsentWidget() {
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
               onClick={() => {
-                window.dispatchEvent(new CustomEvent("mock-send-message", { detail: "Send me an OTP" }));
+                window.dispatchEvent(new CustomEvent("mock-send-message", { detail: "OTP Verification" }));
               }}
               className="w-full relative group overflow-hidden py-4 journey-widget-button border border-transparent transition-all duration-300 shadow-lg flex items-center justify-center gap-3"
             >
@@ -67,7 +67,7 @@ export function FinalIVRConsentWidget() {
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
               onClick={() => {
-                window.dispatchEvent(new CustomEvent("mock-send-message", { detail: "Call me for IVR verification" }));
+                window.dispatchEvent(new CustomEvent("mock-send-message", { detail: "IVR Verification" }));
               }}
               className="w-full relative group overflow-hidden py-4 journey-widget-button border border-transparent transition-all duration-300 shadow-lg flex items-center justify-center gap-3"
             >

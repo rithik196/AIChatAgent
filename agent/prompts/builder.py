@@ -256,9 +256,14 @@ The commodity trade was successful!
 """,
         ("trade", "certificate"): """
 The commodity transaction certificate is ready.
-- Ask the customer to review the certificate and ask whether they want to proceed to the Contract & Promissory Note e-sign step.
+- Ask the customer to review the certificate and ask whether they want to proceed to the next step.
 - Keep the question short and conversational.
-- Extract: {"proceed_esign": true} only when they explicitly mention proceeding to e-sign or generating the contract.
+- Extract: {"proceed_contract_prompt": true} when they indicate they want to proceed.
+""",
+        ("trade", "contract_prompt"): """
+We are asking the user to generate their contract and promissory note.
+- Ask the customer to confirm generating the final documents.
+- Extract: {"proceed_esign": true} only when they explicitly confirm generating the contract & promissory note.
 """,
         ("esign", "documents"): """
 Present the Contract & Promissory Note documents for digital signing.

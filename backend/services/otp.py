@@ -42,7 +42,7 @@ GUPSHUP_SRC_NUMBER: str = os.getenv("GUPSHUP_SRC_NUMBER", "917834811114")
 GUPSHUP_APP_NAME: str = os.getenv("GUPSHUP_APP_NAME", "CCMBANKING")
 GUPSHUP_BASE_URL: str = "https://api.gupshup.io/sm/api/v1/msg"
 
-OtpPurpose = Literal["login", "nafath", "document", "esign", "generic"]
+OtpPurpose = Literal["login", "nafath", "document", "esign", "bureau", "generic"]
 
 _redis_client: Optional[redis.Redis] = None
 

@@ -34,6 +34,12 @@ export function AccountSelectorWidget({ data }: AccountSelectorWidgetProps) {
   const [selected, setSelected] = useState<number | null>(defaultIndex >= 0 ? defaultIndex : null);
   const [useManualEntry, setUseManualEntry] = useState(false);
   const [manualIBAN, setManualIBAN] = useState('');
+  const effectiveSelected =
+    selected !== null && selected >= 0 && selected < accounts.length
+      ? selected
+      : defaultIndex >= 0
+        ? defaultIndex
+        : null;
 
   const containerVariants = {
     hidden: { opacity: 0, y: 20 },
@@ -62,8 +68,8 @@ export function AccountSelectorWidget({ data }: AccountSelectorWidgetProps) {
 
         <div className="relative z-10">
           <div className="flex items-center gap-3 mb-6">
-            <div className="w-10 h-10 rounded-xl bg-white border border-[#D5DCE3] flex items-center justify-center shadow-inner">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" className="text-[#1B739E]">
+            <div className="w-10 h-10 rounded-full bg-white border border-[#D5DCE3] flex items-center justify-center shadow-sm">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" className="text-[#1B739E]">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
               </svg>
             </div>
@@ -100,12 +106,12 @@ export function AccountSelectorWidget({ data }: AccountSelectorWidgetProps) {
                           variants={itemVariants}
                           onClick={() => setSelected(idx)}
                           className={`w-full text-left p-4 rounded-[16px] border transition-all duration-300 relative overflow-hidden ${
-                            selected === idx
+                            effectiveSelected === idx
                               ? 'border-[#1B739E] bg-white'
                               : 'border-[#D5DCE3] bg-white hover:border-[#1B739E]'
                           }`}
                         >
-                          {selected === idx && (
+                          {effectiveSelected === idx && (
                             <div className="absolute inset-0 bg-gradient-to-r from-[#EBF4F5] to-transparent pointer-events-none" />
                           )}
                           <div className="flex items-start justify-between relative z-10">
@@ -116,18 +122,13 @@ export function AccountSelectorWidget({ data }: AccountSelectorWidgetProps) {
                               {account.beneficiary && (
                                 <p className="text-[12px] text-[#1B739E] mt-1 font-medium">{account.beneficiary}</p>
                               )}
-                              {account.is_default && (
-                                <div className="inline-flex items-center gap-1 mt-2 px-2 py-0.5 rounded-full bg-[#1B739E]/10 border border-[#1B739E]/20">
-                                  <span className="text-[9px] text-[#1B739E] uppercase font-bold tracking-wider">Default</span>
-                                </div>
-                              )}
                             </div>
                             <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center mt-1 transition-colors ${
-                              selected === idx ? 'border-[#1B739E]' : 'border-[#D5DCE3]'
+                              effectiveSelected === idx ? 'border-[#1B739E]' : 'border-[#D5DCE3]'
                             }`}>
                               <motion.div
                                 initial={false}
-                                animate={{ scale: selected === idx ? 1 : 0 }}
+                                animate={{ scale: effectiveSelected === idx ? 1 : 0 }}
                                 className="w-2.5 h-2.5 rounded-full bg-[#1B739E]"
                               />
                             </div>
@@ -140,23 +141,29 @@ export function AccountSelectorWidget({ data }: AccountSelectorWidgetProps) {
 
                 <div className="flex flex-col gap-3 pt-2">
                   <motion.button
-                    whileHover={selected !== null ? { scale: 1.02 } : {}}
-                    whileTap={selected !== null ? { scale: 0.98 } : {}}
+                    whileHover={effectiveSelected !== null ? { scale: 1.02 } : {}}
+                    whileTap={effectiveSelected !== null ? { scale: 0.98 } : {}}
                     onClick={() => {
-                      if (selected !== null) {
+                      if (effectiveSelected !== null) {
                         window.dispatchEvent(new CustomEvent('mock-send-message', {
-                          detail: `ACCOUNT_SELECTED::${accounts[selected].iban}`
+                          detail: {
+                            visibleText: 'Proceed to Next Step',
+                            systemText: `ACCOUNT_SELECTED::${accounts[effectiveSelected].iban}`
+                          }
                         }));
                       }
                     }}
-                    disabled={selected === null}
+                    disabled={effectiveSelected === null}
                     className="w-full py-4 journey-widget-button type-title-sm shadow-lg transition-all duration-300"
                   >
                     Use Selected Account
                   </motion.button>
                   <button
-                    onClick={() => setUseManualEntry(true)}
-                    className="w-full py-3.5 journey-widget-button type-caption-md transition-all"
+                    onClick={() => {
+                      setManualIBAN('');
+                      setUseManualEntry(true);
+                    }}
+                    className="w-full py-4 journey-widget-button type-title-sm shadow-lg transition-all duration-300 bg-transparent text-[#1B739E] border border-[#1B739E] hover:bg-[#1B739E]/10"
                   >
                     Or enter IBAN manually
                   </button>
@@ -200,7 +207,10 @@ export function AccountSelectorWidget({ data }: AccountSelectorWidgetProps) {
                     onClick={() => {
                       if (manualIBAN.replace(/\s/g, '').length >= 20) {
                         window.dispatchEvent(new CustomEvent('mock-send-message', {
-                          detail: `IBAN_ENTERED::${manualIBAN}`,
+                          detail: {
+                            visibleText: 'Proceed Further',
+                            systemText: `IBAN_ENTERED::${manualIBAN}`
+                          }
                         }));
                       }
                     }}
@@ -213,8 +223,9 @@ export function AccountSelectorWidget({ data }: AccountSelectorWidgetProps) {
                     onClick={() => {
                       setUseManualEntry(false);
                       setManualIBAN('');
+                      setSelected(defaultIndex >= 0 ? defaultIndex : null);
                     }}
-                    className="w-full py-3.5 journey-widget-button type-caption-md transition-all"
+                    className="w-full py-4 journey-widget-button type-title-sm shadow-lg transition-all duration-300 bg-transparent text-[#1B739E] border border-[#1B739E] hover:bg-[#1B739E]/10"
                   >
                     Back to Existing Accounts
                   </button>

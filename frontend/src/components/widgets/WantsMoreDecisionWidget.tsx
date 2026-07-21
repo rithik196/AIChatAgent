@@ -43,14 +43,14 @@ export function WantsMoreDecisionWidget({ data }: WantsMoreDecisionWidgetProps) 
             }}
             className="w-full py-3 journey-widget-button hover:opacity-90 transition-all"
           >
-          Accept eligible finance offer
+          Proceed
           </button>
           <button
             onClick={() => {
               window.dispatchEvent(
                 new CustomEvent("mock-send-message", {
                   detail: {
-                    visibleText: "Request for a higher amount",
+                    visibleText: "I need a higher amount",
                     systemText: "__SYS__higher_amount_requested",
                   },
                 })
@@ -58,7 +58,7 @@ export function WantsMoreDecisionWidget({ data }: WantsMoreDecisionWidgetProps) 
             }}
             className="w-full py-3 journey-widget-button border-2 border-transparent hover:opacity-90 transition-all"
           >
-           Request for Higher Amount
+           Need Higher Amount
           </button>
         </div>
       </div>

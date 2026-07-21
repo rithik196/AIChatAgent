@@ -297,9 +297,9 @@ def get_etb_registered_ibans(customer_id: str) -> list:
     Returns:
         [
             {
-                "iban": "SA0230400197093922590013",
-                "bank": "Alawwal Bank",
-                "beneficiary": "Abdul Rahman",
+                "iban": "SA0210000011100003474306",
+                "bank": "National Commercial Bank",
+                "beneficiary": "Faisal Rahman",
                 "type": "Current Account",
                 "is_default": True,
             },
@@ -309,17 +309,17 @@ def get_etb_registered_ibans(customer_id: str) -> list:
     IBAN_MASTER_EXTENDED = {
         "1046403930": [  # Test ETB ID
             {
-                "iban": "SA0230400197093922590013",
-                "bank": "Alawwal Bank",
-                "beneficiary": "Abdul Rahman",
+                "iban": "SA0210000011100003474306",
+                "bank": "National Commercial Bank",
+                "beneficiary": "Faisal Rahman",
                 "type": "Current Account",
                 "is_default": True,
             },
             {
-                "iban": "SA0210000011100003474306",
-                "bank": "National Commercial Bank",
+                "iban": "SA0220000003031030859941",
+                "bank": "Al Rajhi Bank",
                 "beneficiary": "Faisal Rahman",
-                "type": "Savings Account",
+                "type": "Current Account",
                 "is_default": False,
             },
         ],

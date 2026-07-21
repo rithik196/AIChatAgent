@@ -47,22 +47,23 @@ export function DisbursementWidget({ data }: DisbursementWidgetProps) {
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.5 }}
-      className="w-full max-w-sm mt-3 space-y-3"
+      className="w-full max-w-sm mt-3 space-y-4"
     >
-      <div className="journey-surface p-4">
-        <p className="journey-heading leading-snug">
-          Congratulations, {customerName}!
-        </p>
-        <p className="mt-1 journey-body">
-          <ImportantText text="Your Personal Finance has been successfully disbursed. Here are your complete details for your records." />
+      <div 
+        className="px-5 py-3.5 rounded-[16px] rounded-bl-none shadow-sm type-body-md-strong text-[14px] leading-relaxed text-slate-900"
+        style={{ backgroundImage: "linear-gradient(90deg, #EBF4F5 0%, #B9DCF2 100%)" }}
+      >
+        <p className="font-bold text-[15px]">Congratulations, {customerName}!</p>
+        <p className="mt-1">
+          Your Personal Finance has been successfully disbursed. Here are your complete details for your records
         </p>
       </div>
 
       <div className="journey-panel p-4">
         <div className="flex items-center gap-3 mb-4">
-          <div className="w-10 h-10 rounded-full bg-white border border-[#D5DCE3] flex items-center justify-center">
-            <svg className="w-5 h-5 text-[#1B739E]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+          <div className="w-10 h-10 rounded-full bg-white border border-[#D5DCE3] flex items-center justify-center shadow-sm">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" className="text-[#1B739E]">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
             </svg>
           </div>
           <h3 className="journey-heading">Cash Finance Details</h3>
@@ -120,28 +121,22 @@ export function DisbursementWidget({ data }: DisbursementWidgetProps) {
         </div>
       </div>
 
-      <div className="journey-panel p-4">
-        <p className="journey-body">
-          <ImportantText text="A full welcome letter and repayment schedule have been sent to your registered email address and are also available within the app under My Finance > Active Agreements." />
-        </p>
-        <p className="mt-3 journey-body">
-          <ImportantText text="Should you wish to make an early settlement, please contact us at least 30 days in advance." />
-        </p>
-        <p className="mt-3 journey-label">
-          <ImportantText text="An early settlement charge equivalent to 3 months' profit applies, as per SAMA regulations." />
-        </p>
+      <div 
+        className="px-5 py-3.5 rounded-[16px] rounded-bl-none shadow-sm type-body-md-strong text-[14px] leading-relaxed text-slate-900"
+        style={{ backgroundImage: "linear-gradient(90deg, #EBF4F5 0%, #B9DCF2 100%)" }}
+      >
+        <p>A full Welcome Letter and repayment schedule have been sent to your registered email address and are also available within the app under My Finance{">"}Active Agreements.</p>
+        <p className="mt-4">Should you wish to make an early settlement, please contact us at least 30 days in advance.</p>
+        <p className="mt-4 text-[#425768]">An early settlement charge equivalent to 3 months' profit applies, as per SAMA regulations.</p>
       </div>
 
-      <div className="journey-panel p-4">
-        <p className="journey-body">
-          <ImportantText text={`It has been a genuine pleasure assisting you today, ${customerName}. We wish you every success with your plans, and we look forward to continuing our service.`} />
-        </p>
-        <p className="mt-3 journey-body">
-          <ImportantText text="Our team is available 24 hours a day, 7 days a week. If you need any assistance, simply call 022-1234-5678 or return to this assistant at any time." />
-        </p>
-        <p className="mt-3 journey-body">
-          <ImportantText text={`Thank you sincerely for choosing ${bank || "our bank"}.`} />
-        </p>
+      <div 
+        className="px-5 py-3.5 rounded-[16px] rounded-bl-none shadow-sm type-body-md-strong text-[14px] leading-relaxed text-slate-900"
+        style={{ backgroundImage: "linear-gradient(90deg, #EBF4F5 0%, #B9DCF2 100%)" }}
+      >
+        <p>It has been a genuine pleasure assisting you today, {customerName}. We wish you every success with your plans, and we look forward to continuing to be of service.</p>
+        <p className="mt-4 font-semibold">Our team is available 24 hours a day, 7 days a week should you need any assistance, simply call 022-1234-5678 or return to this assistant at any time.</p>
+        <p className="mt-4">Thank you sincerely for choosing {bank || "[Bank Name]"}.</p>
       </div>
     </motion.div>
   );

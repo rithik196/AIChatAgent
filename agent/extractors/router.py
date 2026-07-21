@@ -975,8 +975,12 @@ def _advance_session_state(extract: dict, session: dict) -> None:
         elif (data.get("trade_certificate_ready") or data.get("confirmed")) and current_sub == "success":
             session["sub_step"] = "certificate"
             logger.info("Showing commodity transaction certificate")
+            
+        elif data.get("proceed_contract_prompt") and current_sub == "certificate":
+            session["sub_step"] = "contract_prompt"
+            logger.info("Showing generate contract prompt widget")
 
-        elif data.get("proceed_esign") and current_sub == "certificate":
+        elif data.get("proceed_esign") and current_sub == "contract_prompt":
             profile = session.get("customer_profile") or {}
             email = profile.get("email")
             name = profile.get("name") or session.get("collected", {}).get("full_name") or "Customer"
