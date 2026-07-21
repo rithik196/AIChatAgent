@@ -39,9 +39,16 @@ import { IBANValidationWidget } from "../widgets/IBANValidationWidget";
 import { CommodityTradeAuthorizationWidget } from "../widgets/CommodityTradeAuthorizationWidget";
 import { PreApprovedOfferWidget } from "../widgets/PreApprovedOfferWidget";
 import { DelayTriggerWidget } from "../widgets/DelayTriggerWidget";
+import { StepIndicator } from "../widgets/StepIndicator";
 import { ImportantText } from "../shared/ImportantText";
 
 type WidgetData = any;
+
+type StepTrackerWidgetData = {
+  show_step_tracker?: boolean;
+  tracker_step?: number;
+  tracker_total?: number;
+};
 
 export interface WidgetSpec {
   widget: string;
@@ -257,6 +264,7 @@ export function MessageBubble({ messageId, role, content, parts, metadata, showW
 
   const sanitizedText = displayText.replace(/<WIDGET_DATA>[\s\S]*?<\/WIDGET_DATA>/g, "").trim();
   const WidgetComponent = widgetSpec ? WIDGET_REGISTRY[widgetSpec.widget] : null;
+  const widgetData = widgetSpec?.data as StepTrackerWidgetData | undefined;
 
   React.useEffect(() => {
     if (!WidgetComponent || !showWidget || !widgetRef.current || widgetReportedRef.current) return;
@@ -381,6 +389,11 @@ export function MessageBubble({ messageId, role, content, parts, metadata, showW
       {renderTextBlock()}
       {WidgetComponent && showWidget && (
         <div ref={widgetRef} className="w-full" data-widget-message-id={messageId} data-widget-name={widgetSpec?.widget || ""}>
+          <StepIndicator
+            show={widgetData?.show_step_tracker}
+            currentStep={widgetData?.tracker_step}
+            totalSteps={widgetData?.tracker_total}
+          />
           <WidgetComponent data={widgetSpec?.data} messageId={messageId} widgetName={widgetSpec?.widget || ""} />
         </div>
       )}
