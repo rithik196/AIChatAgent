@@ -41,7 +41,7 @@ import { PreApprovedOfferWidget } from "../widgets/PreApprovedOfferWidget";
 import { DelayTriggerWidget } from "../widgets/DelayTriggerWidget";
 import { ImportantText } from "../shared/ImportantText";
 
-type WidgetData = unknown;
+type WidgetData = any;
 
 export interface WidgetSpec {
   widget: string;
