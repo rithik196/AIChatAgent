@@ -14,6 +14,7 @@ export interface ExpensesWidgetProps {
   data?: {
     mode?: "review" | "edit";
     prefilled?: boolean;
+    modifyDisabled?: boolean;
     totalExpenses?: number;
     breakdown?: Partial<Record<string, string | number>>;
   };
@@ -54,7 +55,10 @@ function buildInitialValues(data?: ExpensesWidgetProps["data"]): Record<string, 
 }
 
 export function ExpensesWidget({ data, messageId }: ExpensesWidgetProps) {
-  const [mode, setMode] = useState<"review" | "edit" | "confirm">(data?.mode === "edit" ? "edit" : "review");
+  const modifyDisabled = data?.modifyDisabled ?? !data?.prefilled;
+  const isFirstTimeEntry = !data?.prefilled && modifyDisabled;
+  const initialMode = data?.mode === "edit" || !data?.prefilled ? "edit" : "review";
+  const [mode, setMode] = useState<"review" | "edit" | "confirm">(initialMode);
   const [values, setValues] = useState<Record<string, string>>(() => buildInitialValues(data));
   const [isSubmitting, setIsSubmitting] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -90,7 +94,7 @@ export function ExpensesWidget({ data, messageId }: ExpensesWidgetProps) {
     .map((v) => parseFloat(v) || 0)
     .reduce((a, b) => a + b, 0);
 
-  const allFilled = EXPENSE_CATEGORIES.every((c) => values[c.key] && parseFloat(values[c.key]) > 0);
+  const allFilled = EXPENSE_CATEGORIES.every((c) => values[c.key] && parseFloat(values[c.key]) >= 0);
 
   const speakConfirmPrompt = () => {
     if (typeof document === "undefined") return;
@@ -120,7 +124,7 @@ export function ExpensesWidget({ data, messageId }: ExpensesWidgetProps) {
     window.dispatchEvent(
       new CustomEvent("mock-send-message", {
         detail: {
-          visibleText: "Continue",
+          visibleText: "Save my expenses",
           systemText: `__SYS__UPDATE_EXPENSES_CONFIRM: ${JSON.stringify({
             breakdown: values,
             totalExpenses: total,
@@ -132,6 +136,11 @@ export function ExpensesWidget({ data, messageId }: ExpensesWidgetProps) {
 
   const handleSubmit = () => {
     if (!allFilled) return;
+    if (isFirstTimeEntry) {
+      handleConfirm();
+      return;
+    }
+
     setMode("confirm");
     setIsSubmitting(false);
     speakConfirmPrompt();
@@ -151,7 +160,9 @@ export function ExpensesWidget({ data, messageId }: ExpensesWidgetProps) {
         </div>
         <p className="journey-label mb-4 ml-9">
           {mode === "edit"
-            ? "Edit the category amounts below, then save your changes."
+            ? isFirstTimeEntry
+              ? "Enter your monthly expense amounts below, then continue."
+              : "Edit the category amounts below, then save your changes."
             : mode === "confirm"
               ? CONFIRM_PROMPT
               : "Review the category breakdown below and confirm to continue."}
@@ -201,18 +212,20 @@ export function ExpensesWidget({ data, messageId }: ExpensesWidgetProps) {
             disabled={!allFilled}
             className="w-full mt-4 py-3 journey-widget-button shadow-md hover:opacity-90 transition-all disabled:opacity-40"
           >
-            Save Changes
+            {isFirstTimeEntry ? (isSubmitting ? "Save Expenses" : "Save Expenses") : "Save Changes"}
           </button>
         ) : (
-          <div className="grid grid-cols-2 gap-3 mt-4">
-            <button
-              onClick={handleModify}
-              disabled={isSubmitting}
-              className="w-full py-3 journey-widget-button border border-transparent transition-all flex items-center justify-center gap-2 disabled:opacity-50"
-            >
-              <PencilLine size={16} />
-              Modify
-            </button>
+          <div className={`${modifyDisabled ? "grid grid-cols-1" : "grid grid-cols-2"} gap-3 mt-4`}>
+            {!modifyDisabled && (
+              <button
+                onClick={handleModify}
+                disabled={isSubmitting}
+                className="w-full py-3 journey-widget-button border border-transparent transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                <PencilLine size={16} />
+                Modify
+              </button>
+            )}
             <button
               onClick={handleConfirm}
               disabled={isSubmitting}

@@ -23,15 +23,27 @@ interface AccountSelectorWidgetProps {
   };
 }
 
+function getDefaultSelection(accounts: Account[], shouldPreselect?: boolean): number | null {
+  if (accounts.length === 0) return null;
+
+  if (shouldPreselect) {
+    const defaultIndex = accounts.findIndex((account) => account.is_default);
+    if (defaultIndex >= 0) return defaultIndex;
+  }
+
+  return null;
+}
+
 export function AccountSelectorWidget({ data }: AccountSelectorWidgetProps) {
-  // If no accounts provided, treat as empty (NTB)
-  const accounts = data?.accounts || [];
+  const incomingAccounts = data?.accounts || [];
+  const [registeredAccounts] = useState<Account[]>(() => incomingAccounts);
+  const accounts = registeredAccounts.length > 0 ? registeredAccounts : incomingAccounts;
 
-  const defaultIndex = data?.pre_select_default 
-    ? accounts.findIndex(a => a.is_default) 
-    : -1;
+  const defaultIndex = data?.pre_select_default ? accounts.findIndex(a => a.is_default) : -1;
 
-  const [selected, setSelected] = useState<number | null>(defaultIndex >= 0 ? defaultIndex : null);
+  const [selected, setSelected] = useState<number | null>(() =>
+    getDefaultSelection(incomingAccounts, data?.pre_select_default)
+  );
   const [useManualEntry, setUseManualEntry] = useState(false);
   const [manualIBAN, setManualIBAN] = useState('');
   const effectiveSelected =
@@ -40,6 +52,13 @@ export function AccountSelectorWidget({ data }: AccountSelectorWidgetProps) {
       : defaultIndex >= 0
         ? defaultIndex
         : null;
+
+  const restoreRegisteredAccounts = () => {
+    setUseManualEntry(false);
+    setManualIBAN('');
+    const restoredDefault = getDefaultSelection(accounts, data?.pre_select_default);
+    setSelected(restoredDefault ?? (accounts.length > 0 ? 0 : null));
+  };
 
   const containerVariants = {
     hidden: { opacity: 0, y: 20 },
@@ -97,7 +116,11 @@ export function AccountSelectorWidget({ data }: AccountSelectorWidgetProps) {
                   <div className="space-y-2">
                     {accounts.length === 0 ? (
                       <div className="journey-panel p-4">
-                        <p className="journey-label">Add a new IBAN manually below</p>
+                        <p className="journey-label">
+                          {data?.is_etb
+                            ? "No registered accounts found. Please enter IBAN manually."
+                            : "Add a new IBAN manually below"}
+                        </p>
                       </div>
                     ) : (
                       accounts.map((account, idx) => (
@@ -147,7 +170,7 @@ export function AccountSelectorWidget({ data }: AccountSelectorWidgetProps) {
                       if (effectiveSelected !== null) {
                         window.dispatchEvent(new CustomEvent('mock-send-message', {
                           detail: {
-                            visibleText: 'Proceed to Next Step',
+                            visibleText: 'Continue with Selected Account',
                             systemText: `ACCOUNT_SELECTED::${accounts[effectiveSelected].iban}`
                           }
                         }));
@@ -208,7 +231,7 @@ export function AccountSelectorWidget({ data }: AccountSelectorWidgetProps) {
                       if (manualIBAN.replace(/\s/g, '').length >= 20) {
                         window.dispatchEvent(new CustomEvent('mock-send-message', {
                           detail: {
-                            visibleText: 'Proceed Further',
+                            visibleText: 'Validate IBAN',
                             systemText: `IBAN_ENTERED::${manualIBAN}`
                           }
                         }));
@@ -220,11 +243,7 @@ export function AccountSelectorWidget({ data }: AccountSelectorWidgetProps) {
                     Validate IBAN
                   </motion.button>
                   <button
-                    onClick={() => {
-                      setUseManualEntry(false);
-                      setManualIBAN('');
-                      setSelected(defaultIndex >= 0 ? defaultIndex : null);
-                    }}
+                    onClick={restoreRegisteredAccounts}
                     className="w-full py-4 journey-widget-button type-title-sm shadow-lg transition-all duration-300 bg-transparent text-[#1B739E] border border-[#1B739E] hover:bg-[#1B739E]/10"
                   >
                     Back to Existing Accounts

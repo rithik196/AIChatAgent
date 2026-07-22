@@ -326,16 +326,12 @@ def _build_personal_completion_options(field_key: str) -> list[dict[str, str]]:
 def _ensure_expenses_prefilled(session: dict) -> None:
     if session.get("expenses_prefilled"):
         return
-    if session.get("ntb_open_banking_income_verified") or session.get("income_verification_method") == "open_banking":
+    if session.get("income_verification_method") in {"open_banking", "upload_statement"}:
         _prefill_open_banking_expenses(session)
         return
-    if session.get("customerType") == "ETB" or session.get("journeyMode") == "ETB_CORE":
-        session["expenses_prefilled"] = True
-        session["expenses_total"] = ETB_EXPENSES_TOTAL
-        session["expenses_breakdown"] = dict(EXPENSE_BREAKDOWN_DEFAULT)
-        expenses = session.setdefault("expenses", {})
-        expenses["breakdown"] = session["expenses_breakdown"]
-        expenses["total"] = ETB_EXPENSES_TOTAL
+    if session.get("ntb_open_banking_income_verified"):
+        _prefill_open_banking_expenses(session)
+        return
 
 
 def _prefill_open_banking_expenses(session: dict) -> None:
@@ -522,12 +518,41 @@ def _stage_pending_profile_update(session: dict, section: str, updates: dict[str
     session[key] = updates
 
 
+def _extract_income_amount(text: str) -> int | None:
+    normalized = (text or "").strip()
+    if not normalized or normalized.lower().startswith(("__sys__", "document_uploaded:")):
+        return None
+
+    for match in re.finditer(r"\b(?:sar\s*)?(\d[\d,]{3,})(?:\.\d+)?\b", normalized, flags=re.IGNORECASE):
+        amount = int(match.group(1).replace(",", ""))
+        if 5_000 <= amount <= 200_000:
+            return amount
+    return None
+
+
+def _apply_pending_income_amount(session: dict, amount: int) -> None:
+    monthly = f"SAR {amount}"
+    pending = session.get("pending_income_update") if isinstance(session.get("pending_income_update"), dict) else {}
+    profile = _ensure_session_customer_profile(session)
+    income = profile.setdefault("income", {})
+
+    income["monthly"] = monthly
+    session.setdefault("collected", {})["monthly_income"] = amount
+    session["customer_profile"] = profile
+    session["pending_income_update"] = {
+        **pending,
+        "monthly": monthly,
+        "obligations": pending.get("obligations") or income.get("obligations"),
+        "creditCardLimit": pending.get("creditCardLimit") or income.get("creditCardLimit"),
+    }
+
+
 def _finalize_pending_profile_update(session: dict, section: str) -> bool:
     key = f"pending_{section}_update"
     updates = session.pop(key, None)
     if not isinstance(updates, dict):
         return False
-    if section == "income":
+    if section == "income" and session.get("pending_income_verification") == "open_banking":
         updates = {
             **updates,
             "monthly": "SAR 41250",
@@ -1054,23 +1079,51 @@ def _write_commodity_certificate_pdf(session: dict, pdf_path: Path) -> None:
 
     pdf_path.write_bytes(_compose_pdf_document(["\n".join(page1), "\n".join(page2)]))
     
-def _resolve_step_tracker(step: str, sub_step: str) -> dict[str, int | bool]:
-    """Return step tracker metadata for canonical journey entry points."""
-    tracker_map: dict[tuple[str, str], int] = {
-        ("identity", "personal_details"): 1,
-        ("offer", "pre_approved_offer"): 2,
-        ("offer", "eligible"): 2,
-        ("trade", "authorize"): 3,
-        ("esign", "documents"): 4,
-        ("disburse", "account"): 5,
-    }
+def _resolve_step_tracker(step: str, sub_step: str, customer_type: str, session: dict) -> dict[str, int | bool]:
+    """Return step tracker metadata for canonical journey entry points based on customer type and choices."""
+    is_etb = customer_type == "ETB"
+    higher_amount_requested = session.get("journeyMode") in {"HIGHER_AMOUNT", "NTB_ENRICHMENT"} or session.get("higher_amount_requested", False) or session.get("wants_more", False)
+
+    if not is_etb:
+        # NTB mapping
+        tracker_map: dict[tuple[str, str], int] = {
+            ("identity", "personal_details"): 1,
+            ("offer", "pre_approved_offer"): 2,
+            ("offer", "eligible"): 2,
+            ("trade", "authorize"): 3,
+            ("esign", "documents"): 4,
+            ("disburse", "account"): 5,
+        }
+        total_steps = 5
+    else:
+        # ETB mapping
+        if higher_amount_requested:
+            tracker_map = {
+                ("offer", "pre_approved_offer"): 1,
+                ("identity", "personal_details"): 2,
+                ("offer", "eligible"): 3,
+                ("trade", "authorize"): 4,
+                ("esign", "documents"): 5,
+                ("disburse", "account"): 6,
+            }
+            total_steps = 6
+        else:
+            tracker_map = {
+                ("offer", "pre_approved_offer"): 1,
+                ("offer", "eligible"): 2,
+                ("trade", "authorize"): 3,
+                ("esign", "documents"): 4,
+                ("disburse", "account"): 5,
+            }
+            total_steps = 5
+
     step_number = tracker_map.get((step, sub_step))
     if not step_number:
-        return {"show_step_tracker": False, "tracker_total": 5}
+        return {"show_step_tracker": False, "tracker_total": total_steps}
     return {
         "show_step_tracker": True,
         "tracker_step": step_number,
-        "tracker_total": 5,
+        "tracker_total": total_steps,
     }
 
 
@@ -1080,7 +1133,7 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
     sub_step = session.get("sub_step", "")
     customer_type = session.get("customerType") or ("ETB" if session.get("user_type") == "existing" else "NTB")
     journey_mode = session.get("journeyMode", "PRE_DEDUPE")
-    tracker_data = _resolve_step_tracker(step, sub_step)
+    tracker_data = _resolve_step_tracker(step, sub_step, customer_type, session)
     is_preapproved_path = customer_type == "ETB"
 
     if step == "identity" and sub_step == "nafath_pending":
@@ -1216,18 +1269,20 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
     if step == "identity" and sub_step == "expenses":
         _ensure_expenses_prefilled(session)
         expenses = session.get("expenses") or {}
+        is_prefilled = bool(session.get("expenses_prefilled"))
         breakdown = expenses.get("breakdown")
         if not isinstance(breakdown, dict) or not breakdown:
             breakdown = session.get("expenses_breakdown") if isinstance(session.get("expenses_breakdown"), dict) else {}
         if not isinstance(breakdown, dict) or not breakdown:
-            breakdown = EXPENSE_BREAKDOWN_DEFAULT if session.get("expenses_prefilled") else {}
-        mode = "edit" if session.get("expenses_editing") else "review"
+            breakdown = EXPENSE_BREAKDOWN_DEFAULT if is_prefilled else {}
+        mode = "edit" if session.get("expenses_editing") or not is_prefilled else "review"
         return {
             "widget": "ExpensesWidget",
             "data": {
                 "mode": mode,
-                "prefilled": bool(session.get("expenses_prefilled")),
-                "totalExpenses": expenses.get("total", session.get("expenses_total", 7560)),
+                "prefilled": is_prefilled,
+                "modifyDisabled": not is_prefilled,
+                "totalExpenses": expenses.get("total", session.get("expenses_total", 0 if not is_prefilled else 7560)),
                 "breakdown": breakdown,
             },
         }
@@ -1367,7 +1422,12 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
 
     if step == "disburse" and sub_step == "account":
         # A3: ETB gets pre-registered IBANs from IBAN Master (Excel)
-        if journey_mode == "ETB_CORE":
+        is_etb_account_holder = (
+            customer_type == "ETB"
+            or session.get("journeyOrigin") == "ETB"
+            or journey_mode == "ETB_CORE"
+        )
+        if is_etb_account_holder:
             customer_id = session.get("collected", {}).get("id_number", "")
             registered_ibans = get_etb_registered_ibans(customer_id)
             
@@ -1390,7 +1450,7 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
                             "type": "Existing Account",
                             "iban": "SA0230400197093922590013",
                             "bank": "Alawwal Bank",
-                            "beneficiary": "Abdul Rahman",
+                            "beneficiary": "Faisal Rahman",
                             "is_default": True,
                         },
                     ],
@@ -1484,7 +1544,7 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
                 "max_amount": offer.get("max_amount", 250000),
                 "min_amount": 5000,
                 "profit_rate": offer.get("profit_rate", "6.1%"),
-                "default_tenure": 36,
+                "default_tenure": offer.get("max_tenure", 60) if is_preapproved_path else 36,
                 "default_amount": offer.get("max_amount", 250000) if is_preapproved_path else None,
                 "is_preapproved_path": is_preapproved_path,
             },
@@ -2529,6 +2589,23 @@ async def chat(request: ChatRequest):
                 },
             )
 
+        if current_session.get("sub_step") == "modify_income_upload_statement":
+            income_amount = _extract_income_amount(last_user_msg)
+            if income_amount is not None:
+                _apply_pending_income_amount(current_session, income_amount)
+                current_session["pending_income_verification"] = "upload_statement"
+                _store_gateway_session(session_id, current_session)
+                response_text = f"Updated your monthly income to SAR {income_amount}. Please upload your bank statement below."
+                return StreamingResponse(
+                    _build_sse_stream(response_text, None, {"allow_upload": True}),
+                    media_type="text/event-stream",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "Connection": "keep-alive",
+                        "x-vercel-ai-ui-message-stream": "v1",
+                    },
+                )
+
         if current_session.get("sub_step") == "modify_income_upload_statement" and normalized_user_msg.startswith("document_uploaded:"):
             _finalize_pending_profile_update(current_session, "income")
             current_session["sub_step"] = "updating_details"
@@ -2539,6 +2616,7 @@ async def chat(request: ChatRequest):
                 "silent": True,
             }
             current_session["pending_income_verification"] = "upload_statement"
+            current_session["income_verification_method"] = "upload_statement"
             _store_gateway_session(session_id, current_session)
             widget_spec = resolve_widget(current_session, None)
             response_text = "We are updating your income details now. Please wait while we save the changes."
@@ -2761,6 +2839,9 @@ async def chat(request: ChatRequest):
                     "obligations": payload.get("obligations"),
                     "creditCardLimit": payload.get("creditCardLimit"),
                 })
+                monthly_amount = _extract_income_amount(str(payload.get("monthly") or ""))
+                if monthly_amount is not None:
+                    _apply_pending_income_amount(current_session, monthly_amount)
                 current_session["sub_step"] = "modify_income_proof_choice"
                 current_session["pending_income_verification"] = None
                 _store_gateway_session(session_id, current_session)

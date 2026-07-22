@@ -996,9 +996,9 @@ function ChatView({ product, sessionId, initialMessages, initialSession }: {
                 />
               </button>
               {showHeaderMenu && (
-                <div className="absolute right-0 top-11 z-30 w-[350px] max-w-[calc(100vw-32px)] rounded-lg border border-slate-200 bg-white p-3 shadow-[0_12px_28px_-18px_rgba(15,23,42,0.55)] max-h-[80vh] overflow-y-auto hide-scrollbar">
+                <div className="absolute right-0 top-11 z-30 w-[min(calc(100vw-24px),350px)] max-h-[calc(100dvh-96px)] overflow-y-auto overflow-x-hidden rounded-lg border border-slate-200 bg-white p-3 shadow-[0_12px_28px_-18px_rgba(15,23,42,0.55)] hide-scrollbar">
                   {latestPersonalDetails ? (
-                    <div className="-mt-3 -mx-4 transform scale-95 origin-top">
+                    <div className="w-full [&>*]:max-w-full">
                       <PersonalDetailsWidget data={latestPersonalDetails} />
                     </div>
                   ) : (

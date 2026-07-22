@@ -299,7 +299,7 @@ def get_etb_registered_ibans(customer_id: str) -> list:
             {
                 "iban": "SA0210000011100003474306",
                 "bank": "National Commercial Bank",
-                "beneficiary": "Faisal Rahman",
+                "beneficiary": "Abdul Rahman",
                 "type": "Current Account",
                 "is_default": True,
             },
@@ -311,14 +311,14 @@ def get_etb_registered_ibans(customer_id: str) -> list:
             {
                 "iban": "SA0210000011100003474306",
                 "bank": "National Commercial Bank",
-                "beneficiary": "Faisal Rahman",
-                "type": "Current Account",
+                "beneficiary": "Abdul Rahman",
+                "type": "Savings Account",
                 "is_default": True,
             },
             {
                 "iban": "SA0220000003031030859941",
                 "bank": "Al Rajhi Bank",
-                "beneficiary": "Faisal Rahman",
+                "beneficiary": "Abdul Rahman",
                 "type": "Current Account",
                 "is_default": False,
             },

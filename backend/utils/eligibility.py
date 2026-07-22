@@ -85,17 +85,17 @@ IBAN_MASTER = [
     {
         "iban": "SA0230400197093922590013",
         "bank": "Alawwal Bank",
-        "beneficiary": "Abdul Rahman",
+        "beneficiary": "Faisal Rahman",
     },
     {
         "iban": "SA0210000011100003474306",
         "bank": "National Commercial Bank",
-        "beneficiary": "Faisal Rahman",
+        "beneficiary": "Abdul Rahman",
     },
     {
         "iban": "SA0220000003031030859941",
         "bank": "Al Rajhi Bank",
-        "beneficiary": "Faisal Rahman",
+        "beneficiary": "Abdul Rahman",
     },
 ]
 
