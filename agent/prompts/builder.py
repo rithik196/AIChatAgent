@@ -303,8 +303,8 @@ Final verification step before disbursement.
 """,
         ("disburse", "otp_entry"): """
 The customer chose OTP verification.
-- Ask them to enter the 6-digit OTP sent to their registered mobile number in the chat bar.
-- Extract: {"otp_code": "123456"} when they send the 6-digit code.
+- Ask them to enter the 4-digit OTP sent to their registered mobile number in the chat bar.
+- Extract: {"otp_code": "1234"} when they send the 4-digit code.
 """,
         ("disburse", "otp_verifying"): """
 OTP verification is in progress.

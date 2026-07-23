@@ -125,9 +125,9 @@ export function DisbursementWidget({ data }: DisbursementWidgetProps) {
         className="px-5 py-3.5 rounded-[16px] rounded-bl-none shadow-sm type-body-md-strong text-[14px] leading-relaxed text-slate-900"
         style={{ backgroundImage: "linear-gradient(90deg, #EBF4F5 0%, #B9DCF2 100%)" }}
       >
-        <p>A full Welcome Letter and repayment schedule have been sent to your registered email address and are also available within the app under My Finance{">"}Active Agreements.</p>
-        <p className="mt-4">Should you wish to make an early settlement, please contact us at least 30 days in advance.</p>
-        <p className="mt-4 text-[#425768]">An early settlement charge equivalent to 3 months' profit applies, as per SAMA regulations.</p>
+        <h3 className="font-bold text-[15px]">Congratulations! Your Cash Finance has been successfully disbursed.</h3>
+        <p>Your Welcome Letter and repayment schedule have been sent to your registered email address and are also available in the app under <b> My Finance {">"} Active Agreements.</b></p>
+        <p className="mt-4">You can view your finance details, track repayments, download documents, and manage your agreement anytime through the app.</p>
       </div>
 
       <div 
@@ -136,7 +136,7 @@ export function DisbursementWidget({ data }: DisbursementWidgetProps) {
       >
         <p>It has been a genuine pleasure assisting you today, {customerName}. We wish you every success with your plans, and we look forward to continuing to be of service.</p>
         <p className="mt-4 font-semibold">Our team is available 24 hours a day, 7 days a week should you need any assistance, simply call 022-1234-5678 or return to this assistant at any time.</p>
-        <p className="mt-4">Thank you sincerely for choosing {bank || "[Bank Name]"}.</p>
+        <p className="mt-4">Thank you sincerely for choosing Newgen Bank".</p>
       </div>
     </motion.div>
   );

@@ -8,6 +8,7 @@ export interface PersonalDetailsWidgetProps {
     name: string;
     phone: string;
     email: string;
+    is_etb?: boolean;
     personal: {
       idNumber: string;
       idExpirationDate?: string;
@@ -51,6 +52,7 @@ export interface PersonalDetailsWidgetProps {
 export function PersonalDetailsWidget({ data }: PersonalDetailsWidgetProps) {
   if (!data) return null;
   const showActions = data.showActions !== false;
+  const personalDetailsSource = data.is_etb ? "(Fetched from CBS)" : "(Fetched from Yakeen)";
 
   const handleModify = () => {
     // Use an explicit system intent so the journey can route deterministically.
@@ -77,7 +79,7 @@ export function PersonalDetailsWidget({ data }: PersonalDetailsWidgetProps) {
 
   return (
     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-sm mt-3 pb-6">
-      <Section title="Personal Details" source="(Fetched from Yakeen)" icon="/customer_agent/assets/personal_details_logo.png">
+      <Section title="Personal Details" source={personalDetailsSource} icon="/customer_agent/assets/personal_details_logo.png">
         <Detail label="ID Number" value={data.personal.idNumber} />
         <Detail label="Name" value={data.name} />
         <Detail label="Contact Number" value={data.phone} />

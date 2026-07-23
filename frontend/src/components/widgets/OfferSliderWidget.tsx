@@ -29,6 +29,7 @@ export function OfferSliderWidget({ data, messageId }: OfferSliderWidgetProps & 
   );
 
   const [amount, setAmount] = useState(defaultAmount);
+  const [amountInputStr, setAmountInputStr] = useState(String(defaultAmount));
   const [tenure, setTenure] = useState(defaultTenure);
   const [showTenureDropdown, setShowTenureDropdown] = useState(false);
 
@@ -38,7 +39,9 @@ export function OfferSliderWidget({ data, messageId }: OfferSliderWidgetProps & 
       if (!detail || detail.widget !== "OfferSliderWidget" || detail.messageId !== messageId) return;
 
       if (typeof detail.updates.amount === "number") {
-        setAmount(Math.min(maxAmount, Math.max(minAmount, detail.updates.amount)));
+        const clamped = Math.min(maxAmount, Math.max(minAmount, detail.updates.amount));
+        setAmount(clamped);
+        setAmountInputStr(String(clamped));
       }
       if (typeof detail.updates.tenure === "number") {
         const targetTenure = detail.updates.tenure;
@@ -89,7 +92,24 @@ export function OfferSliderWidget({ data, messageId }: OfferSliderWidgetProps & 
             <div className="flex justify-between items-end mb-4">
               <p className="journey-label">Amount (SAR)</p>
               <div className="text-right">
-                <span className="text-2xl font-black text-[#1B6A8A]">{amount.toLocaleString('en-IN')}</span>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={amountInputStr}
+                  onChange={(e) => {
+                    const raw = e.target.value.replace(/[^0-9]/g, '');
+                    setAmountInputStr(raw);
+                  }}
+                  onBlur={() => {
+                    const parsed = Number(amountInputStr);
+                    const clamped = Number.isNaN(parsed) || parsed === 0
+                      ? minAmount
+                      : Math.min(maxAmount, Math.max(minAmount, parsed));
+                    setAmount(clamped);
+                    setAmountInputStr(String(clamped));
+                  }}
+                  className="w-36 bg-transparent text-right text-2xl font-black text-[#1B6A8A] focus:outline-none"
+                />
                 <span className="journey-label ml-1">SAR</span>
               </div>
             </div>
@@ -99,7 +119,11 @@ export function OfferSliderWidget({ data, messageId }: OfferSliderWidgetProps & 
               max={maxAmount}
               step={1}
               value={amount}
-              onChange={(e) => setAmount(Number(e.target.value))}
+              onChange={(e) => {
+                const val = Number(e.target.value);
+                setAmount(val);
+                setAmountInputStr(String(val));
+              }}
               className="journey-range w-full h-1 rounded-full appearance-none cursor-pointer focus:outline-none"
               style={{
                 backgroundColor: "#FFFFFF",

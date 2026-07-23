@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 _OTP_MEMORY_STORE: dict[tuple[str, str], dict] = {}
 
 # ── Config ─────────────────────────────────────────────────────────────────────
-FALLBACK_OTP: str = os.getenv("FALLBACK_OTP", "1234")
+FALLBACK_OTP: str = os.getenv("FALLBACK_OTP", "1995")
 OTP_TTL_MINUTES: int = int(os.getenv("OTP_TTL_MINUTES", "10"))
 MAX_ATTEMPTS: int = int(os.getenv("OTP_MAX_ATTEMPTS", "5"))
 OTP_RESEND_COOLDOWN_SECONDS: int = int(os.getenv("OTP_RESEND_COOLDOWN_SECONDS", "30"))

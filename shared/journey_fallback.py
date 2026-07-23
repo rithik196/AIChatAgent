@@ -57,6 +57,7 @@ SMALL_TALK_PHRASES = (
     "good evening",
     "nice to meet you",
     "are you there",
+    "Thank you",
 )
 
 CONTINUATION_PHRASES = {
@@ -138,7 +139,7 @@ RESUME_PROMPTS: dict[tuple[str, str], str] = {
     ("disburse", "iban_validation"): "Please confirm the IBAN validation result to continue.",
     ("disburse", "application_summary"): "Please review the application summary and continue.",
     ("disburse", "ivr_consent"): "Please choose OTP verification or IVR verification for final verification.",
-    ("disburse", "otp_entry"): "Please enter the 6-digit OTP sent to your registered mobile number.",
+    ("disburse", "otp_entry"): "Please enter the 4-digit OTP sent to your registered mobile number.",
     ("disburse", "otp_verifying"): "Please wait while I verify the OTP.",
     ("disburse", "ivr_requested"): "Please complete the IVR verification, then tell me once it is done.",
     ("disburse", "otp_success"): "Please continue to complete disbursement.",

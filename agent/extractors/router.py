@@ -10,7 +10,7 @@ from temporalio.service import RPCError
 
 try:
     from backend.utils.eligibility import calculate_max_eligible_amount, validate_iban
-    from backend.db import get_etb_customer_profile, update_customer
+    from backend.db import update_customer
     from backend.services.mail import send_docusign_email
 except ModuleNotFoundError:
     # Allow running agent from its folder without requiring PYTHONPATH.
@@ -18,7 +18,7 @@ except ModuleNotFoundError:
     if str(repo_root) not in sys.path:
         sys.path.insert(0, str(repo_root))
     from backend.utils.eligibility import calculate_max_eligible_amount, validate_iban
-    from backend.db import get_etb_customer_profile, update_customer
+    from backend.db import update_customer
     from backend.services.mail import send_docusign_email
 
 logger = logging.getLogger(__name__)
@@ -37,6 +37,107 @@ CUSTOMER_TYPE_UNKNOWN = "UNKNOWN"
 JOURNEY_MODE_PRE_DEDUPE = "PRE_DEDUPE"
 JOURNEY_MODE_ETB_CORE = "ETB_CORE"
 JOURNEY_MODE_NTB_ENRICHMENT = "NTB_ENRICHMENT"
+
+PREAPPROVED_ETB_AMOUNT = 60000
+DEFAULT_MONTHLY_INCOME = 35650.0
+OPEN_BANKING_MONTHLY_INCOME = 41250.0
+DEFAULT_MONTHLY_OBLIGATIONS = 8750.0
+DEFAULT_CREDIT_CARD_LIMIT = 20000.0
+DEFAULT_OFFER_TENURE = 60
+
+
+def _parse_currency_amount(value: object) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value).strip()
+    if not text:
+        return None
+    match = re.search(r"-?\d[\d,]*(?:\.\d+)?", text)
+    if not match:
+        return None
+    try:
+        return float(match.group(0).replace(",", ""))
+    except ValueError:
+        return None
+
+
+def _is_open_banking_income_selected(session: dict) -> bool:
+    return (
+        session.get("income_verification_method") == "open_banking"
+        or session.get("pending_income_verification") == "open_banking"
+        or bool(session.get("ntb_open_banking_income_verified"))
+    )
+
+
+def _pick_first_positive_amount(*values: object, fallback: float) -> float:
+    for value in values:
+        parsed = _parse_currency_amount(value)
+        if parsed is not None and parsed > 0:
+            return parsed
+    return fallback
+
+
+def _resolve_eligibility_inputs(session: dict) -> dict[str, float | int]:
+    collected = session.get("collected") if isinstance(session.get("collected"), dict) else {}
+    profile = session.get("customer_profile") if isinstance(session.get("customer_profile"), dict) else {}
+    profile_income = profile.get("income") if isinstance(profile.get("income"), dict) else {}
+    pending_income_update = session.get("pending_income_update") if isinstance(session.get("pending_income_update"), dict) else {}
+
+    if _is_open_banking_income_selected(session):
+        monthly_income = OPEN_BANKING_MONTHLY_INCOME
+    else:
+        monthly_income = _pick_first_positive_amount(
+            collected.get("monthly_income"),
+            profile_income.get("monthly"),
+            pending_income_update.get("monthly"),
+            fallback=DEFAULT_MONTHLY_INCOME,
+        )
+
+    monthly_obligations = _pick_first_positive_amount(
+        collected.get("monthly_obligations"),
+        profile_income.get("obligations"),
+        pending_income_update.get("obligations"),
+        fallback=DEFAULT_MONTHLY_OBLIGATIONS,
+    )
+    credit_card_limit = _pick_first_positive_amount(
+        collected.get("credit_card_limit"),
+        profile_income.get("creditCardLimit"),
+        pending_income_update.get("creditCardLimit"),
+        fallback=DEFAULT_CREDIT_CARD_LIMIT,
+    )
+
+    tenure_months = int(session.get("offer", {}).get("max_tenure") or DEFAULT_OFFER_TENURE)
+
+    session.setdefault("collected", {})
+    session["collected"]["monthly_income"] = int(round(monthly_income))
+    session["collected"]["monthly_obligations"] = int(round(monthly_obligations))
+    session["collected"]["credit_card_limit"] = int(round(credit_card_limit))
+
+    return {
+        "monthly_income": monthly_income,
+        "monthly_obligations": monthly_obligations,
+        "credit_card_limit": credit_card_limit,
+        "tenure_months": max(1, tenure_months),
+    }
+
+
+def _build_offer_from_eligibility(session: dict) -> dict:
+    inputs = _resolve_eligibility_inputs(session)
+    eligibility_result = calculate_max_eligible_amount(
+        monthly_income=float(inputs["monthly_income"]),
+        monthly_obligations=float(inputs["monthly_obligations"]),
+        credit_card_limit=float(inputs["credit_card_limit"]),
+        tenure_months=int(inputs["tenure_months"]),
+        region=session.get("region", "SA"),
+    )
+    return {
+        "max_amount": int(eligibility_result.get("max_amount") or eligibility_result.get("estimated_amount", 0)),
+        "profit_rate": "6.1%",
+        "max_tenure": int(inputs["tenure_months"]),
+        "foir_status": eligibility_result.get("foir_status", "ELIGIBLE"),
+    }
 
 
 def _ensure_higher_amount_workitem(session: dict) -> dict:
@@ -236,21 +337,10 @@ def _route_to_etb_core(session: dict, reason: str | None = None) -> None:
     session["journeyMode"] = JOURNEY_MODE_ETB_CORE
     session["transitionReason"] = reason
 
-    customer_id = session.get("collected", {}).get("id_number", "")
-    etb_profile = get_etb_customer_profile(customer_id)
-    eligibility_result = calculate_max_eligible_amount(
-        monthly_income=etb_profile.get("monthly_income", 35650),
-        monthly_obligations=etb_profile.get("monthly_obligations", 8750),
-        credit_card_limit=etb_profile.get("credit_card_limit", 20000),
-        tenure_months=etb_profile.get("preferred_tenure_months", 60),
-        region=session.get("region", "SA"),
-    )
-
     session["offer"] = {
-        "max_amount": eligibility_result.get("max_amount") or eligibility_result.get("estimated_amount", 0),
+        "max_amount": PREAPPROVED_ETB_AMOUNT,
         "profit_rate": "6.1%",
-        "max_tenure": etb_profile.get("preferred_tenure_months", 60),
-        "foir_status": eligibility_result.get("foir_status"),
+        "max_tenure": DEFAULT_OFFER_TENURE,
     }
 
 
@@ -313,6 +403,16 @@ def _merge_profile_update(session: dict, section: str, update: dict) -> None:
         for key in ("monthly", "obligations", "creditCardLimit"):
             if key in update and update[key] is not None:
                 income[key] = update[key]
+        session.setdefault("collected", {})
+        monthly_income = _parse_currency_amount(income.get("monthly"))
+        monthly_obligations = _parse_currency_amount(income.get("obligations"))
+        credit_card_limit = _parse_currency_amount(income.get("creditCardLimit"))
+        if monthly_income is not None and monthly_income > 0:
+            session["collected"]["monthly_income"] = int(round(monthly_income))
+        if monthly_obligations is not None and monthly_obligations > 0:
+            session["collected"]["monthly_obligations"] = int(round(monthly_obligations))
+        if credit_card_limit is not None and credit_card_limit > 0:
+            session["collected"]["credit_card_limit"] = int(round(credit_card_limit))
 
 
 def _persist_profile_update(session: dict, section: str, update: dict) -> None:
@@ -764,7 +864,7 @@ def _advance_session_state(extract: dict, session: dict) -> None:
             elif updating.get("section") == "Income details":
                 pending_income = _consume_pending_profile_update(session, "income")
                 if pending_income:
-                    pending_income["monthly"] = "SAR 41250"
+                    pending_income["monthly"] = f"SAR {int(OPEN_BANKING_MONTHLY_INCOME)}"
                     _persist_profile_update(session, "income", pending_income)
             if data.get("open_banking_complete"):
                 session["expenses_prefilled"] = True
@@ -866,28 +966,16 @@ def _advance_session_state(extract: dict, session: dict) -> None:
                 logger.info("Bureau consent denied. Re-asking mandatory consent.")
 
         elif current_sub == "eligibility_check" and data.get("eligibility_check_complete"):
-            # Calculate eligible amount using Formula-tab logic
-            monthly_income = float(session.get("collected", {}).get("monthly_income", 35650))
-            monthly_obligations = float(session.get("collected", {}).get("monthly_obligations", 8750))
-            credit_card_limit = float(session.get("collected", {}).get("credit_card_limit", 20000))
-            region = session.get("region", "SA")
-            
-            from backend.utils.eligibility import calculate_max_eligible_amount
-            eligibility_result = calculate_max_eligible_amount(
-                monthly_income, monthly_obligations, credit_card_limit, 60, region
-            )
-            
+            computed_offer = _build_offer_from_eligibility(session)
             session["step"] = "offer"
             session["step_number"] = 2
             session["sub_step"] = "eligible"
             session["journeyMode"] = JOURNEY_MODE_ETB_CORE if session.get("customerType") == CUSTOMER_TYPE_ETB else JOURNEY_MODE_NTB_ENRICHMENT
             session["offer"] = {
-                "max_amount": eligibility_result["max_amount"],
-                "profit_rate": "6.1%",
-                "max_tenure": 60,
-                "foir_status": eligibility_result["foir_status"],
+                **(session.get("offer") or {}),
+                **computed_offer,
             }
-            logger.info(f"Eligibility check complete. Max eligible: {eligibility_result['max_amount']} SAR. Moving to eligible offer presentation.")
+            logger.info("Eligibility check complete. Max eligible: %s SAR. Moving to eligible offer presentation.", session["offer"].get("max_amount"))
 
     # ═══════════════════════════════════════════
     # STEP 2: OFFER
@@ -1048,7 +1136,7 @@ def _advance_session_state(extract: dict, session: dict) -> None:
         elif current_sub == "ivr_consent":
             if data.get("otp_method"):
                 session["sub_step"] = "otp_entry"
-                logger.info("OTP verification selected. Waiting for 6-digit OTP in chat.")
+                logger.info("OTP verification selected. Waiting for 4-digit OTP in chat.")
             elif data.get("ivr_method"):
                 session["sub_step"] = "ivr_requested"
                 logger.info("IVR verification selected. Starting IVR request loader.")
@@ -1064,7 +1152,7 @@ def _advance_session_state(extract: dict, session: dict) -> None:
 
         elif current_sub == "otp_entry":
             otp_code = data.get("otp_code")
-            if otp_code and len(str(otp_code)) == 6:
+            if otp_code and len(str(otp_code)) == 4:
                 session["sub_step"] = "otp_verifying"
                 logger.info("OTP received. Starting verification loader.")
 

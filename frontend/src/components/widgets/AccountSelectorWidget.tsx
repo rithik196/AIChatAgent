@@ -69,11 +69,6 @@ export function AccountSelectorWidget({ data }: AccountSelectorWidgetProps) {
     }
   };
 
-  const itemVariants = {
-    hidden: { opacity: 0, x: -10 },
-    visible: { opacity: 1, x: 0, transition: { duration: 0.3 } }
-  };
-
   return (
     <motion.div
       variants={containerVariants}
@@ -126,7 +121,9 @@ export function AccountSelectorWidget({ data }: AccountSelectorWidgetProps) {
                       accounts.map((account, idx) => (
                         <motion.button
                           key={idx}
-                          variants={itemVariants}
+                          initial={{ opacity: 0, x: -10 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          transition={{ duration: 0.25, delay: idx * 0.04 }}
                           onClick={() => setSelected(idx)}
                           className={`w-full text-left p-4 rounded-[16px] border transition-all duration-300 relative overflow-hidden ${
                             effectiveSelected === idx
@@ -186,9 +183,9 @@ export function AccountSelectorWidget({ data }: AccountSelectorWidgetProps) {
                       setManualIBAN('');
                       setUseManualEntry(true);
                     }}
-                    className="w-full py-4 journey-widget-button type-title-sm shadow-lg transition-all duration-300 bg-transparent text-[#1B739E] border border-[#1B739E] hover:bg-[#1B739E]/10"
+                    className="w-full py-4 journey-widget-button type-title-sm shadow-lg transition-all duration-300"
                   >
-                    Or enter IBAN manually
+                    Or Enter IBAN manually
                   </button>
                 </div>
               </motion.div>

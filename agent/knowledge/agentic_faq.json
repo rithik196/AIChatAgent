@@ -120,7 +120,7 @@
     {
       "id": "final_verification",
       "keywords": ["final verification", "ivr", "otp verification", "otp", "registered mobile", "verification successful", "call verification"],
-      "response_template": "Final verification confirms the customer consent before disbursement. Depending on the option selected, you may complete it through a 6-digit OTP sent to the registered mobile number or through an IVR verification request."
+      "response_template": "Final verification confirms the customer consent before disbursement. Depending on the option selected, you may complete it through a 4-digit OTP sent to the registered mobile number or through an IVR verification request."
     },
     {
       "id": "other_products",

@@ -25,7 +25,7 @@ import textwrap
 from pathlib import Path
 import datetime
 
-from db import get_customer_by_phone, get_customer_by_national_id, update_customer, get_etb_customer_profile, get_etb_registered_ibans
+from db import get_customer_by_phone, get_customer_by_national_id, update_customer, get_etb_registered_ibans
 from services.mail import send_open_banking_email, send_docusign_email
 from services.otp import send_otp, verify_otp
 from utils.eligibility import calculate_max_eligible_amount
@@ -159,10 +159,20 @@ EXPENSE_BREAKDOWN_DEFAULT = {
 
 ETB_EXPENSES_TOTAL = 7560
 
+PREAPPROVED_ETB_AMOUNT = 60000
+DEFAULT_MONTHLY_INCOME = 35650.0
+OPEN_BANKING_MONTHLY_INCOME = 41250.0
+DEFAULT_MONTHLY_OBLIGATIONS = 8750.0
+DEFAULT_CREDIT_CARD_LIMIT = 20000.0
+DEFAULT_OFFER_TENURE = 60
+
 BUREAU_CONSENT_OTP_PROMPT = (
     "Before we proceed, please provide your consent to retrieve your credit bureau records from SIMAH. "
     "Please enter the Absher OTP sent to your registered mobile number to verify your consent and enable us to fetch your SIMAH bureau data."
 )
+
+FINAL_DISBURSEMENT_OTP_PROMPT = "Please enter the 4-digit OTP sent to your registered mobile number."
+OTP_RETRY_PROMPT = "The entered OTP is incorrect. Please re-enter the correct OTP."
 
 CONTINUATION_PHRASES = (
     "yes",
@@ -530,6 +540,100 @@ def _extract_income_amount(text: str) -> int | None:
     return None
 
 
+def _parse_currency_amount(value: Any) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value).strip()
+    if not text:
+        return None
+    match = re.search(r"-?\d[\d,]*(?:\.\d+)?", text)
+    if not match:
+        return None
+    try:
+        return float(match.group(0).replace(",", ""))
+    except ValueError:
+        return None
+
+
+def _is_open_banking_income_selected(session: dict) -> bool:
+    return (
+        session.get("income_verification_method") == "open_banking"
+        or session.get("pending_income_verification") == "open_banking"
+        or bool(session.get("ntb_open_banking_income_verified"))
+    )
+
+
+def _pick_first_positive_amount(*values: Any, fallback: float) -> float:
+    for value in values:
+        parsed = _parse_currency_amount(value)
+        if parsed is not None and parsed > 0:
+            return parsed
+    return fallback
+
+
+def _resolve_eligibility_inputs(session: dict) -> dict[str, float | int]:
+    collected = session.get("collected") if isinstance(session.get("collected"), dict) else {}
+    profile = session.get("customer_profile") if isinstance(session.get("customer_profile"), dict) else {}
+    profile_income = profile.get("income") if isinstance(profile.get("income"), dict) else {}
+    pending_income = session.get("pending_income_update") if isinstance(session.get("pending_income_update"), dict) else {}
+
+    if _is_open_banking_income_selected(session):
+        monthly_income = OPEN_BANKING_MONTHLY_INCOME
+    else:
+        monthly_income = _pick_first_positive_amount(
+            collected.get("monthly_income"),
+            profile_income.get("monthly"),
+            pending_income.get("monthly"),
+            fallback=DEFAULT_MONTHLY_INCOME,
+        )
+
+    monthly_obligations = _pick_first_positive_amount(
+        collected.get("monthly_obligations"),
+        profile_income.get("obligations"),
+        pending_income.get("obligations"),
+        fallback=DEFAULT_MONTHLY_OBLIGATIONS,
+    )
+    credit_card_limit = _pick_first_positive_amount(
+        collected.get("credit_card_limit"),
+        profile_income.get("creditCardLimit"),
+        pending_income.get("creditCardLimit"),
+        fallback=DEFAULT_CREDIT_CARD_LIMIT,
+    )
+
+    tenure_months = int(session.get("offer", {}).get("max_tenure") or DEFAULT_OFFER_TENURE)
+
+    session.setdefault("collected", {})
+    session["collected"]["monthly_income"] = int(round(monthly_income))
+    session["collected"]["monthly_obligations"] = int(round(monthly_obligations))
+    session["collected"]["credit_card_limit"] = int(round(credit_card_limit))
+
+    return {
+        "monthly_income": monthly_income,
+        "monthly_obligations": monthly_obligations,
+        "credit_card_limit": credit_card_limit,
+        "tenure_months": max(1, tenure_months),
+    }
+
+
+def _build_offer_from_eligibility(session: dict) -> dict[str, Any]:
+    inputs = _resolve_eligibility_inputs(session)
+    eligibility_result = calculate_max_eligible_amount(
+        monthly_income=float(inputs["monthly_income"]),
+        monthly_obligations=float(inputs["monthly_obligations"]),
+        credit_card_limit=float(inputs["credit_card_limit"]),
+        tenure_months=int(inputs["tenure_months"]),
+        region=session.get("region", "SA"),
+    )
+    return {
+        "max_amount": int(eligibility_result.get("max_amount") or eligibility_result.get("estimated_amount", 0)),
+        "profit_rate": "6.1%",
+        "max_tenure": int(inputs["tenure_months"]),
+        "foir_status": eligibility_result.get("foir_status", "ELIGIBLE"),
+    }
+
+
 def _apply_pending_income_amount(session: dict, amount: int) -> None:
     monthly = f"SAR {amount}"
     pending = session.get("pending_income_update") if isinstance(session.get("pending_income_update"), dict) else {}
@@ -592,32 +696,25 @@ def _hydrate_customer_profile_if_available(session: dict, session_id: str) -> di
 
 
 def _persist_profile_update(session: dict, section: str, updates: dict[str, Any]) -> dict[str, Any]:
-    """Persist widget edits into the session profile and best-effort mock DB."""
+    """Apply widget edits to the current journey session only."""
     profile = _ensure_session_customer_profile(session)
-    payload: dict[str, Any] = {}
 
     if section == "personal":
         personal = profile.setdefault("personal", {})
         if updates.get("levelOfEducation") is not None:
             personal["levelOfEducation"] = str(updates.get("levelOfEducation", "")).strip()
-            payload["levelOfEducation"] = personal["levelOfEducation"]
         if updates.get("maritalStatus") is not None:
             personal["maritalStatus"] = str(updates.get("maritalStatus", "")).strip()
-            payload["maritalStatus"] = personal["maritalStatus"]
         if updates.get("dependents") is not None:
             personal["dependents"] = str(updates.get("dependents", "")).strip()
-            payload["dependents"] = personal["dependents"]
         if updates.get("email") is not None:
             profile["email"] = str(updates.get("email", "")).strip()
-            payload["email"] = profile["email"]
-        payload["personal"] = dict(personal)
 
     elif section == "address":
         address = profile.setdefault("address", {})
         for key in ("line1", "line2", "street", "city", "postalCode", "houseType"):
             if updates.get(key) is not None:
                 address[key] = str(updates.get(key, "")).strip()
-        payload["address"] = dict(address)
 
     elif section == "employment":
         employment = profile.setdefault("employment", {})
@@ -630,24 +727,22 @@ def _persist_profile_update(session: dict, section: str, updates: dict[str, Any]
             for key in ("line1", "city", "postalCode"):
                 if work_address_in.get(key) is not None:
                     work_address[key] = str(work_address_in.get(key, "")).strip()
-        payload["employment"] = dict(employment)
 
     elif section == "income":
         income = profile.setdefault("income", {})
         for key in ("monthly", "obligations", "creditCardLimit"):
             if updates.get(key) is not None:
                 income[key] = str(updates.get(key, "")).strip()
-        payload["income"] = dict(income)
-
-    national_id = session.get("collected", {}).get("id_number")
-    if national_id:
-        try:
-            update_customer(national_id, payload)
-            customer = get_customer_by_national_id(national_id)
-            if customer:
-                profile = _merge_widget_profile(_customer_to_widget_data(customer), profile)
-        except Exception:
-            logger.exception("Failed to persist %s update for session %s", section, session.get("session_id", ""))
+        monthly_income = _parse_currency_amount(income.get("monthly"))
+        monthly_obligations = _parse_currency_amount(income.get("obligations"))
+        credit_card_limit = _parse_currency_amount(income.get("creditCardLimit"))
+        session.setdefault("collected", {})
+        if monthly_income is not None and monthly_income > 0:
+            session["collected"]["monthly_income"] = int(round(monthly_income))
+        if monthly_obligations is not None and monthly_obligations > 0:
+            session["collected"]["monthly_obligations"] = int(round(monthly_obligations))
+        if credit_card_limit is not None and credit_card_limit > 0:
+            session["collected"]["credit_card_limit"] = int(round(credit_card_limit))
 
     session["customer_profile"] = profile
     return profile
@@ -713,10 +808,14 @@ def _clean_otp_phone(phone: str) -> str:
     return (phone or "").strip().replace(" ", "").removeprefix("+966")
 
 
+def _get_otp_phone_from_session(session: dict, session_id: str) -> str:
+    return _clean_otp_phone(_get_phone_from_session_id(session_id) or session.get("collected", {}).get("phone_number", ""))
+
+
 def _ensure_bureau_otp_sent(session: dict, session_id: str) -> None:
     if session.get("bureau_otp_sent"):
         return
-    phone = _clean_otp_phone(_get_phone_from_session_id(session_id) or session.get("collected", {}).get("phone_number", ""))
+    phone = _get_otp_phone_from_session(session, session_id)
     if not phone:
         logger.warning("Unable to send bureau OTP because phone is missing for session %s", session_id)
         return
@@ -728,10 +827,31 @@ def _ensure_bureau_otp_sent(session: dict, session_id: str) -> None:
 
 
 def _verify_bureau_otp(session: dict, session_id: str, otp: str) -> bool:
-    phone = _clean_otp_phone(_get_phone_from_session_id(session_id) or session.get("collected", {}).get("phone_number", ""))
+    phone = _get_otp_phone_from_session(session, session_id)
     if not phone or not otp:
         return False
     return verify_otp(phone, otp, purpose="bureau")
+
+
+def _ensure_disbursement_otp_sent(session: dict, session_id: str) -> None:
+    if session.get("disbursement_otp_sent"):
+        return
+    phone = _get_otp_phone_from_session(session, session_id)
+    if not phone:
+        logger.warning("Unable to send disbursement OTP because phone is missing for session %s", session_id)
+        return
+    result = send_otp(phone, purpose="login")
+    session["disbursement_otp_sent"] = bool(result.get("success"))
+    session["disbursement_otp_whatsapp_sent"] = bool(result.get("whatsapp_sent"))
+    if not result.get("success"):
+        session["disbursement_otp_error"] = result.get("error") or "Unable to send OTP. Please try again."
+
+
+def _verify_disbursement_otp(session: dict, session_id: str, otp: str) -> bool:
+    phone = _get_otp_phone_from_session(session, session_id)
+    if not phone or not otp:
+        return False
+    return verify_otp(phone, otp, purpose="login")
 
 
 def _customer_to_widget_data(customer: Any) -> dict:
@@ -1100,13 +1220,13 @@ def _resolve_step_tracker(step: str, sub_step: str, customer_type: str, session:
         if higher_amount_requested:
             tracker_map = {
                 ("offer", "pre_approved_offer"): 1,
-                ("identity", "personal_details"): 2,
-                ("offer", "eligible"): 3,
-                ("trade", "authorize"): 4,
-                ("esign", "documents"): 5,
-                ("disburse", "account"): 6,
+                ("identity", "personal_details"): 1,
+                ("offer", "eligible"): 2,
+                ("trade", "authorize"): 3,
+                ("esign", "documents"): 4,
+                ("disburse", "account"): 5,
             }
-            total_steps = 6
+            total_steps = 5
         else:
             tracker_map = {
                 ("offer", "pre_approved_offer"): 1,
@@ -1156,6 +1276,7 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
         if session.get("profile_completion_stage") == PERSONAL_COMPLETION_STAGE_COLLECTING:
             return None
         show_actions = completion_state is None
+        customer_type = session.get("customerType") or ("ETB" if session.get("user_type") == "existing" else "NTB")
         return {
             "widget": "PersonalDetailsWidget",
             "data": {
@@ -1198,6 +1319,7 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
                     "creditCardLimit": ""
                 }
                 }),
+                "is_etb": customer_type == "ETB",
                 "showActions": show_actions,
                 "missingFields": completion_state["missing_fields"] if completion_state else [],
                 "currentMissingField": completion_state["current_field"] if completion_state else None,
@@ -1320,71 +1442,29 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
         return {"widget": "LoadingWidget", "data": {"title": "Initiating eligibility check for you", "subtitle": "Running due diligence and regulatory checks", "auto_advance_ms": 3000, "next_message": "eligibility_check_complete", "silent": True}}
 
     if step == "offer" and sub_step == "pre_approved_offer":
-        offer = session.get("offer", {})
-        customer_id = session.get("collected", {}).get("id_number", "")
-        etb_profile = get_etb_customer_profile(customer_id)
-        max_amount = offer.get("max_amount")
-        if max_amount is None:
-            eligibility_result = calculate_max_eligible_amount(
-                monthly_income=etb_profile.get("monthly_income", 35650),
-                monthly_obligations=etb_profile.get("monthly_obligations", 8750),
-                credit_card_limit=etb_profile.get("credit_card_limit", 20000),
-                tenure_months=etb_profile.get("preferred_tenure_months", 60),
-                region=session.get("region", "SA"),
-            )
-            max_amount = eligibility_result.get("max_amount") or eligibility_result.get("estimated_amount", 0)
-            session.setdefault("offer", {})
-            session["offer"].update({
-                "max_amount": max_amount,
-                "profit_rate": "6.1%",
-                "max_tenure": etb_profile.get("preferred_tenure_months", 60),
-            })
+        offer = session.setdefault("offer", {})
+        offer["max_amount"] = PREAPPROVED_ETB_AMOUNT
+        offer.setdefault("profit_rate", "6.1%")
+        offer.setdefault("max_tenure", DEFAULT_OFFER_TENURE)
         return {
             "widget": "PreApprovedOfferWidget",
             "data": {
                 "title": "Your Pre-Approved Offer",
-                "max_amount": max_amount,
-                "profit_rate": "6.1%",
-                "max_tenure": offer.get("max_tenure", etb_profile.get("preferred_tenure_months", 60)),
+                "max_amount": PREAPPROVED_ETB_AMOUNT,
+                "profit_rate": offer.get("profit_rate", "6.1%"),
+                "max_tenure": offer.get("max_tenure", DEFAULT_OFFER_TENURE),
                 "is_preapproved_path": True,
                 **tracker_data,
             },
         }
 
     if step == "offer" and sub_step == "eligible":
-        offer = session.get("offer", {})
-        
-        # A2c: ETB pre-approved amounts calculated via formula (not hardcoded)
-        if customer_type == "ETB" and journey_mode == "ETB_CORE":
-            customer_id = session.get("collected", {}).get("id_number", "")
-            etb_profile = get_etb_customer_profile(customer_id)
-            
-            # Use same formula as NTB eligibility calculation
-            eligibility_result = calculate_max_eligible_amount(
-                monthly_income=etb_profile.get("monthly_income", 35650),
-                monthly_obligations=etb_profile.get("monthly_obligations", 8750),
-                credit_card_limit=etb_profile.get("credit_card_limit", 20000),
-                tenure_months=etb_profile.get("preferred_tenure_months", 60),
-                region=session.get("region", "SA")
-            )
-            
-            max_amount = offer.get("max_amount") or eligibility_result.get("estimated_amount", 0)
-            
-            return {
-                "widget": "EligibleOfferWidget",
-                "data": {
-                    "title": "Your Pre-Approved Offer",
-                    "max_amount": max_amount,
-                    "profit_rate": eligibility_result.get("profit_rate", "6.1%"),
-                    "max_tenure": etb_profile.get("preferred_tenure_months", 60),
-                    "is_etb": True,
-                    "is_preapproved_path": True,
-                    "pre_approval_badge": "✓ PRE-APPROVED",
-                    **tracker_data,
-                },
-            }
-        
-        # NTB: Use existing offer from session (already calculated)
+        offer = session.get("offer") or {}
+        if not offer.get("max_amount"):
+            computed_offer = _build_offer_from_eligibility(session)
+            session["offer"] = {**offer, **computed_offer}
+            offer = session["offer"]
+
         return {
             "widget": "EligibleOfferWidget",
             "data": {
@@ -1392,8 +1472,8 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
                 "max_amount": offer.get("max_amount", 350000),
                 "profit_rate": offer.get("profit_rate", "6.1%"),
                 "max_tenure": offer.get("max_tenure", 60),
-                "is_etb": is_preapproved_path,
-                "is_preapproved_path": is_preapproved_path,
+                "is_etb": customer_type == "ETB",
+                "is_preapproved_path": False,
                 **tracker_data,
             },
         }
@@ -1505,7 +1585,7 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
             "widget": "LoadingWidget",
             "data": {
                 "title": "Verifying OTP...",
-                "subtitle": "Checking the 6-digit code you entered in chat.",
+                "subtitle": "Checking the 4-digit code you entered in chat.",
                 "auto_advance_ms": 5000,
                 "next_message": "otp_verification_complete",
                 "silent": True,
@@ -1604,7 +1684,7 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
             "data": {
                 "title": "E-Sign Email Sent",
                 "subtitle": "Please complete the signature from your email. We will continue once it is verified.",
-                "auto_advance_ms": 5000,
+                "auto_advance_ms": 15000,
                 "next_message": "esign_email_complete",
                 "silent": True,
             },
@@ -1847,29 +1927,12 @@ def _build_finance_summary(amount: int, tenure: int, profit_rate_text: Any = Non
 
 
 def _complete_eligibility_check(session: dict) -> None:
-    offer = session.get("offer") or {}
-    if not offer.get("max_amount"):
-        collected = session.get("collected", {})
-        monthly_income = float(collected.get("monthly_income", 35650))
-        monthly_obligations = float(collected.get("monthly_obligations", 8750))
-        credit_card_limit = float(collected.get("credit_card_limit", 20000))
-        eligibility_result = calculate_max_eligible_amount(
-            monthly_income=monthly_income,
-            monthly_obligations=monthly_obligations,
-            credit_card_limit=credit_card_limit,
-            tenure_months=60,
-            region=session.get("region", "SA"),
-        )
-        offer = {
-            "max_amount": eligibility_result.get("max_amount") or eligibility_result.get("estimated_amount", 0),
-            "profit_rate": "6.1%",
-            "max_tenure": 60,
-            "foir_status": eligibility_result.get("foir_status", "ELIGIBLE"),
-        }
-    else:
-        offer.setdefault("profit_rate", "6.1%")
-        offer.setdefault("max_tenure", 60)
-    session["offer"] = offer
+    current_offer = session.get("offer") or {}
+    computed_offer = _build_offer_from_eligibility(session)
+    session["offer"] = {
+        **current_offer,
+        **computed_offer,
+    }
     session["step"] = "offer"
     session["step_number"] = 2
     session["sub_step"] = "eligible"
@@ -2016,11 +2079,11 @@ def _handle_widget_event(session: dict, session_id: str, raw_msg: str, normalize
                 session["step_number"] = 2
                 session["sub_step"] = "pre_approved_offer"
                 session["journeyMode"] = "ETB_CORE"
-                response_text = "Great news! Your pre-approved offer is ready. Please review it below."
+                response_text = "Welcome back **Abdul Rahman!** You're eligible for a **Pre-approved Cash Finance offer.** Please review the details below"
             else:
                 session["sub_step"] = "identify_yourself"
                 session["journeyMode"] = "NTB_ENRICHMENT"
-                response_text = "Your journey overview is ready. Would you like to proceed with the next step?"
+                response_text = "**Welcome aboard!** Here's a quick overview of the journey ahead and the steps you'll complete to secure your finance."
             return done(response_text)
 
         if sub_step == "identify_yourself" and signal == "continue":
@@ -2074,8 +2137,8 @@ def _handle_widget_event(session: dict, session_id: str, raw_msg: str, normalize
                 session["journeyOrigin"] = session.get("customerType", "UNKNOWN")
                 session["transitionReason"] = "Customer requested higher amount than pre-approved ETB offer"
                 session["step"] = "identity"
-                session["sub_step"] = "personal_details"
-                return done("I have retrieved your current profile details. Please review them to make sure everything is correct to proceed.")
+                session["sub_step"] = "identify_yourself"
+                return done("**Welcome aboard!** Here's a quick overview of the journey ahead and the steps you'll complete to secure your finance.")
 
         if sub_step == "eligible" and signal == "continue":
             session["sub_step"] = "wants_more_decision"
@@ -2131,7 +2194,7 @@ def _handle_widget_event(session: dict, session_id: str, raw_msg: str, normalize
 
         if sub_step == "certificate" and signal == "proceed_contract_prompt":
             session["sub_step"] = "contract_prompt"
-            return done("Please review the final requirements before generating the contract.")
+            return done("")
 
         if sub_step == "contract_prompt" and signal == "proceed_esign":
             session["step"] = "esign"
@@ -2190,8 +2253,14 @@ def _handle_widget_event(session: dict, session_id: str, raw_msg: str, normalize
 
         if sub_step == "ivr_consent":
             if signal in {"send me an otp", "otp verification"}:
+                _ensure_disbursement_otp_sent(session, session_id)
+                if not session.get("disbursement_otp_sent"):
+                    session["sub_step"] = "ivr_consent"
+                    send_error = session.get("disbursement_otp_error") or "Unable to send OTP. Please try again."
+                    return done(f"{send_error} Please choose OTP verification again or continue with IVR verification.")
                 session["sub_step"] = "otp_entry"
-                return done("Please enter the 6-digit OTP sent to your registered mobile number.")
+                session.pop("disbursement_otp_error", None)
+                return done(FINAL_DISBURSEMENT_OTP_PROMPT)
             if signal in {"call me for ivr verification", "ivr verification"}:
                 session["sub_step"] = "ivr_requested"
                 return done("IVR request is started. Please verify the details through the call.")
@@ -2310,16 +2379,9 @@ async def chat(request: ChatRequest):
     if active_widget_text_response is not None:
         return active_widget_text_response
 
-    # Quick-path: accept any 6-digit OTP during OTP entry steps.
+    # Compatibility quick-path: keep legacy 6-digit e-sign OTP behavior unchanged.
     if last_user_msg and re.fullmatch(r"\d{6}", last_user_msg):
         sub = current_session.get("sub_step", "")
-        if current_session.get("step") == "disburse" and sub == "otp_entry":
-            current_session["sub_step"] = "otp_verifying"
-            _store_gateway_session(session_id, current_session)
-            widget_spec = resolve_widget(current_session, None)
-            response_text = "We are verifying the OTP now."
-            return _stream_widget_response(response_text, widget_spec)
-
         if current_session.get("step") == "esign" and sub == "otp_ivr":
             # Treat entered 6-digit as successful verification (no real-time backend OTP required)
             current_session["step"] = "disburse"
@@ -2343,14 +2405,29 @@ async def chat(request: ChatRequest):
             return _stream_widget_response(response_text, widget_spec)
 
         current_session["sub_step"] = "bureau_consent"
-        current_session["bureau_otp_error"] = "Invalid or expired OTP. Please try again."
+        current_session["bureau_otp_error"] = OTP_RETRY_PROMPT
         _store_gateway_session(session_id, current_session)
         widget_spec = resolve_widget(current_session, None)
-        response_text = f"The OTP entered is invalid or expired. Please try again. {BUREAU_CONSENT_OTP_PROMPT}"
+        response_text = f"{OTP_RETRY_PROMPT} {BUREAU_CONSENT_OTP_PROMPT}"
         return _stream_widget_response(response_text, widget_spec)
 
     if last_user_msg and re.fullmatch(r"\d{4}", last_user_msg):
         sub = current_session.get("sub_step", "")
+        if current_session.get("step") == "disburse" and sub == "otp_entry":
+            if _verify_disbursement_otp(current_session, session_id, last_user_msg):
+                current_session["sub_step"] = "otp_verifying"
+                current_session.pop("disbursement_otp_error", None)
+                _store_gateway_session(session_id, current_session)
+                widget_spec = resolve_widget(current_session, None)
+                response_text = "We are verifying the OTP now."
+                return _stream_widget_response(response_text, widget_spec)
+
+            current_session["disbursement_otp_error"] = OTP_RETRY_PROMPT
+            _store_gateway_session(session_id, current_session)
+            widget_spec = resolve_widget(current_session, None)
+            response_text = f"{OTP_RETRY_PROMPT} {FINAL_DISBURSEMENT_OTP_PROMPT}"
+            return _stream_widget_response(response_text, widget_spec)
+
         if current_session.get("step") == "identity" and sub == "bureau_consent":
             if _verify_bureau_otp(current_session, session_id, last_user_msg):
                 current_session["sub_step"] = "bureau_otp_verifying"
@@ -2360,10 +2437,10 @@ async def chat(request: ChatRequest):
                 response_text = "We are verifying your Absher OTP now."
                 return _stream_widget_response(response_text, widget_spec)
 
-            current_session["bureau_otp_error"] = "Invalid or expired OTP. Please try again."
+            current_session["bureau_otp_error"] = OTP_RETRY_PROMPT
             _store_gateway_session(session_id, current_session)
             widget_spec = resolve_widget(current_session, None)
-            response_text = f"The OTP entered is invalid or expired. Please try again. {BUREAU_CONSENT_OTP_PROMPT}"
+            response_text = f"{OTP_RETRY_PROMPT} {BUREAU_CONSENT_OTP_PROMPT}"
             return _stream_widget_response(response_text, widget_spec)
 
     # Quick-path: internal widget signals should not fall through to the LLM layer.
@@ -2386,30 +2463,14 @@ async def chat(request: ChatRequest):
             "eligibility_check",
         }:
             offer = current_session.get("offer", {}) or {}
-            customer_id = current_session.get("collected", {}).get("id_number", "")
             customer_type = current_session.get("customerType") or "UNKNOWN"
             journey_mode = current_session.get("journeyMode") or (
                 "ETB_CORE" if customer_type == "ETB" else "NTB_ENRICHMENT"
             )
-            if not offer.get("max_amount"):
-                etb_profile = get_etb_customer_profile(customer_id) if customer_id else {}
-                eligibility_result = calculate_max_eligible_amount(
-                    monthly_income=etb_profile.get("monthly_income", 35650),
-                    monthly_obligations=etb_profile.get("monthly_obligations", 8750),
-                    credit_card_limit=etb_profile.get("credit_card_limit", 20000),
-                    tenure_months=etb_profile.get("preferred_tenure_months", 60),
-                    region=current_session.get("region", "SA"),
-                )
-                offer = {
-                    "max_amount": eligibility_result.get("max_amount") or eligibility_result.get("estimated_amount", 0),
-                    "profit_rate": "6.1%",
-                    "max_tenure": etb_profile.get("preferred_tenure_months", 60),
-                    "foir_status": eligibility_result.get("foir_status", "ELIGIBLE"),
-                }
-            else:
-                offer.setdefault("profit_rate", "6.1%")
-                offer.setdefault("max_tenure", 60)
-            current_session["offer"] = offer
+            current_session["offer"] = {
+                **offer,
+                **_build_offer_from_eligibility(current_session),
+            }
             current_session["step"] = "offer"
             current_session["step_number"] = 2
             current_session["sub_step"] = "eligible"

@@ -415,7 +415,7 @@ def _fast_state_response(session: dict) -> str | None:
         return "Please choose how you would like to complete the final verification: OTP or IVR."
 
     if step == "disburse" and sub_step == "otp_entry":
-        return "Please enter the 6-digit OTP sent to your registered mobile number in the chat."
+        return "Please enter the 4-digit OTP sent to your registered mobile number in the chat."
 
     if step == "disburse" and sub_step == "otp_verifying":
         return "Verifying the OTP now."

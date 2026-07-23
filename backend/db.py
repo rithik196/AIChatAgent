@@ -62,7 +62,7 @@ CUSTOMER_DB = {
     "5114886789": CustomerProfile(
         name="Faisal Rahman",
         phone="5114886789",
-        email="rithik.j@newgensoft.com",
+        email="rishabh-mittal@newgensoft.com",
         personal=PersonalDetails(
             id_number="1046403940",
             id_expiration_date="26/08/2027",
@@ -101,7 +101,7 @@ CUSTOMER_DB = {
         ),
         income=IncomeDetails(
             monthly="SAR 35650",
-            obligations="7560",
+            obligations="8750",
             credit_card_limit="SAR 20000"
         )
     )

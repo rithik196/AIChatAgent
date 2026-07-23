@@ -18,7 +18,7 @@ export interface PreApprovedOfferWidgetProps {
 
 export function PreApprovedOfferWidget({ data }: PreApprovedOfferWidgetProps) {
   const title = data?.title || 'Your Pre-Approved Offer';
-  const maxAmount = data?.max_amount || 350000;
+  const maxAmount = data?.max_amount || 60000;
   const profitRate = data?.profit_rate || '6.1%';
   const maxTenure = data?.max_tenure || 60;
 
@@ -89,7 +89,7 @@ export function PreApprovedOfferWidget({ data }: PreApprovedOfferWidgetProps) {
           
           <button
             onClick={() => {
-              const event = new CustomEvent('mock-send-message', { detail: 'Need higher amount' });
+              const event = new CustomEvent('mock-send-message', { detail: 'I need higher amount' });
               window.dispatchEvent(event);
             }}
             className="w-full py-3 journey-widget-button border-2 border-transparent shadow-sm hover:opacity-90 transition-all"
