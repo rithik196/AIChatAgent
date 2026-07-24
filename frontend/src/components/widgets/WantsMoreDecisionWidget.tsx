@@ -35,7 +35,7 @@ export function WantsMoreDecisionWidget({ data }: WantsMoreDecisionWidgetProps) 
               window.dispatchEvent(
                 new CustomEvent("mock-send-message", {
                   detail: {
-                    visibleText: "Amount is okay",
+                    visibleText: "Proceed with the Amount",
                     systemText: "__SYS__accepted_max_offer",
                   },
                 })

@@ -80,8 +80,8 @@ export default function LoginPage() {
         console.warn('synth.cancel blocked:', err);
       }
 
-    //  const text = "Assalamu Alaikum! I'm Raya. I will help you apply for cash finance and guide you through your eligibility check in just a few simple steps.";
-      const text = "";
+      const text = "assalamu alaikum, I am Raya , Your personal finance assistant.";
+      if (!text.trim()) return;
       const UtteranceConstructor = getSpeechSynthesisUtteranceSafe();
       if (!UtteranceConstructor) return;
 
@@ -133,12 +133,16 @@ export default function LoginPage() {
       
       utterance.rate = 0.94;
       utterance.pitch = 1.0;
+      utterance.volume = 0;
 
       utterance.onstart = () => setIsAvatarSpeaking(true);
       utterance.onend = () => setIsAvatarSpeaking(false);
       utterance.onerror = () => setIsAvatarSpeaking(false);
 
       try {
+        if (typeof synth.resume === 'function') {
+          synth.resume();
+        }
         synth.speak(utterance);
         hasSpokenRef.current = true;
       } catch (err) {

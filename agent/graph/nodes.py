@@ -100,6 +100,51 @@ def _normalize_user_text(text: str) -> str:
     return normalized
 
 
+_OTP_WORD_DIGITS = {
+    "zero": "0",
+    "oh": "0",
+    "o": "0",
+    "one": "1",
+    "won": "1",
+    "two": "2",
+    "to": "2",
+    "too": "2",
+    "three": "3",
+    "four": "4",
+    "for": "4",
+    "five": "5",
+    "six": "6",
+    "seven": "7",
+    "eight": "8",
+    "ate": "8",
+    "nine": "9",
+}
+
+
+def _extract_spoken_otp(text: str, expected_len: int = 4) -> str | None:
+    normalized = _normalize_user_text(text)
+    if not normalized:
+        return None
+
+    digits = re.sub(r"\D", "", normalized)
+    if len(digits) == expected_len:
+        return digits
+
+    tokens = re.findall(r"[a-z0-9]+", normalized)
+    spoken_digits: list[str] = []
+    for token in tokens:
+        if token in _OTP_WORD_DIGITS:
+            spoken_digits.append(_OTP_WORD_DIGITS[token])
+        elif token.isdigit():
+            spoken_digits.extend(list(token))
+
+    if len(spoken_digits) == expected_len:
+        return "".join(spoken_digits)
+    if len(spoken_digits) > expected_len:
+        return "".join(spoken_digits[-expected_len:])
+    return None
+
+
 def _contains_phrase(text: str, phrase: str) -> bool:
     pattern = rf"(?<!\w){re.escape(phrase)}(?!\w)"
     return bool(re.search(pattern, text))
@@ -279,7 +324,7 @@ def _fast_state_response(session: dict) -> str | None:
 
     # After dedupe completion: widget (Journey Overview) carries the content.
     if step == "identity" and sub_step == "identify_yourself":
-        return "Your journey overview is ready. Would you like to proceed with the next step?"
+        return "**Welcome aboard!** Here's a quick overview of the journey ahead and the steps you'll complete to secure your finance."
 
     # After Journey Overview "Yes/proceed": show profile-review text only.
     if step == "identity" and sub_step == "personal_details":
@@ -830,9 +875,9 @@ def _deterministic_classify(msg: str, step: str, sub_step: str, session: dict) -
                 return {"step": "disburse", "intent": "STEP_DATA", "data": {"verification_declined": True}}
 
         elif sub_step == "otp_entry":
-            digits = re.sub(r"\D", "", msg)
-            if len(digits) == 6:
-                return {"step": "disburse", "intent": "STEP_DATA", "data": {"otp_code": digits}}
+            otp = _extract_spoken_otp(msg, expected_len=4)
+            if otp:
+                return {"step": "disburse", "intent": "STEP_DATA", "data": {"otp_code": otp}}
 
         elif sub_step == "otp_verifying":
             signals = ["otp_verification_complete", "loading_complete", "done"]
@@ -970,9 +1015,9 @@ def _deterministic_classify(msg: str, step: str, sub_step: str, session: dict) -
                 return {"step": "disburse", "intent": "STEP_DATA", "data": {"verification_declined": True}}
 
         elif sub_step == "otp_entry":
-            digits = re.sub(r"\D", "", msg)
-            if len(digits) == 6:
-                return {"step": "disburse", "intent": "STEP_DATA", "data": {"otp_code": digits}}
+            otp = _extract_spoken_otp(msg, expected_len=4)
+            if otp:
+                return {"step": "disburse", "intent": "STEP_DATA", "data": {"otp_code": otp}}
 
         elif sub_step == "otp_verifying":
             signals = ["otp_verification_complete", "loading_complete", "done"]
