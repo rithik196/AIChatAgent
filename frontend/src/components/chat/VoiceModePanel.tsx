@@ -9,6 +9,7 @@ import { VoiceWaveform } from "./VoiceWaveform";
 interface VoiceModePanelProps {
   displayText: string;
   mode: "ai" | "user";
+  statusLabel?: string;
   voiceState: VoiceState;
   allowUpload: boolean;
   isLoading: boolean;
@@ -22,6 +23,7 @@ interface VoiceModePanelProps {
 export function VoiceModePanel({
   displayText,
   mode,
+  statusLabel,
   voiceState,
   allowUpload,
   isLoading,
@@ -49,7 +51,7 @@ export function VoiceModePanel({
       <div className="pt-4">
         <VoiceWaveform mode={mode} />
         <div className={cn("mt-1 text-center text-[11px] leading-4", isAi ? "text-[#247EA5]" : "text-[#C65F28]")}>
-          {isAi ? "AI Speaking" : "User Speaking"}
+          {statusLabel || (isAi ? "AI Speaking" : "User Speaking")}
         </div>
       </div>
 

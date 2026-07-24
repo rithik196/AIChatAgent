@@ -21,6 +21,27 @@ function stripRedundantLeadIns(text: string): string {
     .trim();
 }
 
+// Expand uppercase abbreviations into spaced letters so TTS pronounces them
+// correctly (e.g. "OTP" → "O. T. P." instead of reading it as a word).
+const TTS_ABBREVIATIONS: [RegExp, string][] = [
+  [/\bOTP\b/g,  "O. T. P."],
+  [/\bIVR\b/g,  "I. V. R."],
+  [/\bSMS\b/g,  "S. M. S."],
+  [/\bSAMA\b/g, "S. A. M. A."],
+  [/\bIBAN\b/g, "I. B. A. N."],
+  [/\bEMI\b/g,  "E. M. I."],
+  [/\bNTB\b/g,  "N. T. B."],
+  [/\bKYC\b/g,  "K. Y. C."],
+];
+
+function expandAbbreviationsForTTS(text: string): string {
+  let result = text;
+  for (const [pattern, replacement] of TTS_ABBREVIATIONS) {
+    result = result.replace(pattern, replacement);
+  }
+  return result;
+}
+
 export function buildVoicePreviewText(text: string): string {
   const clean = stripRedundantLeadIns(cleanForVoice(text));
   if (!clean) {
@@ -32,7 +53,7 @@ export function buildVoicePreviewText(text: string): string {
     return "Hi, I am Raya, your finance assistant. I will guide you through this application. Please tell me your National ID when you are ready.";
   }
 
-  return clean;
+  return expandAbbreviationsForTTS(clean);
 }
 
 export function buildVoiceSpeechText(text: string): string {
@@ -46,7 +67,7 @@ export function buildVoiceSpeechText(text: string): string {
     return "Hi, I am Raya, your finance assistant. I will guide you through this application. Please tell me your National ID when you are ready.";
   }
 
-  return clean;
+  return expandAbbreviationsForTTS(clean);
 }
 
 export function buildVoicePrompt(text: string): string {

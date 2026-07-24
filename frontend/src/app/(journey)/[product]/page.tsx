@@ -162,6 +162,26 @@ const VOICE_TTS_FAILSAFE_EXTRA_MS = 2500;
 const VOICE_WIDGET_UPDATE_PROMPT =
   "Updated. You can make another change or say save changes.";
 
+const SPOKEN_DIGIT_MAP: Record<string, string> = {
+  zero: "0",
+  oh: "0",
+  o: "0",
+  one: "1",
+  won: "1",
+  two: "2",
+  to: "2",
+  too: "2",
+  three: "3",
+  four: "4",
+  for: "4",
+  five: "5",
+  six: "6",
+  seven: "7",
+  eight: "8",
+  ate: "8",
+  nine: "9",
+};
+
 function estimateVoiceSpeechMs(text: string): number {
   const trimmed = text.trim();
   if (!trimmed) return 0;
@@ -174,6 +194,51 @@ function estimateVoiceSpeechMs(text: string): number {
     VOICE_MAX_SPEECH_MS,
     Math.max(VOICE_MIN_SPEECH_MS, wordEstimateMs, characterEstimateMs)
   );
+}
+
+function extractIbanFromVoiceTranscript(transcript: string): string | null {
+  const explicit = transcript.toUpperCase().match(/SA[\s-]*[A-Z0-9\s-]{12,}/);
+  if (explicit?.[0]) {
+    const cleanedExplicit = explicit[0].replace(/[^A-Z0-9]/g, "");
+    if (cleanedExplicit.startsWith("SA") && cleanedExplicit.length >= 20) {
+      return cleanedExplicit.slice(0, 24);
+    }
+  }
+
+  const tokens = transcript
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+
+  const chunks: string[] = [];
+
+  for (const token of tokens) {
+    if (token === "sa") {
+      chunks.push("S", "A");
+      continue;
+    }
+    if (token === "s" || token === "a") {
+      chunks.push(token.toUpperCase());
+      continue;
+    }
+    if (SPOKEN_DIGIT_MAP[token] !== undefined) {
+      chunks.push(SPOKEN_DIGIT_MAP[token]);
+      continue;
+    }
+    if (/^\d+$/.test(token)) {
+      chunks.push(token);
+    }
+  }
+
+  if (chunks.length === 0) return null;
+  const collapsed = chunks.join("").replace(/[^A-Z0-9]/g, "");
+  const startIndex = collapsed.indexOf("SA");
+  if (startIndex < 0) return null;
+
+  const candidate = collapsed.slice(startIndex);
+  if (candidate.length < 20) return null;
+  return candidate.slice(0, 24);
 }
 
 export default function JourneyPage() {
@@ -298,14 +363,18 @@ function ChatView({ product, sessionId, initialMessages, initialSession }: {
   const voiceModeRef = useRef(false);
   const knownMessageIdsRef = useRef<Set<string>>(new Set(initialMessages.map((message) => message.id)));
   const spokenAssistantIdsRef = useRef<Set<string>>(new Set());
+  const voiceOpenSpokenAssistantIdRef = useRef<string | null>(null);
   const resolvedVoicePromptIdsRef = useRef<Set<string>>(new Set());
   const activeVoicePreviewIdRef = useRef<string | null>(null);
   const voiceCommitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const voiceSpeechMinTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const voiceSpeechFailsafeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const voiceCommitGenerationRef = useRef(0);
-  const speakRef = useRef<((text: string, options?: { onEnd?: () => void; onError?: () => void }) => void) | null>(null);
+  const speakRef = useRef<
+    ((text: string, options?: { onStart?: () => void; onEnd?: () => void; onError?: () => void }) => void) | null
+  >(null);
   const startListeningRef = useRef<(() => void) | null>(null);
+  const resetToIdleRef = useRef<(() => void) | null>(null);
   const pendingVoiceInteractionRef = useRef<{
     text: string;
     messageId: string;
@@ -432,6 +501,64 @@ function ChatView({ product, sessionId, initialMessages, initialSession }: {
     return true;
   }, []);
 
+  const dispatchVoiceFallback = useCallback((visibleText: string, systemText?: string) => {
+    if (typeof window === "undefined") return;
+    window.dispatchEvent(
+      new CustomEvent("mock-send-message", {
+        detail: {
+          visibleText,
+          ...(systemText ? { systemText } : {}),
+        },
+      })
+    );
+  }, []);
+
+  const executeVoiceAction = useCallback(
+    (action: VoiceResolvedAction, transcriptText: string): boolean => {
+      const clicked = clickVoiceAction(action);
+      if (clicked) return true;
+
+      if (action.fallbackSystemText || action.fallbackVisibleText) {
+        dispatchVoiceFallback(action.fallbackVisibleText || transcriptText, action.fallbackSystemText);
+        return true;
+      }
+
+      return false;
+    },
+    [clickVoiceAction, dispatchVoiceFallback]
+  );
+
+  const handleAccountSelectorVoiceIban = useCallback((transcript: string): boolean => {
+    if (typeof document === "undefined") return false;
+
+    const widgets = Array.from(
+      document.querySelectorAll<HTMLElement>('[data-widget-name="AccountSelectorWidget"][data-widget-message-id]')
+    ).filter((element) => element.offsetParent !== null);
+
+    const root = widgets[widgets.length - 1];
+    if (!root) return false;
+
+    const input = root.querySelector<HTMLInputElement>('input[type="text"]');
+    if (!input || input.offsetParent === null) return false;
+
+    const iban = extractIbanFromVoiceTranscript(transcript);
+    if (!iban) return false;
+
+    input.focus();
+    input.value = iban;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+
+    const validateButton = Array.from(root.querySelectorAll<HTMLButtonElement>("button")).find((button) =>
+      /validate iban/i.test((button.textContent || "").trim())
+    );
+
+    if (validateButton && !validateButton.disabled) {
+      window.setTimeout(() => validateButton.click(), 60);
+    }
+
+    return true;
+  }, []);
+
   const flushPendingVoiceInteraction = useCallback(
     (messageId?: string, widgetShown = false) => {
       const pending = pendingVoiceInteractionRef.current;
@@ -440,8 +567,8 @@ function ChatView({ product, sessionId, initialMessages, initialSession }: {
       if (pending.needsWidget && !widgetShown) return false;
 
       if (pending.action) {
-        const clicked = clickVoiceAction(pending.action);
-        if (clicked) {
+        const handled = executeVoiceAction(pending.action, pending.text);
+        if (handled) {
           pendingVoiceInteractionRef.current = null;
           return true;
         }
@@ -452,7 +579,7 @@ function ChatView({ product, sessionId, initialMessages, initialSession }: {
       pendingVoiceInteractionRef.current = null;
       return true;
     },
-    [clickVoiceAction, sendMessage]
+    [executeVoiceAction, sendMessage]
   );
 
   const handleWidgetShown = useCallback(
@@ -527,12 +654,29 @@ function ChatView({ product, sessionId, initialMessages, initialSession }: {
     if (voiceModeRef.current && voiceModeOpen) {
       const widgetUpdate = resolveVisibleVoiceWidgetUpdate(text);
       if (widgetUpdate) {
+        const spokenIncomeValue =
+          widgetUpdate.widget === "ModifyIncomeWidget" && typeof widgetUpdate.updates.monthlyIncome === "string"
+            ? Number(widgetUpdate.updates.monthlyIncome.replace(/\D/g, "") || "0")
+            : null;
+        const incomeUpdateWillAutoSave =
+          widgetUpdate.widget === "ModifyIncomeWidget" &&
+          spokenIncomeValue !== null &&
+          spokenIncomeValue >= 5000 &&
+          spokenIncomeValue <= 200000;
+
         dispatchVoiceWidgetFieldUpdate(widgetUpdate);
         pendingVoiceInteractionRef.current = null;
+        resetToIdleRef.current?.();
         autoListenAfterSpeechRef.current = true;
         activeVoicePreviewIdRef.current = null;
         setActiveVoicePreviewId(null);
         setLastVoiceUserText("");
+        if (incomeUpdateWillAutoSave) {
+          autoListenAfterSpeechRef.current = false;
+          setVoicePanelText("Saving updated income details.");
+          return;
+        }
+
         setVoicePanelText(VOICE_WIDGET_UPDATE_PROMPT);
         speakRef.current?.(VOICE_WIDGET_UPDATE_PROMPT, {
           onEnd: () => {
@@ -548,6 +692,14 @@ function ChatView({ product, sessionId, initialMessages, initialSession }: {
             startListeningRef.current?.();
           },
         });
+        return;
+      }
+
+      const accountSelectorHandled = handleAccountSelectorVoiceIban(text);
+      if (accountSelectorHandled) {
+        pendingVoiceInteractionRef.current = null;
+        resetToIdleRef.current?.();
+        setLastVoiceUserText(text);
         return;
       }
     }
@@ -570,8 +722,9 @@ function ChatView({ product, sessionId, initialMessages, initialSession }: {
     }
 
     if (voiceAction) {
-      const clicked = clickVoiceAction(voiceAction);
-      if (clicked) {
+      const handled = executeVoiceAction(voiceAction, text);
+      if (handled) {
+        resetToIdleRef.current?.();
         resolvedVoicePromptIdsRef.current.add(voiceAction.messageId);
         if (voiceModeRef.current) {
           setLastVoiceUserText(text);
@@ -587,7 +740,8 @@ function ChatView({ product, sessionId, initialMessages, initialSession }: {
   }, [
     activeVoicePreviewIdRef,
     bufferedAssistant,
-    clickVoiceAction,
+    executeVoiceAction,
+    handleAccountSelectorVoiceIban,
     isLoading,
     lastAssistant,
     latestOptionPrompt,
@@ -599,7 +753,7 @@ function ChatView({ product, sessionId, initialMessages, initialSession }: {
     voiceModeOpen,
   ]);
 
-  const { voiceState, interimText, supported, error: voiceError, clearError, toggleVoice, resetToIdle, speak, startListening, stopListening } = useVoice({
+  const { voiceState, interimText, supported, error: voiceError, clearError, toggleVoice, resetToIdle, primeTts, speak, startListening, stopListening } = useVoice({
     language: "en-US",
     ttsEnabled: true,
     onTranscript,
@@ -608,7 +762,8 @@ function ChatView({ product, sessionId, initialMessages, initialSession }: {
   useEffect(() => {
     speakRef.current = speak;
     startListeningRef.current = startListening;
-  }, [speak, startListening]);
+    resetToIdleRef.current = resetToIdle;
+  }, [resetToIdle, speak, startListening]);
 
   const startVoicePreview = useCallback(
     (assistantId: string, previewText: string, speechText: string) => {
@@ -648,25 +803,50 @@ function ChatView({ product, sessionId, initialMessages, initialSession }: {
         commitIfReady();
       };
 
-      const estimatedSpeechMs = estimateVoiceSpeechMs(speechText);
-      voiceSpeechMinTimerRef.current = setTimeout(() => {
-        minimumSpeechTimePassed = true;
-        voiceSpeechMinTimerRef.current = null;
-        commitIfReady();
-      }, estimatedSpeechMs);
+      const beginSpeechTracking = () => {
+        if (voiceCommitGenerationRef.current !== generation) return;
+        spokenAssistantIdsRef.current.add(assistantId);
 
-      voiceSpeechFailsafeTimerRef.current = setTimeout(() => {
-        speechFinished = true;
-        minimumSpeechTimePassed = true;
-        voiceSpeechFailsafeTimerRef.current = null;
-        commitIfReady();
-      }, estimatedSpeechMs + VOICE_TTS_FAILSAFE_EXTRA_MS);
+        const estimatedSpeechMs = estimateVoiceSpeechMs(speechText);
+        voiceSpeechMinTimerRef.current = setTimeout(() => {
+          minimumSpeechTimePassed = true;
+          voiceSpeechMinTimerRef.current = null;
+          commitIfReady();
+        }, estimatedSpeechMs);
+
+        voiceSpeechFailsafeTimerRef.current = setTimeout(() => {
+          speechFinished = true;
+          minimumSpeechTimePassed = true;
+          voiceSpeechFailsafeTimerRef.current = null;
+          commitIfReady();
+        }, estimatedSpeechMs + VOICE_TTS_FAILSAFE_EXTRA_MS);
+      };
+
+      const recoverFromSpeechStartFailure = () => {
+        if (voiceCommitGenerationRef.current !== generation) return;
+        clearVoiceLifecycleTimers();
+        autoListenAfterSpeechRef.current = false;
+        commitVoicePreview(assistantId, true);
+      };
 
       setVoicePanelText(previewText);
       setLastVoiceUserText("");
+      let speechStarted = false;
       speak(speechText, {
-        onEnd: markSpeechFinished,
-        onError: markSpeechFinished,
+        onStart: () => {
+          speechStarted = true;
+          beginSpeechTracking();
+        },
+        onEnd: () => {
+          if (speechStarted) markSpeechFinished();
+        },
+        onError: () => {
+          if (speechStarted) {
+            markSpeechFinished();
+            return;
+          }
+          recoverFromSpeechStartFailure();
+        },
       });
     },
     [clearVoiceLifecycleTimers, commitVoicePreview, flushPendingVoiceInteraction, isLoading, speak, startListening]
@@ -734,7 +914,6 @@ function ChatView({ product, sessionId, initialMessages, initialSession }: {
         });
         activeVoicePreviewIdRef.current = message.id;
         setActiveVoicePreviewId(message.id);
-        spokenAssistantIdsRef.current.add(message.id);
         autoListenAfterSpeechRef.current = true;
         voiceModeRef.current = true;
         startVoicePreview(message.id, previewText, speechText);
@@ -777,9 +956,16 @@ function ChatView({ product, sessionId, initialMessages, initialSession }: {
   }, [dispatchMockMessage]);
 
   const chatWindowIsLoading = isLoading && !voiceModeOpen;
-  const voiceModeSpeaker = voiceState === "speaking" || Boolean(activeVoicePreviewId) ? "ai" : "user";
+  const showAssistantVoicePanel = voiceState === "speaking" || Boolean(activeVoicePreviewId);
+  const voiceModeSpeaker = showAssistantVoicePanel ? "ai" : "user";
+  const voiceStatusLabel = showAssistantVoicePanel
+    ? voiceState === "speaking"
+      ? "AI Speaking"
+     // : "Preparing Audio"
+     :"Agent Thinking"
+    : "User Speaking";
   const voiceModeText =
-    voiceModeSpeaker === "ai"
+    showAssistantVoicePanel
       ? voicePanelText || getMessageText(bufferedAssistant) || lastAssistantText || "I am ready when you are."
       : interimText || lastVoiceUserText || "I am listening.";
 
@@ -794,7 +980,6 @@ function ChatView({ product, sessionId, initialMessages, initialSession }: {
 
     const previewText = buildVoicePreviewText(assistantText);
     const speechText = buildVoiceSpeechText(assistantText);
-    spokenAssistantIdsRef.current.add(assistantToSpeak.id);
     activeVoicePreviewIdRef.current = bufferedAssistant ? assistantToSpeak.id : null;
     setActiveVoicePreviewId(bufferedAssistant ? assistantToSpeak.id : null);
     autoListenAfterSpeechRef.current = true;
@@ -830,28 +1015,58 @@ function ChatView({ product, sessionId, initialMessages, initialSession }: {
       setVoicePanelText(previewText);
       setLastVoiceUserText("");
 
-      const estimatedSpeechMs = estimateVoiceSpeechMs(speechText);
-      voiceSpeechMinTimerRef.current = setTimeout(() => {
-        minimumSpeechTimePassed = true;
-        voiceSpeechMinTimerRef.current = null;
-        startListeningIfReady();
-      }, estimatedSpeechMs);
-
-      voiceSpeechFailsafeTimerRef.current = setTimeout(() => {
-        speechFinished = true;
-        minimumSpeechTimePassed = true;
-        voiceSpeechFailsafeTimerRef.current = null;
-        startListeningIfReady();
-      }, estimatedSpeechMs + VOICE_TTS_FAILSAFE_EXTRA_MS);
-
       const markSpeechFinished = () => {
         speechFinished = true;
         startListeningIfReady();
       };
 
+      const beginSpeechTracking = () => {
+        if (voiceCommitGenerationRef.current !== generation) return;
+        spokenAssistantIdsRef.current.add(assistantToSpeak.id);
+
+        const estimatedSpeechMs = estimateVoiceSpeechMs(speechText);
+        voiceSpeechMinTimerRef.current = setTimeout(() => {
+          minimumSpeechTimePassed = true;
+          voiceSpeechMinTimerRef.current = null;
+          startListeningIfReady();
+        }, estimatedSpeechMs);
+
+        voiceSpeechFailsafeTimerRef.current = setTimeout(() => {
+          speechFinished = true;
+          minimumSpeechTimePassed = true;
+          voiceSpeechFailsafeTimerRef.current = null;
+          startListeningIfReady();
+        }, estimatedSpeechMs + VOICE_TTS_FAILSAFE_EXTRA_MS);
+      };
+
+      const recoverFromSpeechStartFailure = () => {
+        if (voiceCommitGenerationRef.current !== generation) return;
+        clearVoiceLifecycleTimers();
+        autoListenAfterSpeechRef.current = false;
+        activeVoicePreviewIdRef.current = null;
+        setActiveVoicePreviewId(null);
+      };
+
+      let speechStarted = false;
       speak(speechText, {
-        onEnd: markSpeechFinished,
-        onError: markSpeechFinished,
+        onStart: () => {
+          speechStarted = true;
+          beginSpeechTracking();
+        },
+        onEnd: () => {
+          if (speechStarted) {
+            markSpeechFinished();
+            return;
+          }
+          recoverFromSpeechStartFailure();
+        },
+        onError: () => {
+          if (speechStarted) {
+            markSpeechFinished();
+            return;
+          }
+          recoverFromSpeechStartFailure();
+        },
       });
     }, 0);
 
@@ -870,9 +1085,43 @@ function ChatView({ product, sessionId, initialMessages, initialSession }: {
     e.target.value = '';
   };
 
+  const speakLatestAssistantOnVoiceOpen = useCallback(() => {
+    const latestAssistant = [...messages].reverse().find((message) => message.role === "assistant");
+    const assistantText = getMessageText(latestAssistant);
+    if (!latestAssistant || !assistantText.trim()) return;
+    if (activeVoicePreviewIdRef.current === latestAssistant.id) return;
+    if (voiceOpenSpokenAssistantIdRef.current === latestAssistant.id && voiceState === "speaking") return;
+
+    voiceOpenSpokenAssistantIdRef.current = latestAssistant.id;
+    spokenAssistantIdsRef.current.delete(latestAssistant.id);
+    autoListenAfterSpeechRef.current = false;
+    activeVoicePreviewIdRef.current = null;
+    setActiveVoicePreviewId(null);
+    setLastVoiceUserText("");
+    setVoicePanelText(buildVoicePreviewText(assistantText));
+    speak(buildVoiceSpeechText(assistantText), {
+      onStart: () => {
+        spokenAssistantIdsRef.current.add(latestAssistant.id);
+      },
+      onEnd: () => {
+        if (!voiceModeRef.current) return;
+        autoListenAfterSpeechRef.current = false;
+      },
+      onError: () => {
+        if (!voiceModeRef.current) return;
+        autoListenAfterSpeechRef.current = false;
+      },
+    });
+  }, [messages, speak, voiceState]);
+
   const handleOpenVoiceMode = () => {
     voiceModeRef.current = true;
+    autoListenAfterSpeechRef.current = false;
+    clearVoiceLifecycleTimers();
+    clearError();
+    primeTts();
     setVoiceModeOpen(true);
+    speakLatestAssistantOnVoiceOpen();
   };
 
   const handleVoiceModeMicToggle = () => {
@@ -939,13 +1188,19 @@ function ChatView({ product, sessionId, initialMessages, initialSession }: {
       setVoicePanelText(text);
       setLastVoiceUserText("");
       autoListenAfterSpeechRef.current = false;
+      let speechStarted = false;
       speakRef.current?.(text, {
+        onStart: () => {
+          speechStarted = true;
+        },
         onEnd: () => {
+          if (!speechStarted) return;
           if (!voiceModeRef.current || !voiceModeOpen) return;
           if (isLoading) return;
           startListeningRef.current?.();
         },
         onError: () => {
+          if (!speechStarted) return;
           if (!voiceModeRef.current || !voiceModeOpen) return;
           if (isLoading) return;
           startListeningRef.current?.();
@@ -1051,6 +1306,7 @@ function ChatView({ product, sessionId, initialMessages, initialSession }: {
           <VoiceModePanel
             displayText={voiceModeText}
             mode={voiceModeSpeaker}
+            statusLabel={voiceStatusLabel}
             voiceState={voiceState}
             allowUpload={allowUpload}
             isLoading={isLoading}

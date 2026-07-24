@@ -22,33 +22,46 @@ export function ModifyIncomeWidget({ data, messageId }: { data?: ModifyIncomeWid
   const monthlyValue = Number(normalizedMonthly || "0");
   const isWithinRange = monthlyValue >= 5000 && monthlyValue <= 200000;
 
+  const submitIncomeUpdate = React.useCallback(
+    (monthly: string) => {
+      window.dispatchEvent(
+        new CustomEvent("mock-send-message", {
+          detail: {
+            visibleText: "Save updated income details",
+            systemText: `__SYS__UPDATE_INCOME: ${JSON.stringify({
+              monthly,
+              obligations,
+              creditCardLimit,
+            })}`,
+          },
+        })
+      );
+    },
+    [creditCardLimit, obligations]
+  );
+
   React.useEffect(() => {
     const handleVoiceUpdate = (event: Event) => {
       const detail = (event as CustomEvent<VoiceWidgetFieldUpdate>).detail;
       if (!detail || detail.widget !== "ModifyIncomeWidget" || detail.messageId !== messageId) return;
 
       if (typeof detail.updates.monthlyIncome === "string") {
-        setMonthlyIncome(detail.updates.monthlyIncome.replace(/\D/g, ""));
+        const spokenMonthly = detail.updates.monthlyIncome.replace(/\D/g, "");
+        const spokenMonthlyValue = Number(spokenMonthly || "0");
+
+        setMonthlyIncome(spokenMonthly);
+        if (spokenMonthlyValue >= 5000 && spokenMonthlyValue <= 200000) {
+          submitIncomeUpdate(spokenMonthly);
+        }
       }
     };
 
     window.addEventListener(VOICE_WIDGET_FIELD_UPDATE_EVENT, handleVoiceUpdate);
     return () => window.removeEventListener(VOICE_WIDGET_FIELD_UPDATE_EVENT, handleVoiceUpdate);
-  }, [messageId]);
+  }, [messageId, submitIncomeUpdate]);
 
   const handleSubmit = () => {
-    window.dispatchEvent(
-      new CustomEvent("mock-send-message", {
-          detail: {
-            visibleText: "Save updated income details",
-            systemText: `__SYS__UPDATE_INCOME: ${JSON.stringify({
-            monthly: normalizedMonthly,
-            obligations,
-            creditCardLimit,
-          })}`,
-        },
-      })
-    );
+    submitIncomeUpdate(normalizedMonthly);
   };
 
   return (

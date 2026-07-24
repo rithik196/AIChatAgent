@@ -174,6 +174,41 @@ BUREAU_CONSENT_OTP_PROMPT = (
 FINAL_DISBURSEMENT_OTP_PROMPT = "Please enter the 4-digit OTP sent to your registered mobile number."
 OTP_RETRY_PROMPT = "The entered OTP is incorrect. Please re-enter the correct OTP."
 
+OTP_WORD_DIGITS = {
+    "zero": "0",
+    "oh": "0",
+    "o": "0",
+    "one": "1",
+    "won": "1",
+    "two": "2",
+    "to": "2",
+    "too": "2",
+    "three": "3",
+    "four": "4",
+    "for": "4",
+    "five": "5",
+    "six": "6",
+    "seven": "7",
+    "eight": "8",
+    "ate": "8",
+    "nine": "9",
+}
+
+OTP_MULTIPLIERS = {
+    "double": 2,
+    "triple": 3,
+}
+
+OTP_CONTEXT_HINTS = (
+    "otp",
+    "code",
+    "pin",
+    "passcode",
+    "verification",
+    "simah",
+    "absher",
+)
+
 CONTINUATION_PHRASES = (
     "yes",
     "yep",
@@ -216,6 +251,59 @@ DECLINE_PHRASES = (
     "hold on",
     "wait",
 )
+
+
+def _extract_digit_tokens(text: str) -> list[str]:
+    tokens = re.findall(r"[a-z0-9]+", (text or "").lower())
+    digits: list[str] = []
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+        multiplier = OTP_MULTIPLIERS.get(token)
+        if multiplier and i + 1 < len(tokens):
+            next_token = tokens[i + 1]
+            mapped = OTP_WORD_DIGITS.get(next_token)
+            if mapped is not None:
+                digits.extend([mapped] * multiplier)
+                i += 2
+                continue
+
+        if token in OTP_WORD_DIGITS:
+            digits.append(OTP_WORD_DIGITS[token])
+        elif token.isdigit():
+            digits.extend(list(token))
+        i += 1
+    return digits
+
+
+def _looks_like_otp_attempt(text: str) -> bool:
+    normalized = _normalize_chat_text(text)
+    if not normalized:
+        return False
+    if re.search(r"\d", normalized):
+        return True
+    if any(word in normalized for word in OTP_CONTEXT_HINTS):
+        return True
+    return bool(_extract_digit_tokens(normalized))
+
+
+def _extract_otp_from_message(text: str, expected_len: int = 4) -> str | None:
+    normalized = _normalize_chat_text(text)
+    if not normalized:
+        return None
+
+    exact_digits = re.sub(r"\D", "", normalized)
+    if len(exact_digits) == expected_len:
+        return exact_digits
+
+    digit_tokens = _extract_digit_tokens(normalized)
+    if len(digit_tokens) == expected_len:
+        return "".join(digit_tokens)
+
+    if len(digit_tokens) > expected_len and any(hint in normalized for hint in OTP_CONTEXT_HINTS):
+        return "".join(digit_tokens[-expected_len:])
+
+    return None
 
 
 def _gateway_session_path(session_id: str) -> Path:
@@ -357,6 +445,16 @@ def _prefill_open_banking_expenses(session: dict) -> None:
     expenses["total"] = ETB_EXPENSES_TOTAL
 
 
+def _start_expenses_saving(session: dict) -> None:
+    expenses = session.setdefault("expenses", {})
+    if "breakdown" not in expenses and session.get("expenses_breakdown"):
+        expenses["breakdown"] = session.get("expenses_breakdown")
+    if "total" not in expenses and session.get("expenses_total") is not None:
+        expenses["total"] = session.get("expenses_total")
+    session["expenses_editing"] = False
+    session["sub_step"] = "expenses_saving"
+
+
 def _normalize_chat_text(text: str) -> str:
     normalized = (text or "").lower().strip()
     if normalized.startswith("__sys__"):
@@ -391,7 +489,7 @@ def _looks_like_general_question(raw_text: str, session: dict | None = None) -> 
         return False
     if text.lower().startswith("__sys__"):
         return False
-    if re.fullmatch(r"[12]\d{9}", normalized) or re.fullmatch(r"\d{6}", normalized):
+    if re.fullmatch(r"[12]\d{9}", normalized) or re.fullmatch(r"\d{4}", normalized) or re.fullmatch(r"\d{6}", normalized):
         return False
     if looks_like_fallback_interruption and looks_like_fallback_interruption(raw_text, session or {}):
         return True
@@ -663,6 +761,14 @@ def _finalize_pending_profile_update(session: dict, section: str) -> bool:
         }
     _persist_profile_update(session, section, updates)
     return True
+
+
+UPDATE_SECTION_PROFILE_KEYS = {
+    "Personal Details": "personal",
+    "Address Details": "address",
+    "Employment Details": "employment",
+    "Income Details": "income",
+}
 
 
 def _ensure_session_customer_profile(session: dict) -> dict[str, Any]:
@@ -1409,6 +1515,30 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
             },
         }
 
+    if step == "identity" and sub_step == "expenses_saving":
+        return {
+            "widget": "LoadingWidget",
+            "data": {
+                "title": "Saving Monthly Expenses",
+                "subtitle": "Please wait while we save your expense details.",
+                "auto_advance_ms": 2000,
+                "next_message": "expenses_saved",
+                "silent": True,
+            },
+        }
+
+    if step == "identity" and sub_step == "expenses_saved":
+        return {
+            "widget": "VerificationSuccessWidget",
+            "data": {
+                "title": "Expenses Saved Successfully",
+                "subtitle": "Your monthly expenses have been saved successfully.",
+                "auto_advance_ms": 2000,
+                "next_message": "expenses_saved_complete",
+                "silent": True,
+            },
+        }
+
     if step == "identity" and sub_step == "bureau_consent":
         _ensure_bureau_otp_sent(session, session.get("session_id", ""))
         session.pop("bureau_otp_error", None)
@@ -1874,15 +2004,8 @@ def _handle_active_widget_text_action(
 
     if step == "identity" and sub_step == "expenses":
         if _is_expenses_confirmation_message(raw_msg) or normalized_msg == "expenses_confirm":
-            expenses = session.setdefault("expenses", {})
-            if "breakdown" not in expenses and session.get("expenses_breakdown"):
-                expenses["breakdown"] = session.get("expenses_breakdown")
-            if "total" not in expenses and session.get("expenses_total") is not None:
-                expenses["total"] = session.get("expenses_total")
-            session["expenses_editing"] = False
-            session["sub_step"] = "bureau_consent"
-            _ensure_bureau_otp_sent(session, session.get("session_id", ""))
-            return done(BUREAU_CONSENT_OTP_PROMPT)
+            _start_expenses_saving(session)
+            return done("Saving your monthly expenses. Please wait while we save your expense details.")
         if any(_contains_phrase(normalized_msg, phrase) for phrase in ("modify expenses", "edit expenses", "change expenses")):
             session["expenses_editing"] = True
             session.setdefault("expenses", {})
@@ -2194,7 +2317,7 @@ def _handle_widget_event(session: dict, session_id: str, raw_msg: str, normalize
 
         if sub_step == "certificate" and signal == "proceed_contract_prompt":
             session["sub_step"] = "contract_prompt"
-            return done("")
+            return done("To finalise your Cash Finance agreement, you are required to review and  sign the following documents.")
 
         if sub_step == "contract_prompt" and signal == "proceed_esign":
             session["step"] = "esign"
@@ -2379,23 +2502,23 @@ async def chat(request: ChatRequest):
     if active_widget_text_response is not None:
         return active_widget_text_response
 
-    # Compatibility quick-path: keep legacy 6-digit e-sign OTP behavior unchanged.
-    if last_user_msg and re.fullmatch(r"\d{6}", last_user_msg):
+    # Compatibility quick-path for legacy e-sign OTP state.
+    # Unified to a 4-digit code so voice and text behavior stay consistent end-to-end.
+    esign_otp = _extract_otp_from_message(last_user_msg, expected_len=4)
+    if esign_otp:
         sub = current_session.get("sub_step", "")
         if current_session.get("step") == "esign" and sub == "otp_ivr":
-            # Treat entered 6-digit as successful verification (no real-time backend OTP required)
             current_session["step"] = "disburse"
             current_session["sub_step"] = "account"
             _store_gateway_session(session_id, current_session)
 
-            # Return an immediate SSE response with the account selector widget
             widget_spec = resolve_widget(current_session, None)
             response_text = "OTP verification successful. Proceeding to disbursement account selection."
             return _stream_widget_response(response_text, widget_spec)
 
     bureau_otp_payload = _extract_prefixed_json_payload(last_user_msg, "BUREAU_OTP_VERIFY")
     if bureau_otp_payload is not None and current_session.get("step") == "identity":
-        otp = str(bureau_otp_payload.get("otp", "")).strip()
+        otp = _extract_otp_from_message(str(bureau_otp_payload.get("otp", "")).strip(), expected_len=4) or ""
         if current_session.get("sub_step") == "bureau_consent" and _verify_bureau_otp(current_session, session_id, otp):
             current_session["sub_step"] = "bureau_otp_verifying"
             current_session.pop("bureau_otp_error", None)
@@ -2411,10 +2534,12 @@ async def chat(request: ChatRequest):
         response_text = f"{OTP_RETRY_PROMPT} {BUREAU_CONSENT_OTP_PROMPT}"
         return _stream_widget_response(response_text, widget_spec)
 
-    if last_user_msg and re.fullmatch(r"\d{4}", last_user_msg):
-        sub = current_session.get("sub_step", "")
-        if current_session.get("step") == "disburse" and sub == "otp_entry":
-            if _verify_disbursement_otp(current_session, session_id, last_user_msg):
+    extracted_otp = _extract_otp_from_message(last_user_msg, expected_len=4)
+    sub = current_session.get("sub_step", "")
+
+    if current_session.get("step") == "disburse" and sub == "otp_entry":
+        if extracted_otp:
+            if _verify_disbursement_otp(current_session, session_id, extracted_otp):
                 current_session["sub_step"] = "otp_verifying"
                 current_session.pop("disbursement_otp_error", None)
                 _store_gateway_session(session_id, current_session)
@@ -2428,8 +2553,18 @@ async def chat(request: ChatRequest):
             response_text = f"{OTP_RETRY_PROMPT} {FINAL_DISBURSEMENT_OTP_PROMPT}"
             return _stream_widget_response(response_text, widget_spec)
 
-        if current_session.get("step") == "identity" and sub == "bureau_consent":
-            if _verify_bureau_otp(current_session, session_id, last_user_msg):
+        if last_user_msg and not _looks_like_general_question(last_user_msg, current_session):
+            widget_spec = resolve_widget(current_session, None)
+            response_text = (
+                "I could not capture a valid 4-digit OTP. "
+                "Please say or enter only the four digits clearly, for example: one nine nine five. "
+                f"{FINAL_DISBURSEMENT_OTP_PROMPT}"
+            )
+            return _stream_widget_response(response_text, widget_spec)
+
+    if current_session.get("step") == "identity" and sub == "bureau_consent":
+        if extracted_otp:
+            if _verify_bureau_otp(current_session, session_id, extracted_otp):
                 current_session["sub_step"] = "bureau_otp_verifying"
                 current_session.pop("bureau_otp_error", None)
                 _store_gateway_session(session_id, current_session)
@@ -2443,6 +2578,15 @@ async def chat(request: ChatRequest):
             response_text = f"{OTP_RETRY_PROMPT} {BUREAU_CONSENT_OTP_PROMPT}"
             return _stream_widget_response(response_text, widget_spec)
 
+        if _looks_like_otp_attempt(last_user_msg) and not _looks_like_general_question(last_user_msg, current_session):
+            widget_spec = resolve_widget(current_session, None)
+            response_text = (
+                "I could not capture a valid 4-digit Absher OTP. "
+                "Please say or enter only the four digits clearly, for example: one nine nine five. "
+                f"{BUREAU_CONSENT_OTP_PROMPT}"
+            )
+            return _stream_widget_response(response_text, widget_spec)
+
     # Quick-path: internal widget signals should not fall through to the LLM layer.
     # This keeps button clicks deterministic even if the session is momentarily behind
     # the widget that emitted the signal.
@@ -2452,9 +2596,42 @@ async def chat(request: ChatRequest):
         "bureau_consent_denied",
         "bureau_otp_verified",
         "bureau_success_complete",
+        "expenses_saved",
+        "expenses_saved_complete",
         "eligibility_check_complete",
     }:
         current_sub = current_session.get("sub_step", "")
+        if direct_signal == "expenses_saved" and current_sub == "expenses_saving":
+            current_session["sub_step"] = "expenses_saved"
+            _store_gateway_session(session_id, current_session)
+            widget_spec = resolve_widget(current_session, None)
+            response_text = "Your monthly expenses have been saved successfully."
+            return StreamingResponse(
+                _build_sse_stream(response_text, widget_spec),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "x-vercel-ai-ui-message-stream": "v1",
+                },
+            )
+
+        if direct_signal == "expenses_saved_complete" and current_sub == "expenses_saved":
+            current_session["sub_step"] = "bureau_consent"
+            _ensure_bureau_otp_sent(current_session, session_id)
+            _store_gateway_session(session_id, current_session)
+            widget_spec = resolve_widget(current_session, None)
+            response_text = BUREAU_CONSENT_OTP_PROMPT
+            return StreamingResponse(
+                _build_sse_stream(response_text, widget_spec),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "x-vercel-ai-ui-message-stream": "v1",
+                },
+            )
+
         if direct_signal == "eligibility_check_complete" and current_sub in {
             "personal_details",
             "bureau_consent",
@@ -2557,10 +2734,10 @@ async def chat(request: ChatRequest):
     if current_session.get("step") == "identity":
         if current_session.get("sub_step") == "updating_details" and normalized_user_msg == "update_complete":
             updating_section = (current_session.get("updating") or {}).get("section")
-            if updating_section == "Income Details":
-                _finalize_pending_profile_update(current_session, "income")
-            elif updating_section == "Employment Details":
-                _finalize_pending_profile_update(current_session, "employment")
+            profile_section = UPDATE_SECTION_PROFILE_KEYS.get(updating_section)
+            if profile_section:
+                _finalize_pending_profile_update(current_session, profile_section)
+                _ensure_session_customer_profile(current_session)
             current_session["sub_step"] = "personal_details"
             current_session.pop("updating", None)
             current_session.pop("pending_income_verification", None)
@@ -2754,12 +2931,10 @@ async def chat(request: ChatRequest):
             )
 
         if normalized_user_msg == "expenses_confirm":
-            current_session["sub_step"] = "bureau_consent"
-            current_session["expenses_editing"] = False
-            _ensure_bureau_otp_sent(current_session, session_id)
+            _start_expenses_saving(current_session)
             _store_gateway_session(session_id, current_session)
             widget_spec = resolve_widget(current_session, None)
-            response_text = BUREAU_CONSENT_OTP_PROMPT
+            response_text = "Saving your monthly expenses. Please wait while we save your expense details."
             return StreamingResponse(
                 _build_sse_stream(response_text, widget_spec),
                 media_type="text/event-stream",
@@ -2844,12 +3019,10 @@ async def chat(request: ChatRequest):
         expenses_confirm_payload = _extract_prefixed_json_payload(last_user_msg, "UPDATE_EXPENSES_CONFIRM")
         if expenses_confirm_payload is not None:
             _apply_deterministic_profile_update(current_session, "UPDATE_EXPENSES", expenses_confirm_payload)
-            current_session["sub_step"] = "bureau_consent"
-            current_session["expenses_editing"] = False
-            _ensure_bureau_otp_sent(current_session, session_id)
+            _start_expenses_saving(current_session)
             _store_gateway_session(session_id, current_session)
             widget_spec = resolve_widget(current_session, None)
-            response_text = BUREAU_CONSENT_OTP_PROMPT
+            response_text = "Saving your monthly expenses. Please wait while we save your expense details."
             return StreamingResponse(
                 _build_sse_stream(response_text, widget_spec),
                 media_type="text/event-stream",

@@ -7,6 +7,8 @@ export type VoiceResolvedAction = {
   buttonLabels: string[];
   clickFirstButtonIfDisabled?: boolean;
   clickCheckboxFirst?: boolean;
+  fallbackVisibleText?: string;
+  fallbackSystemText?: string;
 };
 
 type WidgetSpec = {
@@ -124,10 +126,16 @@ function widgetAction(message: UIMessage | undefined, transcript: string): Voice
 
     case "PersonalDetailsWidget":
       if (matchesAnyPhrase(normalized, ["modify details", "change details", "edit details", "update details"])) {
-        return action(["Modify Details"]);
+        return action(["Modify Details"], {
+          fallbackVisibleText: "Modify Details",
+          fallbackSystemText: "__SYS__modify_section",
+        });
       }
       if (matchesAnyPhrase(normalized, ["confirm and continue", "confirm continue", "continue", "proceed", "done"])) {
-        return action(["Confirm & Continue", "Confirm and Continue"]);
+        return action(["Confirm & Continue", "Confirm and Continue"], {
+          fallbackVisibleText: "Details confirmed",
+          fallbackSystemText: "__SYS__continue",
+        });
       }
       return null;
 
@@ -202,43 +210,69 @@ function widgetAction(message: UIMessage | undefined, transcript: string): Voice
 
     case "EligibleOfferWidget":
       if (matchesAnyPhrase(normalized, ["review details and proceed", "continue", "proceed", "review details"])) {
-        return action(["Review Details & Proceed"]);
+        return action(["Review Details & Proceed"], {
+          fallbackVisibleText: "Continue",
+          fallbackSystemText: "__SYS__continue",
+        });
       }
       return null;
 
     case "PreApprovedOfferWidget":
       if (matchesAnyPhrase(normalized, ["go with offer", "accept offer", "take offer"])) {
-        return action(["Go with offer"]);
+        return action(["Go with offer"], {
+          fallbackVisibleText: "Go with offer",
+          fallbackSystemText: "__SYS__accepted_pre_approved_offer",
+        });
       }
       if (matchesAnyPhrase(normalized, ["need higher amount", "higher amount", "more amount"])) {
-        return action(["Need higher amount"]);
+        return action(["Need higher amount"], {
+          fallbackVisibleText: "I need higher amount",
+          fallbackSystemText: "__SYS__higher_amount_requested",
+        });
       }
       return null;
 
     case "WantsMoreDecisionWidget":
-      if (matchesAnyPhrase(normalized, ["amount is okay", "okay", "accept", "eligible finance offer"])) {
-        return action(["Accept eligible finance offer"]);
+      if (matchesAnyPhrase(normalized, ["amount is okay", "okay", "accept", "eligible finance offer", "proceed", "yes"])) {
+        return action(["Proceed", "Amount is okay", "Accept eligible finance offer"], {
+          fallbackVisibleText: "Amount is okay",
+          fallbackSystemText: "__SYS__accepted_max_offer",
+        });
       }
-      if (matchesAnyPhrase(normalized, ["request for a higher amount", "higher amount", "want more"])) {
-        return action(["Request for Higher Amount"]);
+      if (matchesAnyPhrase(normalized, ["request for a higher amount", "higher amount", "want more", "need higher amount"])) {
+        return action(["Need Higher Amount", "Request for Higher Amount"], {
+          fallbackVisibleText: "I need a higher amount",
+          fallbackSystemText: "__SYS__higher_amount_requested",
+        });
       }
       return null;
 
     case "HigherAmountReviewWidget":
       if (matchesAnyPhrase(normalized, ["submit for review", "submit review", "review now"])) {
-        return action(["Submit for review"]);
+        return action(["Submit for review"], {
+          fallbackVisibleText: "Submit for review",
+          fallbackSystemText: "__SYS__submit_higher_amount_review",
+        });
       }
       if (matchesAnyPhrase(normalized, ["go back", "back"])) {
-        return action(["Go back"]);
+        return action(["Go back"], {
+          fallbackVisibleText: "Go back",
+          fallbackSystemText: "__SYS__higher_amount_review_go_back",
+        });
       }
       return null;
 
     case "FinanceSummaryWidget":
-      if (matchesAnyPhrase(normalized, ["confirm finance plan", "confirm plan", "proceed"])) {
-        return action(["Confirm Finance Plan"]);
+      if (matchesAnyPhrase(normalized, ["confirm finance plan", "confirm plan", "proceed", "commodity trade", "next step"])) {
+        return action(["Proceed to commodity trade", "Confirm Finance Plan"], {
+          fallbackVisibleText: "Proceed to commodity trade",
+          fallbackSystemText: "__SYS__continue",
+        });
       }
       if (matchesAnyPhrase(normalized, ["request higher amount", "higher amount", "modify amount", "modify tenure"])) {
-        return action(["Request higher amount", "Modify Amount or Tenure"]);
+        return action(["Modify Amount or Tenure", "Request higher amount"], {
+          fallbackVisibleText: "I wish to modify the amount/tenure",
+        });
       }
       return null;
 
@@ -255,29 +289,53 @@ function widgetAction(message: UIMessage | undefined, transcript: string): Voice
       return null;
 
     case "DocumentPreviewWidget":
-      if (matchesAnyPhrase(normalized, ["generate contract", "promissory note", "e sign", "esign", "proceed to e sign"])) {
-        return action(["Generate Contract & Promissory Note", "Proceed to e-sign"]);
+      if (matchesAnyPhrase(normalized, ["generate contract", "promissory note", "e sign", "esign", "proceed to e sign", "proceed to next step", "next step", "nafath"])) {
+        if (matchesAnyPhrase(normalized, ["next step", "proceed to next step"])) {
+          return action(["Proceed to next step"], {
+            fallbackVisibleText: "Proceed to next step",
+            fallbackSystemText: "__SYS__proceed_contract_prompt",
+          });
+        }
+        return action(["E-Sign via Nafath", "Generate Contract & Promissory Note", "Proceed to e-sign"], {
+          fallbackVisibleText: "E-Sign via Nafath",
+          fallbackSystemText: "__SYS__proceed_esign",
+        });
       }
       return null;
 
     case "CommodityTradeAuthorizationWidget":
       if (matchesAnyPhrase(normalized, ["authorize trade", "commodity trade", "authorize"])) {
-        return action(["Authorize Trade"]);
+        return action(["Authorize Trade"], {
+          clickCheckboxFirst: true,
+          clickFirstButtonIfDisabled: true,
+          fallbackVisibleText: "I authorize the commodity trade.",
+          fallbackSystemText: "__SYS__continue",
+        });
       }
       return null;
 
     case "ApplicationSummaryWidget":
       if (matchesAnyPhrase(normalized, ["confirm and proceed", "final verification", "proceed"])) {
-        return action(["Confirm & Proceed"], { clickCheckboxFirst: true });
+        return action(["Confirm & Proceed"], {
+          clickCheckboxFirst: true,
+          fallbackVisibleText: "I confirm all details. Proceed for final verification.",
+          fallbackSystemText: "__SYS__continue",
+        });
       }
       return null;
 
     case "IBANValidationWidget":
       if (matchesAnyPhrase(normalized, ["proceed to summary", "confirm iban", "proceed", "confirm"])) {
-        return action(["Proceed to Summary", "Confirm IBAN"], { clickCheckboxFirst: true, clickFirstButtonIfDisabled: true });
+        return action(["Proceed to Summary", "Confirm IBAN"], {
+          clickCheckboxFirst: true,
+          clickFirstButtonIfDisabled: true,
+          fallbackVisibleText: "Confirm and proceed",
+        });
       }
       if (matchesAnyPhrase(normalized, ["try different iban", "different iban", "enter another iban"])) {
-        return action(["Try Different IBAN", "Let me enter a different IBAN"]);
+        return action(["Try Different IBAN", "Let me enter a different IBAN"], {
+          fallbackVisibleText: "Let me enter a different IBAN",
+        });
       }
       return null;
 
@@ -285,8 +343,14 @@ function widgetAction(message: UIMessage | undefined, transcript: string): Voice
       if (matchesAnyPhrase(normalized, ["use selected account", "selected account", "use this account", "proceed with this account"])) {
         return action(["Use Selected Account"], { clickFirstButtonIfDisabled: true });
       }
+      if (matchesAnyPhrase(normalized, ["validate iban", "verify iban"])) {
+        return action(["Validate IBAN"]);
+      }
       if (matchesAnyPhrase(normalized, ["enter iban manually", "manual iban", "or enter iban manually"])) {
         return action(["Or enter IBAN manually"]);
+      }
+      if (matchesAnyPhrase(normalized, ["back to existing account", "back to existing accounts", "go back to accounts"])) {
+        return action(["Back to Existing Accounts"]);
       }
       return null;
 

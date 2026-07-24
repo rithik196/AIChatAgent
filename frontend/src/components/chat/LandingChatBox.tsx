@@ -13,14 +13,14 @@ interface LandingChatBoxProps {
 export function LandingChatBox({ onSelectProduct }: LandingChatBoxProps) {
   const [input, setInput] = useState("");
   const [voiceModeOpen, setVoiceModeOpen] = useState(false);
+  const [pendingAiSpeech, setPendingAiSpeech] = useState(false);
+  const [speechFailureHint, setSpeechFailureHint] = useState<string | null>(null);
   const [voicePanelText, setVoicePanelText] = useState(
     "Hi, I am Raya. You can ask me about the finance options, or tell me which journey you want to start."
   );
   const [lastVoiceUserText, setLastVoiceUserText] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const routeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const autoListenAfterSpeechRef = useRef(false);
-  const previousVoiceStateRef = useRef<"idle" | "listening" | "processing" | "speaking">("idle");
   const handleMessageRef = useRef<(text: string) => void>(() => {});
 
   const clearRouteTimer = useCallback(() => {
@@ -30,7 +30,7 @@ export function LandingChatBox({ onSelectProduct }: LandingChatBoxProps) {
     }
   }, []);
 
-  const { voiceState, interimText, supported, toggleVoice, speak, startListening, stopListening } = useVoice({
+  const { voiceState, interimText, supported, toggleVoice, primeTts, speak, startListening, stopListening } = useVoice({
     language: "en-US",
     ttsEnabled: true,
     onTranscript: (text) => handleMessageRef.current(text),
@@ -46,22 +46,54 @@ export function LandingChatBox({ onSelectProduct }: LandingChatBoxProps) {
 
         setLastVoiceUserText(trimmed);
         setVoicePanelText(result.answer);
+        setSpeechFailureHint(null);
 
         clearRouteTimer();
 
         if (result.shouldRoute && result.product) {
-          autoListenAfterSpeechRef.current = false;
+          let speechStarted = false;
+          setPendingAiSpeech(true);
           speak(result.answer, {
+            onStart: () => {
+              speechStarted = true;
+              setPendingAiSpeech(false);
+              setSpeechFailureHint(null);
+            },
             onEnd: () => {
+              setPendingAiSpeech(false);
+              if (!speechStarted) return;
               clearRouteTimer();
               routeTimerRef.current = setTimeout(() => onSelectProduct(result.product!), 500);
+            },
+            onError: () => {
+              setPendingAiSpeech(false);
+              clearRouteTimer();
+              routeTimerRef.current = setTimeout(() => onSelectProduct(result.product!), 250);
             },
           });
           return;
         }
 
-        autoListenAfterSpeechRef.current = true;
-        speak(result.answer);
+        let speechStarted = false;
+        setPendingAiSpeech(true);
+        speak(result.answer, {
+          onStart: () => {
+            speechStarted = true;
+            setPendingAiSpeech(false);
+            setSpeechFailureHint(null);
+          },
+          onEnd: () => {
+            setPendingAiSpeech(false);
+            if (!speechStarted) return;
+            if (!voiceModeOpen) return;
+            startListening();
+          },
+          onError: () => {
+            setPendingAiSpeech(false);
+            if (!voiceModeOpen) return;
+            startListening();
+          },
+        });
         return;
       }
 
@@ -73,7 +105,7 @@ export function LandingChatBox({ onSelectProduct }: LandingChatBoxProps) {
         routeTimerRef.current = setTimeout(() => onSelectProduct(result.product!), 450);
       }
     },
-    [clearRouteTimer, onSelectProduct, speak, voiceModeOpen]
+    [clearRouteTimer, onSelectProduct, speak, startListening, voiceModeOpen]
   );
 
   useEffect(() => {
@@ -86,20 +118,6 @@ export function LandingChatBox({ onSelectProduct }: LandingChatBoxProps) {
     };
   }, [clearRouteTimer]);
 
-  useEffect(() => {
-    const previous = previousVoiceStateRef.current;
-    if (
-      voiceModeOpen &&
-      previous === "speaking" &&
-      voiceState === "idle" &&
-      autoListenAfterSpeechRef.current
-    ) {
-      autoListenAfterSpeechRef.current = false;
-      startListening();
-    }
-    previousVoiceStateRef.current = voiceState;
-  }, [voiceModeOpen, voiceState, startListening]);
-
   const handleSubmit = (event: React.FormEvent) => {
     event.preventDefault();
     if (!input.trim()) return;
@@ -110,24 +128,53 @@ export function LandingChatBox({ onSelectProduct }: LandingChatBoxProps) {
   const handleOpenVoiceMode = () => {
     const intro = "Hi, I am Raya. I am your personal finance assistant. Let's start your digital finance application. You can ask me about the finance options, or tell me which journey you want to start.";
     setVoiceModeOpen(true);
+    primeTts();
+    setSpeechFailureHint(null);
     setVoicePanelText(intro);
     setLastVoiceUserText("");
-    autoListenAfterSpeechRef.current = true;
-    speak(intro);
+    let speechStarted = false;
+    setPendingAiSpeech(true);
+    speak(intro, {
+      onStart: () => {
+        speechStarted = true;
+        setPendingAiSpeech(false);
+        setSpeechFailureHint(null);
+      },
+      onEnd: () => {
+        setPendingAiSpeech(false);
+        if (!speechStarted) return;
+        startListening();
+      },
+      onError: () => {
+        setPendingAiSpeech(false);
+        setSpeechFailureHint(null);
+        startListening();
+      },
+    });
   };
 
   const handleCloseVoiceMode = () => {
-    autoListenAfterSpeechRef.current = false;
     clearRouteTimer();
+    setPendingAiSpeech(false);
+    setSpeechFailureHint(null);
     window.speechSynthesis?.cancel();
     stopListening();
     setVoiceModeOpen(false);
   };
 
-  const voiceModeSpeaker = voiceState === "listening" || voiceState === "processing" ? "user" : "ai";
+  const showUserAudioState = voiceState === "listening" || voiceState === "processing";
+  const showPreparingState = !showUserAudioState && pendingAiSpeech;
+  const voiceModeSpeaker = showUserAudioState ? "user" : "ai";
+  const voiceStatusLabel = showUserAudioState
+    ? "User Speaking"
+    : showPreparingState
+    ? "Preparing Audio"
+    : voiceState === "speaking"
+    ? "AI Speaking"
+    : "AI Ready";
   const voiceModeText =
-    voiceModeSpeaker === "ai"
-      ? voicePanelText || "I am ready when you are."
+    !showUserAudioState
+      ? speechFailureHint || voicePanelText || "I am ready when you are."
       : interimText || lastVoiceUserText || "I am listening.";
 
   return (
@@ -137,6 +184,7 @@ export function LandingChatBox({ onSelectProduct }: LandingChatBoxProps) {
           <VoiceModePanel
             displayText={voiceModeText}
             mode={voiceModeSpeaker}
+            statusLabel={voiceStatusLabel}
             voiceState={voiceState}
             allowUpload={false}
             isLoading={false}
