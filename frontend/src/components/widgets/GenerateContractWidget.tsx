@@ -9,7 +9,7 @@ export function GenerateContractWidget() {
     window.dispatchEvent(
       new CustomEvent("mock-send-message", {
         detail: {
-          visibleText: "Generate Contract & Promissory Note",
+          visibleText: "Generate the Contract & Promissory Note",
           systemText: "__SYS__proceed_esign",
         },
       })

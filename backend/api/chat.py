@@ -482,6 +482,23 @@ def _is_continuation_message(text: str) -> bool:
     return any(_contains_phrase(normalized, phrase) for phrase in CONTINUATION_PHRASES)
 
 
+def _looks_like_offer_continue_message(text: str) -> bool:
+    normalized = _normalize_chat_text(text)
+    if not normalized or _is_decline_message(normalized):
+        return False
+    if _is_continuation_message(normalized):
+        return True
+    if re.search(r"(?<!\w)continu\w*(?!\w)", normalized):
+        return True
+    if re.search(r"(?<!\w)proce\w*(?!\w)", normalized):
+        return True
+    if _contains_phrase(normalized, "review details"):
+        return True
+    if _contains_phrase(normalized, "review") and _contains_phrase(normalized, "detail"):
+        return True
+    return False
+
+
 def _looks_like_general_question(raw_text: str, session: dict | None = None) -> bool:
     text = (raw_text or "").strip()
     normalized = _normalize_chat_text(text)
@@ -2011,6 +2028,11 @@ def _handle_active_widget_text_action(
             session.setdefault("expenses", {})
             return done("Edit the category amounts below, then save your changes.")
 
+    if step == "offer" and sub_step == "eligible":
+        if _looks_like_offer_continue_message(raw_msg):
+            session["sub_step"] = "wants_more_decision"
+            return done("Please confirm whether the maximum eligible amount is okay for you.")
+
     if step == "offer" and sub_step in {"wants_more_review", "wants_more_open_banking"}:
         if any(_contains_phrase(normalized_msg, phrase) for phrase in ("go back", "back", "cancel review")):
             session["sub_step"] = "wants_more_decision"
@@ -2133,7 +2155,11 @@ def _is_widget_event(raw_msg: str, normalized_msg: str) -> bool:
         "i do not consent",
         "otp verification",
         "ivr verification",
+        "go with offer",
+        "accepted_pre_approved_offer",
+        "i need higher amount",
         "need higher amount",
+        "higher_amount_requested",
         "request for a higher amount",
         "continue with current eligible amount",
     }
@@ -2249,12 +2275,12 @@ def _handle_widget_event(session: dict, session_id: str, raw_msg: str, normalize
 
     if step == "offer":
         if sub_step == "pre_approved_offer":
-            if signal == "accepted_pre_approved_offer":
+            if signal in {"accepted_pre_approved_offer", "go with offer"}:
                 session["step"] = "identity"
                 session["sub_step"] = "bureau_consent"
                 _ensure_bureau_otp_sent(session, session.get("session_id", ""))
                 return done(BUREAU_CONSENT_OTP_PROMPT)
-            if signal in {"higher_amount_requested", "need higher amount", "request for a higher amount"}:
+            if signal in {"higher_amount_requested", "need higher amount", "i need higher amount", "request for a higher amount"}:
                 session["wants_more"] = True
                 session["journeyMode"] = "NTB_ENRICHMENT"
                 session["journeyOrigin"] = session.get("customerType", "UNKNOWN")
@@ -2340,7 +2366,7 @@ def _handle_widget_event(session: dict, session_id: str, raw_msg: str, normalize
             session["step"] = "disburse"
             session["step_number"] = 5
             session["sub_step"] = "account"
-            return done("**Congratulations!** \n\n Your documents have been successfully signed and verified.\n\n Next, please select the account that should be created with the approved funds.")
+            return done("**Congratulations!** \n\n Your documents have been successfully signed and verified.\n\n Next, please select the account that should be credited with the approved funds.")
 
     if step == "disburse":
         if sub_step == "account":

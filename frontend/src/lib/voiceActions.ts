@@ -197,7 +197,7 @@ function widgetAction(message: UIMessage | undefined, transcript: string): Voice
       return null;
 
     case "FinalIVRConsentWidget":
-      if (matchesAnyPhrase(normalized, ["send me an otp", "otp verification", "sms otp", "otp"])) {
+      if (matchesAnyPhrase(normalized, ["send me an otp", "send otp", "otp verification", "sms otp", "verify with otp", "otp"])) {
         return action(["OTP Verification", "SMS OTP"]);
       }
       if (matchesAnyPhrase(normalized, ["call me for ivr verification", "ivr call", "ivr"])) {
@@ -211,7 +211,7 @@ function widgetAction(message: UIMessage | undefined, transcript: string): Voice
     case "EligibleOfferWidget":
       if (matchesAnyPhrase(normalized, ["review details and proceed", "continue", "proceed", "review details"])) {
         return action(["Review Details & Proceed"], {
-          fallbackVisibleText: "Continue",
+          fallbackVisibleText: "I had reviewed the offer details and wish to proceed",
           fallbackSystemText: "__SYS__continue",
         });
       }
@@ -262,6 +262,12 @@ function widgetAction(message: UIMessage | undefined, transcript: string): Voice
       }
       return null;
 
+    case "OfferSliderWidget":
+      if (matchesAnyPhrase(normalized, ["confirm finance plan", "confirm plan", "confirm", "done", "proceed"])) {
+        return action(["Confirm Finance Plan"]);
+      }
+      return null;
+
     case "FinanceSummaryWidget":
       if (matchesAnyPhrase(normalized, ["confirm finance plan", "confirm plan", "proceed", "commodity trade", "next step"])) {
         return action(["Proceed to commodity trade", "Confirm Finance Plan"], {
@@ -288,14 +294,38 @@ function widgetAction(message: UIMessage | undefined, transcript: string): Voice
       }
       return null;
 
+    case "GenerateContractWidget":
+      if (matchesAnyPhrase(normalized, [
+        "continue",
+        "proceed",
+        "go ahead",
+        "next",
+        "generate contract",
+        "generate documents",
+        "show documents",
+        "promissory note",
+      ])) {
+        return action(["Generate Contract & Promissory Note"], {
+          fallbackVisibleText: "Generate the Contract & Promissory Note",
+          fallbackSystemText: "__SYS__proceed_esign",
+        });
+      }
+      return null;
+
     case "DocumentPreviewWidget":
-      if (matchesAnyPhrase(normalized, ["generate contract", "promissory note", "e sign", "esign", "proceed to e sign", "proceed to next step", "next step", "nafath"])) {
-        if (matchesAnyPhrase(normalized, ["next step", "proceed to next step"])) {
-          return action(["Proceed to next step"], {
-            fallbackVisibleText: "Proceed to next step",
-            fallbackSystemText: "__SYS__proceed_contract_prompt",
-          });
-        }
+      if (matchesAnyPhrase(normalized, ["next step", "proceed to next step"])) {
+        return action(["Proceed to next step"], {
+          fallbackVisibleText: "Proceed to next step",
+          fallbackSystemText: "__SYS__proceed_contract_prompt",
+        });
+      }
+      if (matchesAnyPhrase(normalized, ["continue", "proceed"])) {
+        return action(["Proceed to next step", "E-Sign via Nafath", "Proceed to e-sign"], {
+          fallbackVisibleText: "E-Sign via Nafath",
+          fallbackSystemText: "__SYS__proceed_esign",
+        });
+      }
+      if (matchesAnyPhrase(normalized, ["e sign", "esign", "proceed to e sign", "proceed to e-sign", "nafath", "sign documents"])) {
         return action(["E-Sign via Nafath", "Generate Contract & Promissory Note", "Proceed to e-sign"], {
           fallbackVisibleText: "E-Sign via Nafath",
           fallbackSystemText: "__SYS__proceed_esign",
@@ -304,7 +334,7 @@ function widgetAction(message: UIMessage | undefined, transcript: string): Voice
       return null;
 
     case "CommodityTradeAuthorizationWidget":
-      if (matchesAnyPhrase(normalized, ["authorize trade", "commodity trade", "authorize"])) {
+      if (matchesAnyPhrase(normalized, ["i authorize the trade", "authorize the trade", "authorize trade", "commodity trade", "yes authorize", "authorize"])) {
         return action(["Authorize Trade"], {
           clickCheckboxFirst: true,
           clickFirstButtonIfDisabled: true,
@@ -315,7 +345,7 @@ function widgetAction(message: UIMessage | undefined, transcript: string): Voice
       return null;
 
     case "ApplicationSummaryWidget":
-      if (matchesAnyPhrase(normalized, ["confirm and proceed", "final verification", "proceed"])) {
+      if (matchesAnyPhrase(normalized, ["confirm", "i confirm", "confirm details", "yes confirm", "confirm and proceed", "final verification", "proceed"])) {
         return action(["Confirm & Proceed"], {
           clickCheckboxFirst: true,
           fallbackVisibleText: "I confirm all details. Proceed for final verification.",

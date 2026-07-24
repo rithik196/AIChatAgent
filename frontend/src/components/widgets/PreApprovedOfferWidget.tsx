@@ -89,7 +89,12 @@ export function PreApprovedOfferWidget({ data }: PreApprovedOfferWidgetProps) {
           
           <button
             onClick={() => {
-              const event = new CustomEvent('mock-send-message', { detail: 'I need higher amount' });
+              const event = new CustomEvent('mock-send-message', {
+                detail: {
+                  visibleText: 'I need higher amount',
+                  systemText: '__SYS__higher_amount_requested',
+                },
+              });
               window.dispatchEvent(event);
             }}
             className="w-full py-3 journey-widget-button border-2 border-transparent shadow-sm hover:opacity-90 transition-all"

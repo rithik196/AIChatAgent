@@ -44,44 +44,9 @@ function getSpeechRecognition(): (new () => SpeechRecognitionInstance) | null {
 export type VoiceState = "idle" | "listening" | "processing" | "speaking";
 
 type SpeakOptions = {
-  onStart?: () => void;
   onEnd?: () => void;
   onError?: () => void;
 };
-
-const TTS_START_TIMEOUT_MS = 1600;
-const TTS_START_MAX_ATTEMPTS = 4;
-
-function getTtsRetryDelayMs(attempt: number): number {
-  if (attempt <= 2) return 0;
-  if (attempt === 3) return 120;
-  return 260;
-}
-
-function waitForSpeechVoices(synth: SpeechSynthesis, timeoutMs = 700): Promise<void> {
-  if (synth.getVoices().length > 0) return Promise.resolve();
-
-  return new Promise((resolve) => {
-    let settled = false;
-    const previousHandler = synth.onvoiceschanged;
-    const timer = window.setTimeout(() => finish(), timeoutMs);
-
-    const finish = () => {
-      if (settled) return;
-      settled = true;
-      window.clearTimeout(timer);
-      synth.onvoiceschanged = previousHandler;
-      resolve();
-    };
-
-    synth.onvoiceschanged = (event) => {
-      if (typeof previousHandler === "function") {
-        previousHandler.call(synth, event);
-      }
-      finish();
-    };
-  });
-}
 
 interface UseVoiceOptions {
   language?: string;
@@ -99,7 +64,7 @@ export function useVoice({
   const [error, setError] = useState<string | null>(null);
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
   const micStreamRef = useRef<MediaStream | null>(null);
-  const speechRequestIdRef = useRef(0);
+  const listenRequestIdRef = useRef(0);
 
   // Hydration-safe: returns false on server, true on client (no mismatch)
   const supported = useSyncExternalStore(
@@ -121,7 +86,17 @@ export function useVoice({
     const SpeechRec = getSpeechRecognition();
     if (!SpeechRec) return;
 
+    const listenRequestId = listenRequestIdRef.current + 1;
+    listenRequestIdRef.current = listenRequestId;
     setError(null);
+
+    const synth = typeof window !== "undefined" ? window.speechSynthesis : null;
+    for (let attempt = 0; attempt < 80 && (synth?.speaking || synth?.pending); attempt += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, 250));
+      if (listenRequestIdRef.current !== listenRequestId) {
+        return;
+      }
+    }
 
     // Acquire mic permission first
     try {
@@ -141,7 +116,6 @@ export function useVoice({
     }
 
     // Cancel any ongoing TTS
-    speechRequestIdRef.current += 1;
     window.speechSynthesis?.cancel();
 
     const recognition = new SpeechRec();
@@ -193,6 +167,7 @@ export function useVoice({
 
   // ── Stop listening ────────────────────────────────────────────────
   const stopListening = useCallback(() => {
+    listenRequestIdRef.current += 1;
     recognitionRef.current?.stop();
     releaseMic();
     setVoiceState("idle");
@@ -207,7 +182,6 @@ export function useVoice({
       if (voiceState === "processing") setVoiceState("idle");
       else startListening();
     } else if (voiceState === "speaking") {
-      speechRequestIdRef.current += 1;
       window.speechSynthesis?.cancel();
       setVoiceState("idle");
     }
@@ -218,25 +192,6 @@ export function useVoice({
     setVoiceState((prev) => (prev === "processing" ? "idle" : prev));
   }, []);
 
-  const primeTts = useCallback(() => {
-    const synth = typeof window !== "undefined" ? window.speechSynthesis : null;
-    const UtteranceCtor =
-      typeof window !== "undefined" ? window.SpeechSynthesisUtterance : undefined;
-
-    if (!ttsEnabled || !synth || !UtteranceCtor) return;
-
-    const warmUp = async () => {
-      await waitForSpeechVoices(synth, 1200);
-      if (typeof synth.resume === "function") {
-        synth.resume();
-      }
-    };
-
-    void warmUp().catch(() => {
-      // Ignore warm-up failures and allow regular speak path to proceed.
-    });
-  }, [ttsEnabled]);
-
   // ── Speak (TTS) ──────────────────────────────────────────────────
   const speak = useCallback(
     (text: string, options?: SpeakOptions) => {
@@ -244,129 +199,34 @@ export function useVoice({
         window.setTimeout(() => options?.onEnd?.(), 0);
       };
 
-      const synth = typeof window !== "undefined" ? window.speechSynthesis : null;
-      const UtteranceCtor =
-        typeof window !== "undefined" ? window.SpeechSynthesisUtterance : undefined;
-
-      if (!ttsEnabled || !synth || !UtteranceCtor) {
+      if (!ttsEnabled || !window.speechSynthesis) {
         finishWithoutSpeech();
         return;
       }
-
       const clean = text.replace(/\*\*/g, "").replace(/[#_~`>]/g, "");
       if (!clean.trim()) {
         finishWithoutSpeech();
         return;
       }
 
-      const requestId = speechRequestIdRef.current + 1;
-      speechRequestIdRef.current = requestId;
-
-      const beginSpeech = () => {
-        let settled = false;
-
-        function settle(asError: boolean) {
-          if (settled) return;
-          settled = true;
-          if (speechRequestIdRef.current !== requestId) return;
-          setVoiceState("idle");
-          if (asError) options?.onError?.();
-          options?.onEnd?.();
-        }
-
-        const startAttempt = (attempt: number) => {
-          if (settled || speechRequestIdRef.current !== requestId) return;
-
-          let started = false;
-          let utterance: SpeechSynthesisUtterance;
-          try {
-            utterance = new UtteranceCtor(clean);
-          } catch {
-            settle(true);
-            return;
-          }
-
-          utterance.lang = language;
-          if (attempt === 1) {
-            const femaleVoice = getFemaleVoice(language);
-            if (femaleVoice) utterance.voice = femaleVoice;
-          }
-          if (attempt >= 4) {
-            utterance.rate = 1;
-            utterance.pitch = 1;
-            utterance.volume = 1;
-          } else {
-            utterance.rate = 0.94;
-            utterance.pitch = 1.04;
-            utterance.volume = 1;
-          }
-
-          const retryOrSettleError = () => {
-            if (settled || speechRequestIdRef.current !== requestId) return;
-            if (attempt < TTS_START_MAX_ATTEMPTS) {
-              const nextAttempt = attempt + 1;
-              const retryDelayMs = getTtsRetryDelayMs(nextAttempt);
-              window.setTimeout(() => {
-                if (settled || speechRequestIdRef.current !== requestId) return;
-                startAttempt(nextAttempt);
-              }, retryDelayMs);
-              return;
-            }
-            settle(true);
-          };
-
-          const startWatchdog = window.setTimeout(() => {
-            if (settled || speechRequestIdRef.current !== requestId || started) return;
-            try {
-              synth.cancel();
-            } catch {
-              // Ignore cancellation errors from platform speech engines.
-            }
-            retryOrSettleError();
-          }, TTS_START_TIMEOUT_MS);
-
-          const clearWatchdog = () => {
-            window.clearTimeout(startWatchdog);
-          };
-
-          utterance.onstart = () => {
-            if (settled || speechRequestIdRef.current !== requestId) return;
-            started = true;
-            clearWatchdog();
-            setVoiceState("speaking");
-            options?.onStart?.();
-          };
-
-          utterance.onend = () => {
-            if (settled || speechRequestIdRef.current !== requestId) return;
-            clearWatchdog();
-            settle(false);
-          };
-
-          utterance.onerror = () => {
-            if (settled || speechRequestIdRef.current !== requestId) return;
-            clearWatchdog();
-            if (!started) {
-              retryOrSettleError();
-              return;
-            }
-            settle(true);
-          };
-
-          try {
-            synth.cancel();
-            if (typeof synth.resume === "function") synth.resume();
-            synth.speak(utterance);
-          } catch {
-            clearWatchdog();
-            retryOrSettleError();
-          }
-        };
-
-        startAttempt(1);
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(clean);
+      utterance.lang = language;
+      const femaleVoice = getFemaleVoice(language);
+      if (femaleVoice) utterance.voice = femaleVoice;
+      utterance.rate = 1.0;
+      utterance.pitch = 1.1;
+      utterance.onstart = () => setVoiceState("speaking");
+      utterance.onend = () => {
+        setVoiceState("idle");
+        options?.onEnd?.();
       };
-
-      beginSpeech();
+      utterance.onerror = () => {
+        setVoiceState("idle");
+        options?.onError?.();
+        options?.onEnd?.();
+      };
+      window.speechSynthesis.speak(utterance);
     },
     [language, ttsEnabled]
   );
@@ -377,8 +237,8 @@ export function useVoice({
   useEffect(() => {
     return () => {
       recognitionRef.current?.abort();
+      listenRequestIdRef.current += 1;
       releaseMic();
-      speechRequestIdRef.current += 1;
       window.speechSynthesis?.cancel();
     };
   }, []);
@@ -391,7 +251,6 @@ export function useVoice({
     clearError,
     toggleVoice,
     resetToIdle,
-    primeTts,
     speak,
     startListening,
     stopListening,

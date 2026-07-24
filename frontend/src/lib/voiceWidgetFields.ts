@@ -26,6 +26,10 @@ const EDITABLE_WIDGETS = new Set<EditableVoiceWidget>([
   "ExpensesWidget",
 ]);
 
+export function isEditableVoiceWidget(widget: string | null | undefined): widget is EditableVoiceWidget {
+  return Boolean(widget && EDITABLE_WIDGETS.has(widget as EditableVoiceWidget));
+}
+
 function normalize(text: string): string {
   return text
     .toLowerCase()
@@ -416,26 +420,17 @@ function parseWidgetUpdate(widget: EditableVoiceWidget, transcript: string): Rec
   }
 }
 
-export function resolveVisibleVoiceWidgetUpdate(transcript: string): VoiceWidgetFieldUpdate | null {
-  if (typeof document === "undefined") return null;
+export function resolveVisibleVoiceWidgetUpdate(
+  messageId: string | undefined,
+  widgetName: string | null | undefined,
+  transcript: string
+): VoiceWidgetFieldUpdate | null {
+  if (!messageId || !isEditableVoiceWidget(widgetName)) return null;
 
-  const widgets = Array.from(
-    document.querySelectorAll<HTMLElement>("[data-widget-message-id][data-widget-name]")
-  ).filter((element) => element.offsetParent !== null);
+  const updates = parseWidgetUpdate(widgetName, transcript);
+  if (!updates || Object.keys(updates).length === 0) return null;
 
-  for (let i = widgets.length - 1; i >= 0; i--) {
-    const element = widgets[i];
-    const widget = element.dataset.widgetName as EditableVoiceWidget | undefined;
-    const messageId = element.dataset.widgetMessageId;
-    if (!widget || !messageId || !EDITABLE_WIDGETS.has(widget)) continue;
-
-    const updates = parseWidgetUpdate(widget, transcript);
-    if (!updates || Object.keys(updates).length === 0) continue;
-
-    return { messageId, widget, updates };
-  }
-
-  return null;
+  return { messageId, widget: widgetName, updates };
 }
 
 export function dispatchVoiceWidgetFieldUpdate(update: VoiceWidgetFieldUpdate): void {
