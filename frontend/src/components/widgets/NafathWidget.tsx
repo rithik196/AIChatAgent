@@ -62,7 +62,7 @@ export function NafathWidget({ data }: NafathWidgetProps) {
             const event = new CustomEvent("mock-send-message", { detail: "Did not receive the request" });
             window.dispatchEvent(event);
           }}
-          className="mt-4 w-full py-3 journey-widget-button border-2 border-transparent hover:opacity-90 transition-all"
+          className="mt-4 w-full py-3 journey-widget-button hover:opacity-90 transition-all"
         >
           Did not receive the request
         </button>

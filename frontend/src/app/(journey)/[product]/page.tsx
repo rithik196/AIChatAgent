@@ -881,7 +881,9 @@ function ChatView({ product, sessionId, initialMessages, initialSession }: {
           ? ((detail as { systemText: string }).systemText || "").trim()
           : "";
 
-      if (visibleText) {
+      // Add a local visible bubble only when sending a hidden/system command.
+      // If we are sending visibleText directly, sendMessage already creates the user message.
+      if (visibleText && systemText) {
         setMessages((prev) => [
           ...prev,
           {

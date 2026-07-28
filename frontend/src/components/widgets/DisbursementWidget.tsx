@@ -29,7 +29,21 @@ export function DisbursementWidget({ data }: DisbursementWidgetProps) {
   const account = data?.account || "Current Account ****1234";
   const tenure = data?.tenure || "0 Months";
   const profitRate = data?.profit_rate || "";
-  const firstInstallment = data?.first_installment || "03 July 2025";
+  const firstInstallment = (() => {
+    const parsedDisbursementDate = new Date(date);
+    if (Number.isNaN(parsedDisbursementDate.getTime())) {
+      return data?.first_installment || "03 May 2025";
+    }
+
+    const dueDate = new Date(parsedDisbursementDate);
+    dueDate.setMonth(dueDate.getMonth() + 1);
+
+    return new Intl.DateTimeFormat("en-GB", {
+      day: "2-digit",
+      month: "long",
+      year: "numeric",
+    }).format(dueDate);
+  })();
   const monthlyInstallment = data?.monthly_installment || 0;
   const totalPayable = data?.total_payable || 0;
   const bank = data?.bank || "";

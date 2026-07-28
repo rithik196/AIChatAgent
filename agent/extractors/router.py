@@ -1180,7 +1180,7 @@ def _advance_session_state(extract: dict, session: dict) -> None:
                     "account": selected_account.get("iban", "****1234"),
                     "tenure": f"{finance_summary.get('tenure', 0)} Months",
                     "profit_rate": finance_summary.get("profit_rate", ""),
-                    "first_installment": (datetime.datetime.now() + datetime.timedelta(days=90)).strftime("%d %B %Y"),
+                    "first_installment": (datetime.datetime.now() + datetime.timedelta(days=30)).strftime("%d %B %Y"),
                     "monthly_installment": finance_summary.get("monthly_installment", 0),
                     "total_payable": finance_summary.get("total_payable", 0),
                 }

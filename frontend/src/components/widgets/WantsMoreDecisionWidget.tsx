@@ -56,7 +56,7 @@ export function WantsMoreDecisionWidget({ data }: WantsMoreDecisionWidgetProps) 
                 })
               );
             }}
-            className="w-full py-3 journey-widget-button border-2 border-transparent hover:opacity-90 transition-all"
+            className="w-full py-3 journey-widget-button hover:opacity-90 transition-all"
           >
            Need Higher Amount
           </button>
