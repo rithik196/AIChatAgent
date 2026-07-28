@@ -97,7 +97,7 @@ export function PreApprovedOfferWidget({ data }: PreApprovedOfferWidgetProps) {
               });
               window.dispatchEvent(event);
             }}
-            className="w-full py-3 journey-widget-button border-2 border-transparent shadow-sm hover:opacity-90 transition-all"
+            className="w-full py-3 journey-widget-button shadow-sm hover:opacity-90 transition-all"
           >
             Need higher amount
           </button>

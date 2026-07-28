@@ -35,6 +35,86 @@ function matchesAnyPhrase(text: string, phrases: string[]): boolean {
   return phrases.some((phrase) => normalizedText.includes(normalize(phrase)));
 }
 
+function getMessageText(message: UIMessage | undefined): string {
+  if (!message) return "";
+
+  const content = (message as { content?: unknown }).content;
+  if (typeof content === "string" && content.trim()) {
+    return content;
+  }
+
+  const parts = (message as { parts?: Array<{ type?: string; text?: string }> }).parts || [];
+  return parts
+    .filter((part) => part?.type === "text" && typeof part.text === "string")
+    .map((part) => part.text as string)
+    .join(" ")
+    .trim();
+}
+
+const SPOKEN_DIGITS: Record<string, string> = {
+  zero: "0",
+  oh: "0",
+  o: "0",
+  one: "1",
+  two: "2",
+  to: "2",
+  too: "2",
+  three: "3",
+  four: "4",
+  for: "4",
+  five: "5",
+  six: "6",
+  seven: "7",
+  eight: "8",
+  ate: "8",
+  nine: "9",
+};
+
+function extractOtpFromTranscript(transcript: string): { otp: string | null; hasOtpCue: boolean } {
+  const normalizedTranscript = normalize(transcript);
+  const hasOtpCue = matchesAnyPhrase(normalizedTranscript, [
+    "otp",
+    "o t p",
+    "one time password",
+    "verification code",
+    "security code",
+  ]);
+
+  const explicitDigits = normalizedTranscript.match(/\b\d{4,8}\b/);
+  if (explicitDigits?.[0]) {
+    return { otp: explicitDigits[0], hasOtpCue };
+  }
+
+  const tokens = normalizedTranscript.split(/\s+/).filter(Boolean);
+  const spokenDigits = tokens
+    .map((token) => {
+      if (SPOKEN_DIGITS[token] !== undefined) return SPOKEN_DIGITS[token];
+      if (/^\d+$/.test(token)) return token;
+      return "";
+    })
+    .join("");
+
+  if (spokenDigits.length >= 4 && spokenDigits.length <= 8) {
+    return { otp: spokenDigits, hasOtpCue };
+  }
+
+  return { otp: null, hasOtpCue };
+}
+
+function isOtpVerificationContext(message: UIMessage | undefined): boolean {
+  if (!message) return false;
+
+  const { widget } = widgetSpec(message);
+  if (widget === "OtpVerificationWidget" || widget === "FinalIVRConsentWidget" || widget === "LoadingWidget") {
+    return true;
+  }
+
+  const text = normalize(getMessageText(message));
+  if (!text) return false;
+
+  return matchesAnyPhrase(text, ["otp", "one time password", "verification code", "simah", "bureau", "ivr"]);
+}
+
 function widgetSpec(message: UIMessage | undefined): WidgetSpec {
   return ((message?.metadata as { widget?: WidgetSpec } | undefined)?.widget || {}) as WidgetSpec;
 }
@@ -286,11 +366,27 @@ function widgetAction(message: UIMessage | undefined, transcript: string): Voice
       if (matchesAnyPhrase(normalized, ["modify expenses", "edit expenses", "change expenses", "modify"])) {
         return action(["Modify"]);
       }
-      if (matchesAnyPhrase(normalized, ["save changes", "save updated expenses", "save"])) {
-        return action(["Save Changes"]);
+      if (
+        matchesAnyPhrase(normalized, [
+          "save changes",
+          "save updated expenses",
+          "save expense",
+          "save expenses",
+          "save my expense",
+          "save my expenses",
+          "save",
+        ])
+      ) {
+        return action(["Save Expenses", "Save Changes", "Continue"], {
+          fallbackVisibleText: "Save my expenses",
+          fallbackSystemText: "__SYS__expenses_confirm",
+        });
       }
       if (matchesAnyPhrase(normalized, ["continue", "confirm expenses", "confirm", "proceed"])) {
-        return action(["Continue"]);
+        return action(["Continue"], {
+          fallbackVisibleText: "Save my expenses",
+          fallbackSystemText: "__SYS__expenses_confirm",
+        });
       }
       return null;
 
@@ -407,5 +503,20 @@ export function resolveVoiceJourneyAction(
   latestOptionPrompt: UIMessage | undefined,
   transcript: string
 ): VoiceResolvedAction | null {
-  return buildOptionAction(latestOptionPrompt, transcript) || widgetAction(activeAssistant, transcript);
+  const { otp, hasOtpCue } = extractOtpFromTranscript(transcript);
+  if (otp && activeAssistant && (hasOtpCue || isOtpVerificationContext(activeAssistant))) {
+    return {
+      messageId: activeAssistant.id,
+      buttonLabels: [],
+      fallbackVisibleText: otp,
+    };
+  }
+
+  const optionAction = buildOptionAction(latestOptionPrompt, transcript);
+  if (optionAction) return optionAction;
+
+  const widgetResolvedAction = widgetAction(activeAssistant, transcript);
+  if (widgetResolvedAction) return widgetResolvedAction;
+
+  return null;
 }

@@ -1115,7 +1115,7 @@ def _build_application_summary_data(session: dict) -> dict:
 
 # ── Helpers ──────────────────────────────────────────────────────────
 
-def _generate_certificate_number(length: int = 20) -> str:
+def _generate_certificate_number(length: int = 14) -> str:
     alphabet = string.ascii_uppercase + string.digits
     return "".join(random.choices(alphabet, k=length))
 
@@ -1188,6 +1188,7 @@ def _ensure_commodity_certificate_pdf(session: dict) -> str:
         existing_filename = session.get("commodity_certificate", {}).get("pdf_filename") or Path(str(existing_url)).name
         existing_path = COMMODITY_CERTIFICATE_OUTPUT_DIR / existing_filename
         if existing_path.exists():
+            _write_commodity_certificate_pdf(session, existing_path)
             return existing_url
 
     COMMODITY_CERTIFICATE_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -1208,8 +1209,20 @@ def _wrap_pdf_text(value: str, width: int = 92) -> list[str]:
     return textwrap.wrap(value, width=width, break_long_words=False, break_on_hyphens=False) or [""]
 
 
+def _estimate_pdf_text_width(text: str, size: int) -> float:
+    narrow = sum(1 for char in text if char in ".,:;!|'ilI ")
+    wide = sum(1 for char in text if char in "MWmw")
+    normal = max(len(text) - narrow - wide, 0)
+    return (narrow * 0.28 + normal * 0.5 + wide * 0.78) * size
+
+
 def _pdf_text_command(x: int, y: int, text: str, font: str = "F1", size: int = 12) -> str:
     return f"BT /{font} {size} Tf 1 0 0 1 {x} {y} Tm ({_pdf_escape_text(text)}) Tj ET"
+
+
+def _pdf_centered_text_command(y: int, text: str, font: str = "F1", size: int = 12, page_width: int = 595) -> str:
+    x = max(0, round((page_width - _estimate_pdf_text_width(text, size)) / 2))
+    return _pdf_text_command(x, y, text, font, size)
 
 
 def _compose_pdf_document(page_streams: list[str]) -> bytes:
@@ -1268,14 +1281,14 @@ def _write_commodity_certificate_pdf(session: dict, pdf_path: Path) -> None:
     value_text = f"{finance_amount:,.0f}"
 
     page1: list[str] = []
-    page1.append(_pdf_text_command(150, 790, f"Certificate Number: {certificate_number}", "F2", 18))
+    page1.append(_pdf_centered_text_command(790, f"Certificate Number: {certificate_number}", "F2", 18))
     intro_lines = _wrap_pdf_text(
         "This is to certify that the following transaction has been executed through the Saudi Finance Company in accordance with the Rules of Saudi Islamic Services Ltd.",
-        88,
+        90,
     )
     y = 748
     for line in intro_lines:
-        page1.append(_pdf_text_command(60, y, line, "F1", 11))
+        page1.append(_pdf_centered_text_command(y, line, "F1", 11))
         y -= 16
 
     page1.append(_pdf_text_command(60, y - 12, "Seller : Newgen Software", "F2", 11))
@@ -1303,7 +1316,7 @@ def _write_commodity_certificate_pdf(session: dict, pdf_path: Path) -> None:
         table_y -= 22
 
     page2: list[str] = []
-    page2.append(_pdf_text_command(60, 790, "Notes :", "F2", 14))
+    page2.append(_pdf_centered_text_command(790, "Notes :", "F2", 14))
     notes = [
         'This e-Certificate has the benefit of, and is generated pursuant to, the Rules of Saudi Islamic Services Ltd. ("Rules"). The Rules form an integral part hereof.',
         "This e-Certificate is valid only in the Saudi Finance Company. BMIS will not be responsible and be held liable for any loss or damage arising from any unauthorised use of this e-Certificate.",
@@ -1316,7 +1329,7 @@ def _write_commodity_certificate_pdf(session: dict, pdf_path: Path) -> None:
     for idx, note in enumerate(notes, start=1):
         wrapped = _wrap_pdf_text(f"{idx}. {note}", 88)
         for line in wrapped:
-            page2.append(_pdf_text_command(60, note_y, line, "F1", 11))
+            page2.append(_pdf_centered_text_command(note_y, line, "F1", 11))
             note_y -= 16
         note_y -= 8
 
@@ -2343,7 +2356,7 @@ def _handle_widget_event(session: dict, session_id: str, raw_msg: str, normalize
 
         if sub_step == "certificate" and signal == "proceed_contract_prompt":
             session["sub_step"] = "contract_prompt"
-            return done("To finalise your Cash Finance agreement, you are required to review and  sign the following documents.")
+            return done("We're almost there! Your Finance Contract and Promissory Note are being generated.")
 
         if sub_step == "contract_prompt" and signal == "proceed_esign":
             session["step"] = "esign"
