@@ -1182,6 +1182,53 @@ def _render_commodity_certificate_html(session: dict) -> str:
     return rendered
 
 
+def _render_commodity_certificate_pdf_from_html(session: dict, pdf_path: Path) -> bool:
+    browser = _select_browser_executable()
+    if not browser:
+        logger.warning("Commodity certificate PDF browser renderer unavailable: no Chrome/Edge executable found")
+        return False
+
+    rendered_html = _render_commodity_certificate_html(session)
+    temp_html_path: Path | None = None
+
+    try:
+        with tempfile.NamedTemporaryFile("w", suffix=".html", delete=False, encoding="utf-8") as temp_html:
+            temp_html.write(rendered_html)
+            temp_html_path = Path(temp_html.name)
+
+        command = [
+            str(browser),
+            "--headless",
+            "--disable-gpu",
+            "--allow-file-access-from-files",
+            "--print-to-pdf-no-header",
+            "--no-pdf-header-footer",
+            f"--print-to-pdf={pdf_path}",
+            temp_html_path.resolve().as_uri(),
+        ]
+
+        result = subprocess.run(command, capture_output=True, text=True, timeout=45, check=False)
+        if result.returncode == 0 and pdf_path.exists() and pdf_path.stat().st_size > 0:
+            return True
+
+        logger.warning(
+            "Commodity certificate HTML-to-PDF rendering failed with code %s. stdout=%s stderr=%s",
+            result.returncode,
+            (result.stdout or "").strip(),
+            (result.stderr or "").strip(),
+        )
+        return False
+    except Exception:
+        logger.exception("Commodity certificate HTML-to-PDF rendering raised an exception")
+        return False
+    finally:
+        if temp_html_path and temp_html_path.exists():
+            try:
+                temp_html_path.unlink()
+            except OSError:
+                logger.warning("Failed to remove temporary commodity certificate HTML: %s", temp_html_path)
+
+
 def _ensure_commodity_certificate_pdf(session: dict) -> str:
     existing_url = session.get("commodity_certificate_url")
     if existing_url:
@@ -1271,6 +1318,9 @@ def _compose_pdf_document(page_streams: list[str]) -> bytes:
 
 
 def _write_commodity_certificate_pdf(session: dict, pdf_path: Path) -> None:
+    if _render_commodity_certificate_pdf_from_html(session, pdf_path):
+        return
+
     certificate_state = session.setdefault("commodity_certificate", {})
     certificate_number = certificate_state.get("certificateNumber") or _generate_certificate_number()
     certificate_state["certificateNumber"] = certificate_number
@@ -1329,7 +1379,7 @@ def _write_commodity_certificate_pdf(session: dict, pdf_path: Path) -> None:
     for idx, note in enumerate(notes, start=1):
         wrapped = _wrap_pdf_text(f"{idx}. {note}", 88)
         for line in wrapped:
-            page2.append(_pdf_centered_text_command(note_y, line, "F1", 11))
+            page2.append(_pdf_text_command(72, note_y, line, "F1", 11))
             note_y -= 16
         note_y -= 8
 
