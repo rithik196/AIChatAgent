@@ -2,21 +2,14 @@
 
 import React, { useState, useRef, useEffect } from "react";
 import Image from "next/image";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { LandingChatBox } from "@/components/chat/LandingChatBox";
 import type { ProductId } from "@/lib/productIntent";
+import { buildJourneyHref, resolveJourneyVariant, type CountryOption } from "@/lib/journeyConfig";
 import { motion, AnimatePresence } from 'framer-motion';
 import { Mic, MessageSquare, Zap, ChevronDown, ArrowRight } from 'lucide-react';
 
 type Stage = "phone" | "otp" | "product";
-
-const GCC_COUNTRIES = [
-  { code: '+966', name: 'Saudi Arabia', flag: '🇸🇦', length: 10, placeholder: '5x xxx xxxx' },
-  { code: '+971', name: 'UAE', flag: '🇦🇪', length: 9, placeholder: '5x xxx xxxx' },
-  { code: '+973', name: 'Bahrain', flag: '🇧🇭', length: 8, placeholder: '3x xxx xxx' },
-  { code: '+965', name: 'Kuwait', flag: '🇰🇼', length: 8, placeholder: '5x xxx xxx' },
-  { code: '+968', name: 'Oman', flag: '🇴🇲', length: 8, placeholder: '9x xxx xxx' },
-];
 
 const getSpeechSynthesisSafe = (): SpeechSynthesis | null => {
   try {
@@ -40,14 +33,105 @@ const getSpeechSynthesisUtteranceSafe = (): typeof SpeechSynthesisUtterance | nu
   return null;
 };
 
-const productChoices = [
-  { id: "cash_finance", label: "Cash Finance", desc: "Personal cash financing up to SAR 350K" },
-  { id: "home_loan", label: "Home Finance", desc: "Home financing with competitive rates" },
-  { id: "personal_loan", label: "Vehicle Finance", desc: "Flexible vehicle financing" },
-];
+function playGreeting(
+  text: string,
+  hasSpokenRef: React.MutableRefObject<boolean>,
+  setIsAvatarSpeaking: React.Dispatch<React.SetStateAction<boolean>>,
+  force?: boolean
+) {
+  try {
+    if (typeof window === 'undefined') return;
+    if (hasSpokenRef.current && !force) return;
+
+    const synth = getSpeechSynthesisSafe();
+    if (!synth) return;
+
+    try {
+      synth.cancel();
+    } catch (err) {
+      console.warn('synth.cancel blocked:', err);
+    }
+
+    if (!text.trim()) return;
+    const UtteranceConstructor = getSpeechSynthesisUtteranceSafe();
+    if (!UtteranceConstructor) return;
+
+    const utterance = new UtteranceConstructor(text);
+
+    let voices: SpeechSynthesisVoice[] = [];
+    try {
+      voices = synth.getVoices() || [];
+    } catch (err) {
+      console.warn('synth.getVoices() blocked:', err);
+    }
+
+    const matureKeywords = ['susan', 'hazel', 'samantha', 'zira', 'victoria', 'karen', 'moira', 'natural', 'female', 'premium', 'google us english'];
+    let chosenVoice: SpeechSynthesisVoice | undefined = undefined;
+
+    try {
+      chosenVoice = voices.find(v => {
+        if (!v || typeof v.name !== 'string' || typeof v.lang !== 'string') return false;
+        const nameLower = v.name.toLowerCase();
+        const lang = v.lang.toLowerCase();
+        const isEnglish = lang.startsWith('en');
+        return isEnglish && matureKeywords.some(keyword => nameLower.includes(keyword));
+      });
+    } catch (err) {
+      console.warn('Voice lookup error in primary mature check:', err);
+    }
+
+    if (!chosenVoice) {
+      try {
+        chosenVoice = voices.find(v => {
+          if (!v || typeof v.name !== 'string' || typeof v.lang !== 'string') return false;
+          return v.lang.toLowerCase().startsWith('en') && v.name.includes('Google');
+        });
+      } catch (err) {}
+    }
+
+    if (!chosenVoice) {
+      try {
+        chosenVoice = voices.find(v => {
+          if (!v || typeof v.lang !== 'string') return false;
+          return v.lang.toLowerCase().startsWith('en');
+        });
+      } catch (err) {}
+    }
+
+    if (chosenVoice) {
+      utterance.voice = chosenVoice;
+    }
+
+    utterance.rate = 0.94;
+    utterance.pitch = 1.0;
+    utterance.volume = 0;
+
+    utterance.onstart = () => setIsAvatarSpeaking(true);
+    utterance.onend = () => setIsAvatarSpeaking(false);
+    utterance.onerror = () => setIsAvatarSpeaking(false);
+
+    try {
+      if (typeof synth.resume === 'function') {
+        synth.resume();
+      }
+      synth.speak(utterance);
+      hasSpokenRef.current = true;
+    } catch (err) {
+      setIsAvatarSpeaking(false);
+    }
+  } catch (e) {
+    setIsAvatarSpeaking(false);
+  }
+}
 
 export default function LoginPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const journeyConfig = resolveJourneyVariant(searchParams.get("journey"));
+  const isIndiaJourney = journeyConfig.key === "india";
+  const availableCountries = journeyConfig.availableCountries;
+  const landingChoices = journeyConfig.landingChoices ?? [];
+
   const [stage, setStage] = useState<Stage>("phone");
   const [phone, setPhone] = useState("");
   const [otp, setOtp] = useState(["", "", "", ""]);
@@ -57,118 +141,35 @@ export default function LoginPage() {
   const otpRefs = useRef<(HTMLInputElement | null)[]>([]);
   const postLoginTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const landingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const isProductStage = stage === "product";
+  const shouldSkipProductStage = Boolean(journeyConfig.lockedProduct && journeyConfig.skipProductStageAfterOtp);
+  const isProductStage = stage === "product" && !shouldSkipProductStage;
 
-  const [selectedCountry, setSelectedCountry] = useState(GCC_COUNTRIES[0]);
+  const [selectedCountry, setSelectedCountry] = useState<CountryOption>(availableCountries[0]);
   const [showCountryDropdown, setShowCountryDropdown] = useState(false);
   const [isAvatarSpeaking, setIsAvatarSpeaking] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const hasSpokenRef = useRef(false);
 
-  // High fidelity Speech synthesis function with priority for female/lady voices
-  const speakGreeting = (force?: boolean) => {
-    try {
-      if (typeof window === 'undefined') return;
-      if (hasSpokenRef.current && !force) return;
-
-      const synth = getSpeechSynthesisSafe();
-      if (!synth) return;
-      
-      try {
-        synth.cancel();
-      } catch (err) {
-        console.warn('synth.cancel blocked:', err);
-      }
-
-      const text = "assalamu alaikum, I am Raya , Your personal finance assistant.";
-      if (!text.trim()) return;
-      const UtteranceConstructor = getSpeechSynthesisUtteranceSafe();
-      if (!UtteranceConstructor) return;
-
-      const utterance = new UtteranceConstructor(text);
-      
-      let voices: SpeechSynthesisVoice[] = [];
-      try {
-        voices = synth.getVoices() || [];
-      } catch (err) {
-        console.warn('synth.getVoices() blocked:', err);
-      }
-      
-      const matureKeywords = ['susan', 'hazel', 'samantha', 'zira', 'victoria', 'karen', 'moira', 'natural', 'female', 'premium', 'google us english'];
-      let chosenVoice: SpeechSynthesisVoice | undefined = undefined;
-      
-      try {
-        chosenVoice = voices.find(v => {
-          if (!v || typeof v.name !== 'string' || typeof v.lang !== 'string') return false;
-          const nameLower = v.name.toLowerCase();
-          const lang = v.lang.toLowerCase();
-          const isEnglish = lang.startsWith('en');
-          return isEnglish && matureKeywords.some(keyword => nameLower.includes(keyword));
-        });
-      } catch (err) {
-        console.warn('Voice lookup error in primary mature check:', err);
-      }
-
-      if (!chosenVoice) {
-        try {
-          chosenVoice = voices.find(v => {
-            if (!v || typeof v.name !== 'string' || typeof v.lang !== 'string') return false;
-            return v.lang.toLowerCase().startsWith('en') && v.name.includes('Google');
-          });
-        } catch (err) {}
-      }
-
-      if (!chosenVoice) {
-        try {
-          chosenVoice = voices.find(v => {
-            if (!v || typeof v.lang !== 'string') return false;
-            return v.lang.toLowerCase().startsWith('en');
-          });
-        } catch (err) {}
-      }
-
-      if (chosenVoice) {
-        utterance.voice = chosenVoice;
-      }
-      
-      utterance.rate = 0.94;
-      utterance.pitch = 1.0;
-      utterance.volume = 0;
-
-      utterance.onstart = () => setIsAvatarSpeaking(true);
-      utterance.onend = () => setIsAvatarSpeaking(false);
-      utterance.onerror = () => setIsAvatarSpeaking(false);
-
-      try {
-        if (typeof synth.resume === 'function') {
-          synth.resume();
-        }
-        synth.speak(utterance);
-        hasSpokenRef.current = true;
-      } catch (err) {
-        setIsAvatarSpeaking(false);
-      }
-    } catch (e) {
-      setIsAvatarSpeaking(false);
-    }
-  };
-
   useEffect(() => {
     const speakTimer = setTimeout(() => {
-      speakGreeting();
+      playGreeting(journeyConfig.assistantGreeting, hasSpokenRef, setIsAvatarSpeaking);
     }, 600);
 
     try {
       const synth = getSpeechSynthesisSafe();
       if (synth) {
         synth.onvoiceschanged = () => {
-          if (!hasSpokenRef.current) speakGreeting();
+          if (!hasSpokenRef.current) {
+            playGreeting(journeyConfig.assistantGreeting, hasSpokenRef, setIsAvatarSpeaking);
+          }
         };
       }
     } catch (e) {}
 
     const triggerSpeechOnInteraction = () => {
-      if (!hasSpokenRef.current) speakGreeting();
+      if (!hasSpokenRef.current) {
+        playGreeting(journeyConfig.assistantGreeting, hasSpokenRef, setIsAvatarSpeaking);
+      }
     };
 
     window.addEventListener('click', triggerSpeechOnInteraction);
@@ -188,7 +189,7 @@ export default function LoginPage() {
       window.removeEventListener('click', triggerSpeechOnInteraction);
       window.removeEventListener('touchstart', triggerSpeechOnInteraction);
     };
-  }, []);
+  }, [journeyConfig.assistantGreeting]);
 
   useEffect(() => {
     if (stage === "otp") {
@@ -314,13 +315,18 @@ export default function LoginPage() {
       setLoading(false);
       setPostLoginState("success");
       landingTimerRef.current = setTimeout(() => {
+        if (shouldSkipProductStage && journeyConfig.lockedProduct) {
+          router.push(buildJourneyHref(journeyConfig.lockedProduct, journeyConfig.key));
+          return;
+        }
+
         setStage("product");
       }, 900);
     }, 2000);
   };
 
   const selectProduct = (product: ProductId | string) => {
-    router.push(`/${product}`);
+    router.push(buildJourneyHref(product, journeyConfig.key));
   };
 
   if (isProductStage) {
@@ -338,7 +344,7 @@ export default function LoginPage() {
                 priority
               />
             </div>
-            <h3 className="text-[18px] leading-5 font-semibold text-slate-900">Finance Agent</h3>
+            <h3 className="text-[18px] leading-5 font-semibold text-slate-900">{journeyConfig.agentName ?? "Finance Agent"}</h3>
           </div>
           <div className="h-[2px] w-full bg-[#FB8B23]" />
         </div>
@@ -348,20 +354,29 @@ export default function LoginPage() {
             <div className="text-center space-y-4">
               <h2 className="text-[24px] leading-none font-bold text-[#0D141A]">Welcome!</h2>
               <p className="text-[14px] leading-none font-normal text-[#0D141A] max-w-[95%] mx-auto text-center">
-                I am your personal finance assistant. Let&apos;s start your digital finance application.
+                {journeyConfig.assistantIntro}
               </p>
               <p className="text-[14px] leading-none font-semibold text-[#0D141A] pt-2 text-center">Choose a category to begin</p>
             </div>
 
-            <div className="space-y-3 pt-1">
-              {productChoices.map((p) => (
+            <div className={`${isIndiaJourney ? 'space-y-7' : 'space-y-5'} pt-1`}>
+              {landingChoices.map((choice) => (
                 <button
-                  key={p.id}
-                  onClick={() => selectProduct(p.id)}
-                  className="w-full rounded-full px-6 py-3.5 text-center text-white text-[14px] leading-5 font-semibold shadow-[0_8px_18px_-10px_rgba(15,76,120,0.6)] transition-all hover:brightness-105 active:scale-[0.99]"
+                  key={choice.id + choice.label}
+                  onClick={() => {
+                    if (!choice.disabled) {
+                      selectProduct(choice.id);
+                    }
+                  }}
+                  disabled={choice.disabled}
+                  className={`w-full rounded-full px-6 py-3.5 text-center text-[14px] leading-5 font-semibold shadow-[0_8px_18px_-10px_rgba(15,76,120,0.6)] transition-all ${
+                    choice.disabled
+                      ? 'cursor-not-allowed text-white opacity-55'
+                      : 'text-white hover:brightness-105 active:scale-[0.99]'
+                  }`}
                   style={{ background: "linear-gradient(to left, #0F4C78, #3CC2E1)" }}
                 >
-                  {p.label}
+                  {choice.label}
                 </button>
               ))}
             </div>
@@ -369,7 +384,7 @@ export default function LoginPage() {
         </div>
 
         <div className="fixed bottom-0 left-0 z-20 w-full bg-white/98 backdrop-blur-md p-3 sm:p-4 shadow-[0_-4px_20px_-10px_rgba(0,0,0,0.12)]">
-          <LandingChatBox onSelectProduct={selectProduct} />
+          <LandingChatBox onSelectProduct={selectProduct} journeyVariant={journeyConfig.key} />
         </div>
       </div>
     );
@@ -415,7 +430,7 @@ export default function LoginPage() {
               initial={{ scale: 0.8, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               transition={{ type: "spring", stiffness: 140, damping: 14 }}
-              onClick={() => speakGreeting(true)}
+              onClick={() => playGreeting(journeyConfig.assistantGreeting, hasSpokenRef, setIsAvatarSpeaking, true)}
               title="Click to hear Raya speak"
               className="relative w-12 h-12 rounded-full bg-gradient-to-tr from-[#1F6FB2] to-[#4CB8E8] flex items-center justify-center p-[2px] shadow-[0_0_15px_rgba(31,111,178,0.25)] border-2 border-white cursor-pointer hover:scale-105 active:scale-95 transition-all"
             >
@@ -444,43 +459,64 @@ export default function LoginPage() {
             Raya
           </div>
           <div className="text-[10.5px] font-semibold text-slate-500 tracking-tight flex items-center gap-1">
-            <span>Your Personal Finance Assistant</span>
+            <span>Your Personal {journeyConfig.head} Assistant</span>
             <span className="w-1.5 h-1.5 bg-[#2EAF62] rounded-full animate-pulse" />
           </div>
         </div>
 
         <div className="text-center w-full px-1">
           <h2 className="text-base font-extrabold text-[#1F6FB2] tracking-tight leading-none mb-1">
-            Smarter Cash Finance
+            {journeyConfig.title}
           </h2>
           <p className="text-[11px] text-[#555] font-medium leading-relaxed max-w-[270px] mx-auto">
-            Apply in minutes through a friendly real-time chat with Advisor Raya.
+            {journeyConfig.subtitle}
           </p>
         </div>
+
+        {/* {isIndiaJourney ? (
+          <div className="w-full rounded-[22px] border border-[#1F6FB2]/12 bg-gradient-to-br from-white via-[#F6FAFF] to-[#DDF1FC]/70 p-4 text-left shadow-[0_14px_40px_-28px_rgba(31,111,178,0.45)]">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-[10px] font-extrabold uppercase tracking-[0.24em] text-[#1F6FB2]/70">
+                  {journeyConfig.heroBadge}
+                </p>
+                <h3 className="mt-1 text-[15px] font-extrabold leading-tight text-[#0D141A]">
+                  {journeyConfig.heroHeadline}
+                </h3>
+              </div>
+              <div className="shrink-0 rounded-full bg-[#1F6FB2] px-3 py-1 text-[10px] font-bold uppercase tracking-wide text-white">
+                OTP Login
+              </div>
+            </div>
+            <p className="mt-2 text-[11px] leading-5 text-slate-600">
+              {journeyConfig.heroDescription}
+            </p>
+          </div>
+        ) : null} */}
 
         <div className="grid grid-cols-3 gap-2 w-full">
           <div className="bg-white/40 border border-white/20 p-2 rounded-xl flex flex-col items-center text-center transition-all">
             <div className="w-6 h-6 rounded-md bg-[#DDF1FC] text-[#1F6FB2] flex items-center justify-center mb-1">
               <Mic className="w-3.5 h-3.5 text-[#1F6FB2]" />
             </div>
-            <h3 className="text-[9.5px] font-extrabold text-[#333] leading-none">Voice-First</h3>
-            <p className="text-[8px] text-slate-400 mt-0.5 font-medium leading-none">Talk naturally</p>
+            <h3 className="text-[9.5px] font-extrabold text-[#333] leading-none">{journeyConfig.featureCards[0].title}</h3>
+            <p className="text-[8px] text-slate-400 mt-0.5 font-medium leading-none">{journeyConfig.featureCards[0].description}</p>
           </div>
 
           <div className="bg-white/40 border border-white/20 p-2 rounded-xl flex flex-col items-center text-center transition-all">
             <div className="w-6 h-6 rounded-md bg-[#DDF1FC]/85 text-[#1F6FB2] flex items-center justify-center mb-1">
               <MessageSquare className="w-3.5 h-3.5 text-[#1F6FB2]" />
             </div>
-            <h3 className="text-[9.5px] font-extrabold text-[#333] leading-none">Instant Guide</h3>
-            <p className="text-[8px] text-slate-400 mt-0.5 font-medium leading-none">Fast support</p>
+            <h3 className="text-[9.5px] font-extrabold text-[#333] leading-none">{journeyConfig.featureCards[1].title}</h3>
+            <p className="text-[8px] text-slate-400 mt-0.5 font-medium leading-none">{journeyConfig.featureCards[1].description}</p>
           </div>
 
           <div className="bg-white/40 border border-white/20 p-2 rounded-xl flex flex-col items-center text-center transition-all font-medium">
             <div className="w-6 h-6 rounded-md bg-[#DDF1FC]/85 text-[#1F6FB2] flex items-center justify-center mb-1">
               <Zap className="w-3.5 h-3.5 text-[#1F6FB2]" />
             </div>
-            <h3 className="text-[9.5px] font-extrabold text-[#333] leading-none">Fast Approval</h3>
-            <p className="text-[8px] text-slate-400 mt-0.5 leading-none">Simple check</p>
+            <h3 className="text-[9.5px] font-extrabold text-[#333] leading-none">{journeyConfig.featureCards[2].title}</h3>
+            <p className="text-[8px] text-slate-400 mt-0.5 leading-none">{journeyConfig.featureCards[2].description}</p>
           </div>
         </div>
 
@@ -488,24 +524,30 @@ export default function LoginPage() {
         <div className="w-full bg-[#DDF1FC]/35 border border-[#4CB8E8]/25 rounded-xl p-4 text-left relative overflow-hidden">
           {stage === "phone" ? (
             <>
-              <h3 className="text-[12px] font-bold text-[#1F6FB2] leading-none pb-0.5">Let&apos;s Get Started</h3>
+              <h3 className="text-[12px] font-bold text-[#1F6FB2] leading-none pb-0.5">{journeyConfig.formTitle}</h3>
               <p className="text-[10px] text-[#555] font-semibold mt-0.5">
-                Enter your mobile number to begin safely.
+                {journeyConfig.formDescription}
               </p>
 
               <form onSubmit={handlePhoneSubmit} className="mt-3.5 flex flex-col gap-2.5">
                 <div className="relative">
                   <div className="flex bg-white/95 border border-[#1F6FB2]/15 focus-within:border-[#1F6FB2] focus-within:ring-2 focus-within:ring-[#1F6FB2]/15 rounded-xl overflow-visible transition-all">
-                    {/* Country Trigger dropdown */}
-                    <button
-                      type="button"
-                      onClick={() => setShowCountryDropdown(!showCountryDropdown)}
-                      className="flex items-center gap-1 px-2.5 bg-slate-50 border-r border-[#1F6FB2]/10 hover:bg-slate-100 rounded-l-xl text-slate-700 font-semibold"
-                    >
-                      <span className="text-sm leading-none">{selectedCountry.flag}</span>
-                      <span className="text-xs font-semibold">{selectedCountry.code}</span>
-                      <ChevronDown className={`w-3 h-3 text-slate-400 transition-transform ${showCountryDropdown ? 'rotate-180' : ''}`} />
-                    </button>
+                    {availableCountries.length > 1 ? (
+                      <button
+                        type="button"
+                        onClick={() => setShowCountryDropdown(!showCountryDropdown)}
+                        className="flex items-center gap-1 px-2.5 bg-slate-50 border-r border-[#1F6FB2]/10 hover:bg-slate-100 rounded-l-xl text-slate-700 font-semibold"
+                      >
+                        <span className="text-sm leading-none">{selectedCountry.flag}</span>
+                        <span className="text-xs font-semibold">{selectedCountry.code}</span>
+                        <ChevronDown className={`w-3 h-3 text-slate-400 transition-transform ${showCountryDropdown ? 'rotate-180' : ''}`} />
+                      </button>
+                    ) : (
+                      <div className="flex items-center gap-1 px-2.5 bg-slate-50 border-r border-[#1F6FB2]/10 rounded-l-xl text-slate-700 font-semibold">
+                        <span className="text-sm leading-none">{selectedCountry.flag}</span>
+                        <span className="text-xs font-semibold">{selectedCountry.code}</span>
+                      </div>
+                    )}
 
                     {/* Number field */}
                     <input
@@ -522,7 +564,7 @@ export default function LoginPage() {
 
                   {/* Overlapping dropdown items */}
                   <AnimatePresence>
-                    {showCountryDropdown && (
+                    {showCountryDropdown && availableCountries.length > 1 && (
                       <>
                         <div className="fixed inset-0 z-10" onClick={() => setShowCountryDropdown(false)} />
                         <motion.div 
@@ -531,7 +573,7 @@ export default function LoginPage() {
                           exit={{ opacity: 0, y: 3 }}
                           className="absolute left-0 top-12 w-full max-w-[240px] bg-white border border-slate-150 rounded-xl shadow-lg z-25 overflow-hidden divide-y divide-slate-100"
                         >
-                          {GCC_COUNTRIES.map((country) => (
+                          {availableCountries.map((country) => (
                             <button
                               key={country.code}
                               type="button"
@@ -591,7 +633,7 @@ export default function LoginPage() {
                     </span>
                   ) : (
                     <>
-                      <span className="text-xs">Continue</span>
+                      <span className="text-xs">{journeyConfig.phoneCtaLabel ?? 'Continue'}</span>
                       <ArrowRight className="w-3.5 h-3.5" />
                     </>
                   )}
@@ -604,14 +646,16 @@ export default function LoginPage() {
                 <div className="text-center py-4">
                   <h3 className="text-[14px] font-bold text-[#2EAF62] leading-none mb-2">Login Successful</h3>
                   <p className="text-[11px] text-[#555] font-semibold">
-                    Taking you to your landing page...
+                    {journeyConfig.otpSuccessDescription ?? 'Taking you to your landing page...'}
                   </p>
                 </div>
               ) : (
                 <>
-                  <h3 className="text-[12px] font-bold text-[#1F6FB2] leading-none pb-0.5 text-center">Verify OTP</h3>
+                  <h3 className="text-[12px] font-bold text-[#1F6FB2] leading-none pb-0.5 text-center">
+                    {journeyConfig.otpTitle ?? 'Verify OTP'}
+                  </h3>
                   <p className="text-[10px] text-[#555] font-semibold mt-0.5 text-center">
-                    A 4-digit code was sent to {selectedCountry.code} {phone}
+                    {journeyConfig.otpDescription ?? 'A 4-digit code was sent to'} {selectedCountry.code} {phone}
                   </p>
 
                   <form onSubmit={handleOtpSubmit} className="mt-4 flex flex-col gap-3">
@@ -656,7 +700,7 @@ export default function LoginPage() {
                           Verifying...
                         </span>
                       ) : (
-                        <span className="text-xs">Verify & Continue</span>
+                        <span className="text-xs">{journeyConfig.otpSubmitLabel ?? 'Verify & Continue'}</span>
                       )}
                     </button>
 
@@ -698,10 +742,12 @@ export default function LoginPage() {
           <div className="flex justify-center gap-3 text-[9px] font-bold text-slate-500/80">
             <span>● Secured</span>
             <span>● Protected Data</span>
-            <span>● Shariah Compliant</span>
+            <span>{isIndiaJourney ? "● RBI Compliant" : "● Shariah Compliant"}</span>
           </div>
           <p className="text-[8.5px] text-gray-400 font-semibold leading-tight">
-            By proceeding, you agree to Terms & Conditions • SAMA Licensed Fintech
+            {isIndiaJourney
+              ? "By proceeding, you agree to the Terms & Conditions • RBI Guidelines Compliant"
+              : "By proceeding, you agree to Terms & Conditions • SAMA Licensed Fintech"}
           </p>
         </div>
       </div>

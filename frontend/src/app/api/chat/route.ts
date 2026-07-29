@@ -1,4 +1,5 @@
 import { cookies } from "next/headers";
+import { buildJourneySessionId, resolveJourneyVariant } from "@/lib/journeyConfig";
 
 const BACKEND_URL = process.env.BACKEND_URL ?? "http://localhost:8000";
 
@@ -34,9 +35,21 @@ export async function POST(req: Request) {
   let sessionId = req.headers.get("x-session-id") || body.sessionId;
   if (!sessionId) {
     const referer = req.headers.get("referer") || "";
-    const urlMatch = referer.match(/\/([a-z_]+)\/?$/);
-    const product = urlMatch ? urlMatch[1] : "default";
-    sessionId = `${phone}_${product}`;
+    let product = "default";
+    let journeyParam: string | null = null;
+
+    try {
+      const refererUrl = new URL(referer);
+      const urlMatch = refererUrl.pathname.match(/\/([a-z_]+)\/?$/);
+      product = urlMatch ? urlMatch[1] : "default";
+      journeyParam = refererUrl.searchParams.get("journey");
+    } catch {
+      const urlMatch = referer.match(/\/([a-z_]+)\/?$/);
+      product = urlMatch ? urlMatch[1] : "default";
+    }
+
+    const variant = resolveJourneyVariant(journeyParam).key;
+    sessionId = buildJourneySessionId(phone, product, variant);
   }
   console.log("[chat proxy] resolved session:", sessionId, "messageCount:", messages?.length ?? 0);
 

@@ -9,7 +9,7 @@ import { ChatInputBar } from '@/components/chat/ChatInputBar';
 import { VoiceModePanel } from '@/components/chat/VoiceModePanel';
 import { LogOut } from 'lucide-react';
 import Image from 'next/image';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { useVoice } from '@/hooks/useVoice';
 import { SpeakContext } from '@/hooks/SpeakContext';
 import { buildDisbursementVoiceSummary, buildVoicePreviewText, buildVoiceSpeechText } from '@/lib/voicePrompt';
@@ -18,6 +18,7 @@ import { dispatchVoiceWidgetFieldUpdate, isEditableVoiceWidget, resolveVisibleVo
 import { PersonalDetailsWidget } from '@/components/widgets/PersonalDetailsWidget';
 import type { PersonalDetailsWidgetProps } from '@/components/widgets/PersonalDetailsWidget';
 import type { MessageBubbleProps } from '@/components/chat/MessageBubble';
+import { buildJourneySessionId, getJourneyDisplayName, resolveJourneyVariant, buildLoginHref } from '@/lib/journeyConfig';
 
 /** Convert saved conversation messages → UIMessage format for useChat */
 function toUIMessages(saved: { role: string; content: string; timestamp?: number; widget?: unknown; metadata?: unknown }[]): UIMessage[] {
@@ -383,7 +384,10 @@ function getVoiceSpeechContent(message: UIMessage | undefined): { previewText: s
 export default function JourneyPage() {
   const params = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const product = params.product as string;
+  const journeyConfig = resolveJourneyVariant(searchParams.get('journey'));
+  const journeyLabel = getJourneyDisplayName(product, journeyConfig.key);
 
   const [phone, setPhone] = useState<string | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
@@ -398,18 +402,32 @@ export default function JourneyPage() {
         if (data.authenticated && data.phone) {
           setPhone(data.phone);
         } else {
-          router.replace("/login");
+          router.replace(buildLoginHref(journeyConfig.key));
         }
         setAuthChecked(true);
       })
       .catch(() => {
-        router.replace("/login");
+        router.replace(buildLoginHref(journeyConfig.key));
         setAuthChecked(true);
       });
-  }, [router]);
+  }, [journeyConfig.key, router]);
 
   // Session ID derived from phone number + product (stable across refreshes)
-  const sessionId = phone ? `${phone}_${product}` : "";
+  const sessionId = phone ? buildJourneySessionId(phone, product, journeyConfig.key) : "";
+
+  const resolvedInitialSession = useMemo(() => {
+    const baseSession: Record<string, unknown> = {
+      ...(initialSession ?? {}),
+      product,
+      region: journeyConfig.region,
+    };
+
+    if (journeyConfig.sessionVariant) {
+      baseSession.journey_variant = journeyConfig.sessionVariant;
+    }
+
+    return baseSession;
+  }, [initialSession, journeyConfig.region, journeyConfig.sessionVariant, product]);
 
   // Load conversation history after auth
   useEffect(() => {
@@ -424,9 +442,9 @@ export default function JourneyPage() {
           // No history — show welcome message
           setInitialMessages([
             {
-              id: `welcome_${product}`,
+              id: `welcome_${journeyConfig.key}_${product}`,
               role: 'assistant' as const,
-              parts: [{ type: 'text' as const, text: `Welcome to the ${product.replace('_', ' ')} application! I am Raya, your Agentic Finance Advisor. To get started, could you please provide your National ID?` }],
+              parts: [{ type: 'text' as const, text: `Welcome to the ${journeyLabel} application! I am Raya, your Agentic Finance Advisor. To get started, could you please provide your National ID?` }],
             },
           ]);
         }
@@ -435,13 +453,13 @@ export default function JourneyPage() {
         setInitialSession(null);
         setInitialMessages([
           {
-            id: `welcome_${product}`,
+            id: `welcome_${journeyConfig.key}_${product}`,
             role: 'assistant' as const,
-            parts: [{ type: 'text' as const, text: `Welcome to the ${product.replace('_', ' ')} application! I am Raya, your Agentic Finance Advisor. To get started, could you please provide your National ID?` }],
+            parts: [{ type: 'text' as const, text: `Welcome to the ${journeyLabel} application! I am Raya, your Agentic Finance Advisor. To get started, could you please provide your National ID?` }],
           },
         ]);
       });
-  }, [sessionId, product]);
+  }, [journeyConfig.key, journeyLabel, product, sessionId]);
 
   // Show loading while checking auth or loading history
   if (!authChecked || !phone || !initialMessages) {
@@ -458,18 +476,20 @@ export default function JourneyPage() {
         product={product}
         sessionId={sessionId}
         initialMessages={initialMessages}
-        initialSession={initialSession}
+        initialSession={resolvedInitialSession}
+        journeyConfig={journeyConfig}
       />
     </SpeakContext.Provider>
   );
 }
 
 /** Inner component — only mounted after auth + history are resolved */
-function ChatView({ product, sessionId, initialMessages, initialSession }: {
+function ChatView({ product, sessionId, initialMessages, initialSession, journeyConfig }: {
   product: string;
   sessionId: string;
   initialMessages: UIMessage[];
   initialSession: Record<string, unknown> | null;
+  journeyConfig: ReturnType<typeof resolveJourneyVariant>;
 }) {
   const router = useRouter();
   const [input, setInput] = useState('');
@@ -1409,10 +1429,12 @@ function ChatView({ product, sessionId, initialMessages, initialSession }: {
             />
           </div>
           <div className="min-w-0">
-            <h2 className="type-display-sm text-slate-900 capitalize truncate">
-              {product.replace('_', ' ')}
+            <h2 className="type-display-sm text-slate-900 capitalize truncate pb-1">
+              {journeyConfig.key === 'india' ? journeyConfig.agentName : product.replace('_', ' ')}
             </h2>
-            <p className="type-overline pt-1 text-slate-500">Agentic Finance Advisor</p>
+            {journeyConfig.key !== 'india' && (
+              <p className="type-overline pt-1 text-slate-500">Agentic Finance Advisor</p>
+            )}
           </div>
           <div className="relative ml-auto flex items-center gap-1">
             <div className="relative">

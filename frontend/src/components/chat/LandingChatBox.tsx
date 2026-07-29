@@ -5,16 +5,26 @@ import { ChatInputBar } from "./ChatInputBar";
 import { VoiceModePanel } from "./VoiceModePanel";
 import { useVoice } from "@/hooks/useVoice";
 import { resolveLandingVoiceIntent, resolveProductIntent, type ProductId } from "@/lib/productIntent";
+import type { JourneyVariant } from "@/lib/journeyConfig";
 
 interface LandingChatBoxProps {
   onSelectProduct: (product: ProductId) => void;
+  journeyVariant?: JourneyVariant;
 }
 
-export function LandingChatBox({ onSelectProduct }: LandingChatBoxProps) {
+function getLandingIntro(journeyVariant: JourneyVariant): string {
+  if (journeyVariant === "india") {
+    return "Hi, I am Raya. I can guide you through the Personal Finance journey for India, or start the application when you are ready.";
+  }
+
+  return "Hi, I am Raya. You can ask me about the finance options, or tell me which journey you want to start.";
+}
+
+export function LandingChatBox({ onSelectProduct, journeyVariant = "default" }: LandingChatBoxProps) {
   const [input, setInput] = useState("");
   const [voiceModeOpen, setVoiceModeOpen] = useState(false);
   const [voicePanelText, setVoicePanelText] = useState(
-    "Hi, I am Raya. You can ask me about the finance options, or tell me which journey you want to start."
+    getLandingIntro(journeyVariant)
   );
   const [lastVoiceUserText, setLastVoiceUserText] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -42,7 +52,7 @@ export function LandingChatBox({ onSelectProduct }: LandingChatBoxProps) {
       if (!trimmed) return;
 
       if (voiceModeOpen) {
-        const result = resolveLandingVoiceIntent(trimmed);
+        const result = resolveLandingVoiceIntent(trimmed, journeyVariant);
 
         setLastVoiceUserText(trimmed);
         setVoicePanelText(result.answer);
@@ -65,7 +75,7 @@ export function LandingChatBox({ onSelectProduct }: LandingChatBoxProps) {
         return;
       }
 
-      const result = resolveProductIntent(trimmed);
+      const result = resolveProductIntent(trimmed, journeyVariant);
       setVoicePanelText(result.answer);
 
       if (result.shouldRoute && result.product) {
@@ -73,7 +83,7 @@ export function LandingChatBox({ onSelectProduct }: LandingChatBoxProps) {
         routeTimerRef.current = setTimeout(() => onSelectProduct(result.product!), 450);
       }
     },
-    [clearRouteTimer, onSelectProduct, speak, voiceModeOpen]
+    [clearRouteTimer, journeyVariant, onSelectProduct, speak, voiceModeOpen]
   );
 
   useEffect(() => {
@@ -108,7 +118,10 @@ export function LandingChatBox({ onSelectProduct }: LandingChatBoxProps) {
   };
 
   const handleOpenVoiceMode = () => {
-    const intro = "Hi, I am Raya. I am your personal finance assistant. Let's start your digital finance application. You can ask me about the finance options, or tell me which journey you want to start.";
+    const intro =
+      journeyVariant === "india"
+        ? "Hi, I am Raya. I am your personal finance assistant for India. I can explain the Personal Finance journey or start your application when you are ready."
+        : "Hi, I am Raya. I am your personal finance assistant. Let's start your digital finance application. You can ask me about the finance options, or tell me which journey you want to start.";
     setVoiceModeOpen(true);
     setVoicePanelText(intro);
     setLastVoiceUserText("");
