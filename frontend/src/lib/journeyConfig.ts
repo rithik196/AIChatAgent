@@ -96,7 +96,7 @@ const DEFAULT_JOURNEY_CONFIG: JourneyConfig = {
 };
 
 const INDIA_JOURNEY_CONFIG: JourneyConfig = {
-    head:"Finance",
+    head:"Loan",
   key: "india",
   region: "IN",
   queryValue: "india",

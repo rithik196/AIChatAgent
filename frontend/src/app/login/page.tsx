@@ -16,8 +16,8 @@ const getSpeechSynthesisSafe = (): SpeechSynthesis | null => {
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       return window.speechSynthesis;
     }
-  } catch (err) {
-    console.warn('speechSynthesis is not accessible in this context:', err);
+  } catch {
+    console.warn('speechSynthesis is not accessible in this context');
   }
   return null;
 };
@@ -27,8 +27,8 @@ const getSpeechSynthesisUtteranceSafe = (): typeof SpeechSynthesisUtterance | nu
     if (typeof window !== 'undefined' && 'SpeechSynthesisUtterance' in window) {
       return window.SpeechSynthesisUtterance;
     }
-  } catch (err) {
-    console.warn('SpeechSynthesisUtterance is not accessible in this context:', err);
+  } catch {
+    console.warn('SpeechSynthesisUtterance is not accessible in this context');
   }
   return null;
 };
@@ -86,7 +86,7 @@ function playGreeting(
           if (!v || typeof v.name !== 'string' || typeof v.lang !== 'string') return false;
           return v.lang.toLowerCase().startsWith('en') && v.name.includes('Google');
         });
-      } catch (err) {}
+      } catch {}
     }
 
     if (!chosenVoice) {
@@ -95,7 +95,7 @@ function playGreeting(
           if (!v || typeof v.lang !== 'string') return false;
           return v.lang.toLowerCase().startsWith('en');
         });
-      } catch (err) {}
+      } catch {}
     }
 
     if (chosenVoice) {
@@ -116,10 +116,10 @@ function playGreeting(
       }
       synth.speak(utterance);
       hasSpokenRef.current = true;
-    } catch (err) {
+    } catch {
       setIsAvatarSpeaking(false);
     }
-  } catch (e) {
+  } catch {
     setIsAvatarSpeaking(false);
   }
 }
@@ -164,7 +164,7 @@ export default function LoginPage() {
           }
         };
       }
-    } catch (e) {}
+    } catch {}
 
     const triggerSpeechOnInteraction = () => {
       if (!hasSpokenRef.current) {
@@ -179,7 +179,7 @@ export default function LoginPage() {
       if (inputRef.current) {
         try {
           inputRef.current.focus();
-        } catch (err) {}
+        } catch {}
       }
     }, 1500);
 
@@ -236,7 +236,7 @@ export default function LoginPage() {
     if (synth) {
       try {
         synth.cancel();
-      } catch (err) {}
+      } catch {}
     }
 
     try {
@@ -326,8 +326,172 @@ export default function LoginPage() {
   };
 
   const selectProduct = (product: ProductId | string) => {
+    if (isIndiaJourney && product !== "personal_loan") {
+      return;
+    }
+
     router.push(buildJourneyHref(product, journeyConfig.key));
   };
+
+  if (isIndiaJourney) {
+    return (
+      <div className="min-h-[100dvh] bg-[#F7FAFD] text-slate-800 flex items-center justify-center font-sans p-3 sm:p-4 antialiased relative overflow-hidden">
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-80 h-80 bg-gradient-to-tr from-[#DDF1FC] to-[#4CB8E8]/20 rounded-full pointer-events-none blur-3xl -z-10 opacity-70" />
+        <div className="absolute bottom-6 left-6 w-64 h-64 bg-[#4CB8E8]/5 pointer-events-none blur-3xl -z-10 opacity-40" />
+
+        <div className="relative w-full max-w-[380px] bg-white/75 backdrop-blur-xl border border-white/60 rounded-[28px] shadow-xl overflow-hidden flex flex-col items-center p-5 pb-[calc(88px+env(safe-area-inset-bottom))] text-center gap-3.5 select-none">
+          <div className="absolute top-0 left-0 w-full h-24 bg-gradient-to-b from-[#DDF1FC]/60 to-transparent -z-10" />
+
+          <div className="flex flex-col items-center w-full mt-1">
+            <div className="relative mb-2">
+              <AnimatePresence>
+                {isAvatarSpeaking && (
+                  <>
+                    <motion.div
+                      initial={{ scale: 0.8, opacity: 0.5 }}
+                      animate={{ scale: 1.3, opacity: 0 }}
+                      exit={{ opacity: 0 }}
+                      transition={{ repeat: Infinity, duration: 1.6, ease: "easeOut" }}
+                      className="absolute inset-0 bg-[#4CB8E8]/30 rounded-full"
+                    />
+                    <motion.div
+                      initial={{ scale: 0.9, opacity: 0.4 }}
+                      animate={{ scale: 1.45, opacity: 0 }}
+                      exit={{ opacity: 0 }}
+                      transition={{ repeat: Infinity, duration: 1.6, delay: 0.5, ease: "easeOut" }}
+                      className="absolute inset-0 bg-[#1F6FB2]/15 rounded-full"
+                    />
+                  </>
+                )}
+              </AnimatePresence>
+
+              <motion.div
+                initial={{ scale: 0.8, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                transition={{ type: "spring", stiffness: 140, damping: 14 }}
+                onClick={() => playGreeting(journeyConfig.assistantGreeting, hasSpokenRef, setIsAvatarSpeaking, true)}
+                title="Click to hear Raya speak"
+                className="relative w-12 h-12 rounded-full bg-gradient-to-tr from-[#1F6FB2] to-[#4CB8E8] flex items-center justify-center p-[2px] shadow-[0_0_15px_rgba(31,111,178,0.25)] border-2 border-white cursor-pointer hover:scale-105 active:scale-95 transition-all"
+              >
+                <div className="w-full h-full rounded-full bg-white flex items-center justify-center overflow-hidden relative">
+                  <div className="absolute inset-0 bg-[#F5F9FD] flex items-center justify-center">
+                    <span className="text-xl">🤖</span>
+                  </div>
+
+                  {isAvatarSpeaking && (
+                    <div className="absolute bottom-1.5 left-0 right-0 flex justify-center items-end gap-[2px] h-2.5">
+                      <span className="w-[2px] h-2 bg-[#1F6FB2] rounded-full animate-bounce" style={{ animationDelay: '0.1s' }} />
+                      <span className="w-[2px] h-2.5 bg-[#4CB8E8] rounded-full animate-bounce" style={{ animationDelay: '0.3s' }} />
+                      <span className="w-[2px] h-1.5 bg-[#1F6FB2] rounded-full animate-bounce" style={{ animationDelay: '0.2s' }} />
+                      <span className="w-[2px] h-2.5 bg-[#4CB8E8] rounded-full animate-bounce" style={{ animationDelay: '0.4s' }} />
+                    </div>
+                  )}
+                </div>
+
+                <div className="absolute -bottom-0.5 -right-0.5 bg-[#2EAF62] w-3 h-3 rounded-full border border-white" />
+              </motion.div>
+            </div>
+
+            <div className="text-[10px] font-bold text-[#1F6FB2] tracking-widest uppercase mb-0.5">
+              Raya
+            </div>
+            <div className="text-[10.5px] font-semibold text-slate-500 tracking-tight flex items-center gap-1">
+              <span>Your Personal {journeyConfig.head} Assistant</span>
+              <span className="w-1.5 h-1.5 bg-[#2EAF62] rounded-full animate-pulse" />
+            </div>
+          </div>
+
+          <div className="text-center w-full px-1">
+            <h2 className="text-base font-extrabold text-[#1F6FB2] tracking-tight leading-none mb-1">
+              {journeyConfig.title}
+            </h2>
+            <p className="text-[11px] text-[#555] font-medium leading-relaxed max-w-[270px] mx-auto">
+              {journeyConfig.subtitle}
+            </p>
+          </div>
+
+          <div className="grid grid-cols-3 gap-2 w-full">
+            <div className="bg-white/40 border border-white/20 p-2 rounded-xl flex flex-col items-center text-center transition-all">
+              <div className="w-6 h-6 rounded-md bg-[#DDF1FC] text-[#1F6FB2] flex items-center justify-center mb-1">
+                <Mic className="w-3.5 h-3.5 text-[#1F6FB2]" />
+              </div>
+              <h3 className="text-[9.5px] font-extrabold text-[#333] leading-none">{journeyConfig.featureCards[0].title}</h3>
+              <p className="text-[8px] text-slate-400 mt-0.5 font-medium leading-none">{journeyConfig.featureCards[0].description}</p>
+            </div>
+
+            <div className="bg-white/40 border border-white/20 p-2 rounded-xl flex flex-col items-center text-center transition-all">
+              <div className="w-6 h-6 rounded-md bg-[#DDF1FC]/85 text-[#1F6FB2] flex items-center justify-center mb-1">
+                <MessageSquare className="w-3.5 h-3.5 text-[#1F6FB2]" />
+              </div>
+              <h3 className="text-[9.5px] font-extrabold text-[#333] leading-none">{journeyConfig.featureCards[1].title}</h3>
+              <p className="text-[8px] text-slate-400 mt-0.5 font-medium leading-none">{journeyConfig.featureCards[1].description}</p>
+            </div>
+
+            <div className="bg-white/40 border border-white/20 p-2 rounded-xl flex flex-col items-center text-center transition-all font-medium">
+              <div className="w-6 h-6 rounded-md bg-[#DDF1FC]/85 text-[#1F6FB2] flex items-center justify-center mb-1">
+                <Zap className="w-3.5 h-3.5 text-[#1F6FB2]" />
+              </div>
+              <h3 className="text-[9.5px] font-extrabold text-[#333] leading-none">{journeyConfig.featureCards[2].title}</h3>
+              <p className="text-[8px] text-slate-400 mt-0.5 leading-none">{journeyConfig.featureCards[2].description}</p>
+            </div>
+          </div>
+
+          <div className="w-full space-y-5 pt-1">
+            <div className="text-center space-y-2">
+              <p className="text-[14px] leading-none font-semibold text-[#0D141A] pt-2 text-center">Choose a category to begin</p>
+            </div>
+
+            <div className="space-y-3">
+              {landingChoices.map((choice) => {
+                const isPrimaryAction = choice.id === "personal_loan";
+
+                return (
+                  <button
+                    key={choice.id + choice.label}
+                    type="button"
+                    onClick={() => {
+                      if (isPrimaryAction) {
+                        selectProduct(choice.id);
+                      }
+                    }}
+                    className={`w-full rounded-full px-6 py-3.5 text-center text-[14px] leading-5 font-semibold text-white shadow-[0_8px_18px_-10px_rgba(15,76,120,0.6)] transition-all ${
+                      isPrimaryAction ? 'hover:brightness-105 active:scale-[0.99]' : 'cursor-pointer'
+                    }`}
+                    style={{ background: "linear-gradient(to left, #0F4C78, #3CC2E1)" }}
+                    aria-label={choice.label}
+                  >
+                    {choice.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="w-full bg-white/40 border border-white/20 rounded-xl p-2 flex items-center gap-2 text-left">
+            <Mic className="w-3.5 h-3.5 text-[#1F6FB2] shrink-0" />
+            <p className="text-[10px] text-[#1F6FB2] font-semibold leading-tight">
+              Use voice, text, or both throughout the entire check.
+            </p>
+          </div>
+
+          <div className="w-full pt-2.5 border-t border-gray-200/45 flex flex-col items-center gap-1">
+            <div className="flex justify-center gap-3 text-[9px] font-bold text-slate-500/80">
+              <span>● Secure Application</span>
+              <span>● Protected Data</span>
+              <span>● Instant Approval Journey</span>
+            </div>
+            <p className="text-[8.5px] text-gray-400 font-semibold leading-tight">
+              By proceeding, you agree to the Loan Terms & Conditions and Privacy Policy
+            </p>
+          </div>
+
+          <div className="absolute inset-x-3 bottom-3 z-20 rounded-[20px] bg-white/98 p-3 shadow-[0_-4px_20px_-10px_rgba(0,0,0,0.12)] backdrop-blur-md">
+            <LandingChatBox onSelectProduct={selectProduct} journeyVariant={journeyConfig.key} />
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (isProductStage) {
     return (
@@ -740,13 +904,13 @@ export default function LoginPage() {
 
         <div className="w-full pt-2.5 border-t border-gray-200/45 flex flex-col items-center gap-1">
           <div className="flex justify-center gap-3 text-[9px] font-bold text-slate-500/80">
-            <span>● Secured</span>
+            <span>{isIndiaJourney ? "● Secure Application" : "● Secured"}</span>
             <span>● Protected Data</span>
-            <span>{isIndiaJourney ? "● RBI Compliant" : "● Shariah Compliant"}</span>
+            <span>{isIndiaJourney ? "● Instant Approval Journey" : "● Shariah Compliant"}</span>
           </div>
           <p className="text-[8.5px] text-gray-400 font-semibold leading-tight">
             {isIndiaJourney
-              ? "By proceeding, you agree to the Terms & Conditions • RBI Guidelines Compliant"
+              ? "By proceeding, you agree to the Loan Terms & Conditions and Privacy Policy"
               : "By proceeding, you agree to Terms & Conditions • SAMA Licensed Fintech"}
           </p>
         </div>

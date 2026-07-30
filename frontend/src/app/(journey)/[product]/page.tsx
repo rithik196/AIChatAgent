@@ -396,6 +396,24 @@ export default function JourneyPage() {
 
   // Check auth on mount — redirect to login if not authenticated
   useEffect(() => {
+    if (journeyConfig.key === 'india') {
+      fetch("/customer_agent/api/auth/me")
+        .then((r) => r.json())
+        .then((data) => {
+          if (data.authenticated && data.phone) {
+            setPhone(data.phone);
+          } else {
+            setPhone("anonymous");
+          }
+          setAuthChecked(true);
+        })
+        .catch(() => {
+          setPhone("anonymous");
+          setAuthChecked(true);
+        });
+      return;
+    }
+
     fetch("/customer_agent/api/auth/me")
       .then((r) => r.json())
       .then((data) => {

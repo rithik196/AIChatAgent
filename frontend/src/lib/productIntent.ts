@@ -28,6 +28,19 @@ function detectIndiaProduct(value: string): ProductId | undefined {
   return undefined;
 }
 
+function mentionsUnsupportedIndiaProduct(value: string): boolean {
+  return (
+    value.includes("auto loan") ||
+    value.includes("car loan") ||
+    value.includes("car finance") ||
+    value.includes("vehicle loan") ||
+    value.includes("vehicle finance") ||
+    value.includes("home loan") ||
+    value.includes("home finance") ||
+    value.includes("mortgage")
+  );
+}
+
 function detectProduct(value: string, variant: JourneyVariant = "default"): ProductId | undefined {
   if (variant === "india") {
     return detectIndiaProduct(value);
@@ -167,6 +180,13 @@ export function resolveProductIntent(text: string, variant: JourneyVariant = "de
     };
   }
 
+  if (variant === "india" && mentionsUnsupportedIndiaProduct(value)) {
+    return {
+      answer: "For India, Personal Loan is available right now. Auto Loan and Home Loan are not available from this entry yet.",
+      shouldRoute: false,
+    };
+  }
+
   const product = detectProduct(value, variant);
   if (product) {
     const label = getJourneyDisplayName(product, variant);
@@ -217,6 +237,13 @@ export function resolveLandingVoiceIntent(text: string, variant: JourneyVariant 
     return {
       answer:
         "Sure. Cash Finance is for personal cash needs, Home Finance is for property-related needs, and Vehicle Finance is for vehicle-related funding. Tell me which one you would like to explore.",
+      shouldRoute: false,
+    };
+  }
+
+  if (variant === "india" && mentionsUnsupportedIndiaProduct(value)) {
+    return {
+      answer: "For India, I can open Personal Loan right now. Auto Loan and Home Loan are not available from this entry yet.",
       shouldRoute: false,
     };
   }
