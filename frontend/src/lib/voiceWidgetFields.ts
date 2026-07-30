@@ -84,6 +84,13 @@ function numberFromSpeech(value: string): number | null {
   const compact = value.replace(/,/g, "").trim();
   if (!compact) return null;
 
+  const applyAmountScale = (amount: number): number => {
+    if (/\b(lakh|lakhs|lac|lacs)\b/i.test(compact)) return amount * 100000;
+    if (/\b(thousand|k)\b/i.test(compact)) return amount * 1000;
+    if (/\b(million|m)\b/i.test(compact)) return amount * 1000000;
+    return amount;
+  };
+
   const digitTokens = compact
     .toLowerCase()
     .replace(/[^a-z0-9\s-]/g, " ")
@@ -107,9 +114,7 @@ function numberFromSpeech(value: string): number | null {
   const digitMatch = compact.match(/\d+(?:\.\d+)?/);
   if (digitMatch) {
     const parsed = Number(digitMatch[0]);
-    if (/\b(thousand|k)\b/i.test(compact)) return parsed * 1000;
-    if (/\b(million|m)\b/i.test(compact)) return parsed * 1000000;
-    return parsed;
+    return applyAmountScale(parsed);
   }
 
   const words: Record<string, number> = {
@@ -162,6 +167,10 @@ function numberFromSpeech(value: string): number | null {
     } else if (token === "hundred") {
       current = Math.max(current, 1) * 100;
       sawNumber = true;
+    } else if (token === "lakh" || token === "lakhs" || token === "lac" || token === "lacs") {
+      total += Math.max(current, 1) * 100000;
+      current = 0;
+      sawNumber = true;
     } else if (token === "thousand") {
       total += Math.max(current, 1) * 1000;
       current = 0;
@@ -203,7 +212,7 @@ function expenseAmountFromSpeech(value: string): number | null {
 
 function extractValueAfter(text: string, fieldPattern: string): string {
   const forwardMatch = text.match(
-    new RegExp(`(?:${fieldPattern})(?:\\s+(?:to|as|is|equals|equal to|be|with))?\\s+(.+)$`, "i")
+    new RegExp(`(?:${fieldPattern})(?:\\s+(?:to|as|is|equals|equal to|be|will be|should be|with))?\\s+(.+)$`, "i")
   );
   if (forwardMatch?.[1]) {
     return forwardMatch[1].trim().replace(/[.?!]$/g, "").trim();
@@ -341,9 +350,15 @@ function parseIncome(text: string): Record<string, string> | null {
 }
 
 function extractTenureValue(text: string): number | null {
-  const beforeMonths = text.match(/([a-z0-9\s-]{1,40})\s+months?\b/i);
+  const tenureValue = extractValueAfter(text, "tenure|duration");
+  if (tenureValue) {
+    return numberFromSpeech(tenureValue);
+  }
+
+  const beforeMonths = text.match(/(?:tenure|duration)?\s*([a-z0-9\s-]{1,40})\s+months?\b/i);
   if (beforeMonths?.[1]) {
-    return numberFromSpeech(beforeMonths[1]);
+    const candidate = beforeMonths[1].replace(/\b(amount|finance amount|loan amount)\b.*$/i, "").trim();
+    return numberFromSpeech(candidate || beforeMonths[1]);
   }
   return null;
 }
@@ -351,9 +366,11 @@ function extractTenureValue(text: string): number | null {
 function parseOffer(text: string): Record<string, number> | null {
   const updates: Record<string, number> = {};
 
-  const tenureFromUnit = extractTenureValue(text);
-  if (tenureFromUnit !== null) {
-    updates.tenure = Math.round(tenureFromUnit);
+  if (/\b(tenure|months?|duration)\b/.test(text)) {
+    const tenure = extractTenureValue(text);
+    if (tenure !== null) {
+      updates.tenure = Math.round(tenure);
+    }
   }
 
   if (/\b(amount|finance amount|loan amount)\b/.test(text)) {
@@ -363,14 +380,7 @@ function parseOffer(text: string): Record<string, number> | null {
     }
   }
 
-  if (/\b(tenure|months?|duration)\b/.test(text)) {
-    const tenure = numberFromSpeech(extractValueAfter(text, "tenure|months?|duration") || text);
-    if (tenure !== null) {
-      updates.tenure = Math.round(tenure);
-    }
-  }
-
-  if (Object.keys(updates).length === 0) {
+  if (Object.keys(updates).length === 0 && !/\b(months?|tenure|duration)\b/.test(text)) {
     const fallbackAmount = numberFromSpeech(text);
     if (fallbackAmount !== null) {
       updates.amount = Math.round(fallbackAmount);
