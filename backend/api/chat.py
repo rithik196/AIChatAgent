@@ -61,9 +61,19 @@ except Exception:
 
 COMMODITY_CERTIFICATE_TEMPLATE = REPO_ROOT / "frontend" / "public" / "assets" / "CommodityCertificate.html"
 COMMODITY_CERTIFICATE_OUTPUT_DIR = Path(os.getenv("COMMODITY_CERTIFICATE_OUTPUT_DIR", REPO_ROOT / ".data" / "generated_documents"))
-CHROME_CANDIDATES = (
-    Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),
-    Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"),
+_BROWSER_ENV_PATH = os.getenv("COMMODITY_CERTIFICATE_BROWSER") or os.getenv("BROWSER_EXECUTABLE_PATH")
+CHROME_CANDIDATES = tuple(
+    candidate
+    for candidate in (
+        Path(_BROWSER_ENV_PATH) if _BROWSER_ENV_PATH else None,
+        Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),
+        Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"),
+        Path("/usr/bin/chromium"),
+        Path("/usr/bin/chromium-browser"),
+        Path("/usr/bin/google-chrome"),
+        Path("/usr/bin/microsoft-edge"),
+    )
+    if candidate is not None
 )
 
 # ── In-memory session store (backed by agent persistence) ────────────
@@ -1274,6 +1284,8 @@ def _render_commodity_certificate_pdf_from_html(session: dict, pdf_path: Path) -
             str(browser),
             "--headless",
             "--disable-gpu",
+            "--no-sandbox",
+            "--disable-dev-shm-usage",
             "--allow-file-access-from-files",
             "--print-to-pdf-no-header",
             "--no-pdf-header-footer",
