@@ -53,7 +53,7 @@ export function FinalIVRConsentWidget() {
               onClick={() => {
                 window.dispatchEvent(new CustomEvent("mock-send-message", { detail: "OTP Verification" }));
               }}
-              className="w-full relative group overflow-hidden py-4 journey-widget-button border border-transparent transition-all duration-300 shadow-lg flex items-center justify-center gap-3"
+              className="w-full relative group overflow-hidden py-4 journey-widget-button  transition-all duration-300 shadow-lg flex items-center justify-center gap-3"
             >
               <div className="absolute inset-0 bg-gradient-to-r from-[#FB8B23]/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
               <svg className="w-5 h-5 text-[#FB8B23]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -69,7 +69,7 @@ export function FinalIVRConsentWidget() {
               onClick={() => {
                 window.dispatchEvent(new CustomEvent("mock-send-message", { detail: "IVR Verification" }));
               }}
-              className="w-full relative group overflow-hidden py-4 journey-widget-button border border-transparent transition-all duration-300 shadow-lg flex items-center justify-center gap-3"
+              className="w-full relative group overflow-hidden py-4 journey-widget-button transition-all duration-300 shadow-lg flex items-center justify-center gap-3"
             >
               <div className="absolute inset-0 bg-gradient-to-r from-[#FB8B23]/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
               <svg className="w-5 h-5 text-[#1B739E]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -85,7 +85,7 @@ export function FinalIVRConsentWidget() {
               onClick={() => {
                 window.dispatchEvent(new CustomEvent("mock-send-message", { detail: "I do not consent" }));
               }}
-              className="w-full py-4 journey-widget-button border border-transparent transition-all duration-300 shadow-lg flex items-center justify-center"
+              className="w-full py-4 journey-widget-button  transition-all duration-300 shadow-lg flex items-center justify-center"
             >
               <span className="text-[14px] leading-[16px] font-semibold">I do not consent</span>
             </motion.button>
