@@ -94,6 +94,14 @@ function detectExplicitJourneyStart(value: string, variant: JourneyVariant = "de
     "i want to start",
     "i want to go with",
     "move to",
+    "yes",
+    "yes please",
+    "sure",
+    "okay",
+    "ok",
+    "go ahead",
+    "proceed",
+    "continue",
   ];
 
   const mentionsJourney = explicitJourneyPhrases.some((phrase) => value.includes(phrase));
@@ -111,7 +119,7 @@ function detectExplicitJourneyStart(value: string, variant: JourneyVariant = "de
 
 function productInfo(product: ProductId, variant: JourneyVariant = "default"): string {
   if (variant === "india" && product === "personal_loan") {
-    return "Personal Finance is designed for everyday borrowing needs in the India journey. I can explain the steps or open the application whenever you are ready.";
+    return "Personal Loan is designed for everyday borrowing needs in the India journey. I can explain the steps or start the application whenever you are ready.";
   }
 
   switch (product) {
@@ -152,7 +160,7 @@ export function resolveProductIntent(text: string, variant: JourneyVariant = "de
     return {
       answer:
         variant === "india"
-          ? "Please ask about Personal Finance or tell me to start your India application."
+          ? "Please ask about Personal Loan or tell me to start your India application."
           : "Please choose a finance type or ask me what each option means.",
       shouldRoute: false,
     };
@@ -187,6 +195,18 @@ export function resolveProductIntent(text: string, variant: JourneyVariant = "de
     };
   }
 
+  if (variant === "india") {
+    const explicitProduct = detectExplicitJourneyStart(value, variant);
+    if (explicitProduct) {
+      const label = getJourneyDisplayName(explicitProduct, variant);
+      return {
+        product: explicitProduct,
+        answer: `Great, opening ${label} for you.`,
+        shouldRoute: true,
+      };
+    }
+  }
+
   const product = detectProduct(value, variant);
   if (product) {
     const label = getJourneyDisplayName(product, variant);
@@ -200,7 +220,7 @@ export function resolveProductIntent(text: string, variant: JourneyVariant = "de
   return {
     answer:
       variant === "india"
-        ? "I can help you with Personal Finance in India. You can ask how it works or tell me to start the application."
+        ? "I can help you with Personal Loan in India. You can ask how it works or tell me to start the application."
         : "I can help you choose a finance journey. You can say Cash Finance, Home Finance, or Vehicle Finance. You can also ask what the difference is.",
     shouldRoute: false,
   };
@@ -213,7 +233,7 @@ export function resolveLandingVoiceIntent(text: string, variant: JourneyVariant 
     return {
       answer:
         variant === "india"
-          ? "Please ask me about Personal Finance or tell me to start your India application."
+          ? "Please ask me about Personal Loan or tell me to start your India application."
           : "Please ask me about Cash Finance, Home Finance, or Vehicle Finance, or tell me which journey you want to start.",
       shouldRoute: false,
     };
@@ -229,7 +249,7 @@ export function resolveLandingVoiceIntent(text: string, variant: JourneyVariant 
     if (variant === "india") {
       return {
         answer:
-          "This India journey is focused on Personal Finance. I can explain the steps or open the application when you are ready.",
+          "This India journey is focused on Personal Loan. I can explain the steps or open the application when you are ready.",
         shouldRoute: false,
       };
     }
@@ -271,7 +291,7 @@ export function resolveLandingVoiceIntent(text: string, variant: JourneyVariant 
     return {
       answer:
         variant === "india"
-          ? "Of course. Ask me about the India Personal Finance journey, and I will explain it before we start anything."
+          ? "Of course. Ask me about the India Personal Loan journey, and I will explain it before we start anything."
           : "Of course. Ask me about Cash Finance, Home Finance, or Vehicle Finance, and I’ll explain it in a simple way before we start anything.",
       shouldRoute: false,
     };
@@ -280,7 +300,7 @@ export function resolveLandingVoiceIntent(text: string, variant: JourneyVariant 
   return {
     answer:
       variant === "india"
-        ? "I can help you understand the India Personal Finance journey or begin it when you are ready."
+        ? "I can help you understand the India Personal Loan journey or begin it when you are ready."
         : "I can help you understand the finance options or begin one when you're ready. Just ask me about Cash Finance, Home Finance, or Vehicle Finance.",
     shouldRoute: false,
   };

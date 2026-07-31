@@ -21,12 +21,8 @@ logger = logging.getLogger(__name__)
 
 # ── LLM client ──────────────────────────────────────────────────────
 _client: AsyncOpenAI | None = None
-LLM_BASE_URL = os.getenv("LLM_BASE_URL", "http://192.168.150.55:11436/v1")
-LLM_API_KEY = os.getenv("LLM_API_KEY", os.getenv("OPENAI_API_KEY", "local-llm"))
-
-# Keep both models configurable; default to the same local hosted model.
-CLASSIFY_MODEL = os.getenv("CLASSIFY_MODEL", os.getenv("OPENAI_MODEL", "trade-doc-ai"))
-RESPOND_MODEL = os.getenv("RESPOND_MODEL", CLASSIFY_MODEL)
+CLASSIFY_MODEL = "gpt-4o-mini"
+RESPOND_MODEL  = "gpt-4o-mini"
 
 CONTINUATION_PHRASES = (
     "yes",
@@ -84,7 +80,7 @@ DECLINE_PHRASES = (
 def _get_client() -> AsyncOpenAI:
     global _client
     if _client is None:
-        _client = AsyncOpenAI(base_url=LLM_BASE_URL, api_key=LLM_API_KEY)
+        _client = AsyncOpenAI()
     return _client
 
 
@@ -166,6 +162,32 @@ def _is_continuation_message(text: str) -> bool:
     if not normalized or _is_decline_message(normalized):
         return False
     return any(_contains_phrase(normalized, phrase) for phrase in CONTINUATION_PHRASES)
+
+
+def _is_india_personal_session(session: dict) -> bool:
+    return (
+        session.get("region") == "IN"
+        or session.get("journey_variant") == "india_personal"
+        or session.get("product") == "personal_loan"
+    )
+
+
+def _extract_india_mobile_number(text: str) -> str | None:
+    normalized = _normalize_user_text(text)
+    if not normalized:
+        return None
+
+    digits = re.sub(r"\D", "", normalized)
+    if len(digits) == 10:
+        return digits
+    if len(digits) == 12 and digits.startswith("91"):
+        return digits[-10:]
+
+    spoken_digits = _extract_spoken_otp(text, expected_len=10)
+    if spoken_digits and len(spoken_digits) == 10:
+        return spoken_digits
+
+    return None
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -328,7 +350,24 @@ def _fast_state_response(session: dict) -> str | None:
 
     # After dedupe completion: widget (Journey Overview) carries the content.
     if step == "identity" and sub_step == "identify_yourself":
+        if _is_india_personal_session(session):
+            return ""
         return "**Welcome aboard!** Here's a quick overview of the journey ahead and the steps you'll complete to secure your finance."
+
+    if step == "identity" and sub_step == "awaiting_start":
+        return ""
+
+    if step == "identity" and sub_step == "awaiting_india_mobile":
+        return "lets begin with your identity verification .\nplease let me know your 10 -didgit moblie number"
+
+    if step == "identity" and sub_step == "awaiting_india_otp":
+        return ""
+
+    if step == "identity" and sub_step == "india_loading":
+        return ""
+
+    if step == "identity" and sub_step == "welcome_back":
+        return ""
 
     # After Journey Overview "Yes/proceed": show profile-review text only.
     if step == "identity" and sub_step == "personal_details":
@@ -383,6 +422,8 @@ def _fast_state_response(session: dict) -> str | None:
         return ""
 
     if step == "offer" and sub_step == "pre_approved_offer":
+        if _is_india_personal_session(session):
+            return ""
         offer = session.get("offer", {})
         max_amount = offer.get("max_amount")
         if max_amount is None:
@@ -565,7 +606,11 @@ def _deterministic_classify(msg: str, step: str, sub_step: str, session: dict) -
 
     # ─── IDENTITY ─────────────────────────────────────
     if step == "identity":
-        if sub_step == "awaiting_id":
+        if _is_india_personal_session(session) and sub_step == "awaiting_start":
+            if _is_continuation_message(msg_lower):
+                return {"step": "identity", "intent": "STEP_DATA", "data": {"start_application": True}}
+
+        elif sub_step == "awaiting_id":
             id_match = re.search(r'\b([12]\d{9})\b', msg)
             if id_match:
                 id_number = id_match.group(1)
@@ -604,6 +649,24 @@ def _deterministic_classify(msg: str, step: str, sub_step: str, session: dict) -
             if _is_continuation_message(msg_lower):
                 return {"step": "identity", "intent": "STEP_DATA",
                         "data": {"proceed": True}}
+
+        elif _is_india_personal_session(session) and sub_step == "awaiting_india_mobile":
+            mobile_number = _extract_india_mobile_number(msg)
+            if mobile_number:
+                return {"step": "identity", "intent": "STEP_DATA", "data": {"india_mobile_number": mobile_number}}
+
+        elif _is_india_personal_session(session) and sub_step == "awaiting_india_otp":
+            otp = _extract_spoken_otp(msg, expected_len=6)
+            if otp:
+                return {"step": "identity", "intent": "STEP_DATA", "data": {"india_otp": otp}}
+
+        elif _is_india_personal_session(session) and sub_step == "india_loading":
+            if any(signal in msg_lower for signal in ("loading_complete", "done")):
+                return {"step": "identity", "intent": "STEP_DATA", "data": {"loading_complete": True}}
+
+        elif _is_india_personal_session(session) and sub_step == "welcome_back":
+            if "welcome_back_complete" in msg_lower or _is_continuation_message(msg_lower):
+                return {"step": "identity", "intent": "STEP_DATA", "data": {"welcome_back_complete": True}}
 
         elif sub_step == "personal_details":
             payload = _extract_structured_update(msg, "__SYS__PROFILE_COMPLETION")

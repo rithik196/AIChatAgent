@@ -46,6 +46,34 @@ DEFAULT_CREDIT_CARD_LIMIT = 20000.0
 DEFAULT_OFFER_TENURE = 60
 
 
+def _is_india_personal_session(session: dict) -> bool:
+    return (
+        session.get("region") == "IN"
+        or session.get("journey_variant") == "india_personal"
+        or session.get("product") == "personal_loan"
+    )
+
+
+def _extract_india_mobile_number(text: object) -> str | None:
+    digits = re.sub(r"\D", "", str(text or ""))
+    if len(digits) == 10:
+        return digits
+    if len(digits) == 12 and digits.startswith("91"):
+        return digits[-10:]
+    return None
+
+
+def _seed_india_preapproved_offer(session: dict) -> None:
+    session["offer"] = {
+        **(session.get("offer") or {}),
+        "max_amount": 150000,
+        "profit_rate": "11%",
+        "max_tenure": 84,
+        "currency": "INR",
+        "variant": "india_preapproved",
+    }
+
+
 def _parse_currency_amount(value: object) -> float | None:
     if value is None:
         return None
@@ -631,6 +659,12 @@ def _advance_session_state(extract: dict, session: dict) -> None:
     # STEP 1: IDENTITY
     # ═══════════════════════════════════════════
     if current_step == "identity":
+        if _is_india_personal_session(session) and current_sub == "awaiting_start":
+            if data.get("start_application") or data.get("continue") or data.get("proceed"):
+                session["sub_step"] = "identify_yourself"
+                logger.info("India user started the personal loan journey.")
+                return
+
         if data.get("id_number") and current_sub == "awaiting_id":
             # Validate ID format: must be exactly 10 digits starting with 1 or 2
             id_number = str(data["id_number"]).strip()
@@ -675,12 +709,42 @@ def _advance_session_state(extract: dict, session: dict) -> None:
                 logger.warning("Blocked invalid identify_yourself transition for session with customerType=%s journeyMode=%s", session.get("customerType"), session.get("journeyMode"))
                 return
             if data.get("proceed"):
-                session["sub_step"] = "personal_details"
-                logger.info("NTB user proceeded. Showing personal details.")
+                if _is_india_personal_session(session):
+                    session["sub_step"] = "awaiting_india_mobile"
+                    logger.info("India user proceeded from journey overview to mobile number collection.")
+                else:
+                    session["sub_step"] = "personal_details"
+                    logger.info("NTB user proceeded. Showing personal details.")
             elif data.get("cancel"):
                 session["step"] = "done"
                 session["sub_step"] = "cancel"
                 logger.info("User cancelled at identify_yourself.")
+
+        elif _is_india_personal_session(session) and current_sub == "awaiting_india_mobile":
+            mobile_number = _extract_india_mobile_number(data.get("india_mobile_number"))
+            if mobile_number:
+                session.setdefault("collected", {})["phone_number"] = mobile_number
+                session["sub_step"] = "awaiting_india_otp"
+                logger.info("India mobile number captured. Prompting for OTP.")
+
+        elif _is_india_personal_session(session) and current_sub == "awaiting_india_otp":
+            if data.get("india_otp"):
+                session["india_verification_otp"] = str(data.get("india_otp"))
+                session["sub_step"] = "india_loading"
+                logger.info("India OTP captured. Transitioning to verification loader.")
+
+        elif _is_india_personal_session(session) and current_sub == "india_loading":
+            if data.get("loading_complete"):
+                session["sub_step"] = "welcome_back"
+                logger.info("India OTP loader completed. Showing welcome back widget.")
+
+        elif _is_india_personal_session(session) and current_sub == "welcome_back":
+            if data.get("welcome_back_complete") or data.get("continue"):
+                _seed_india_preapproved_offer(session)
+                session["step"] = "offer"
+                session["step_number"] = 2
+                session["sub_step"] = "pre_approved_offer"
+                logger.info("India welcome-back completed. Showing Step 2 pre-approved offer.")
 
         elif current_sub == "personal_details":
             completion_state = _get_personal_completion_state(session)

@@ -165,7 +165,7 @@ export function buildJourneySessionId(phone: string, product: string, variant: J
 
 export function getJourneyDisplayName(product: string, variant: JourneyVariant): string {
   if (variant === "india" && product === "personal_loan") {
-    return "Personal Finance";
+    return "Personal Loan";
   }
 
   switch (product) {

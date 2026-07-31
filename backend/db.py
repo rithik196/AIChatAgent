@@ -13,6 +13,52 @@ except Exception:
     _get_customer_by_national_id_row = None
 
 CUSTOMER_DB = {
+    "8811223344": CustomerProfile(
+        name="Narendar Singh",
+        phone="8811223344",
+        email="narendar.singh@example.com",
+        personal=PersonalDetails(
+            id_number="8811223344",
+            id_expiration_date="26/08/2027",
+            age=32,
+            gender="Male",
+            dob_gr="15/01/1994",
+            dob_hj="1414",
+            marital_status="Married",
+            nationality="India",
+            first_name="Narendar",
+            father_name="Rajesh",
+            grandfather_name="Singh",
+            last_name="Singh",
+            dependents="2",
+            education="Bachelor's Degree",
+            income_type="Salaried"
+        ),
+        address=AddressDetails(
+            line1="12 Residency Road",
+            line2="Near MG Road",
+            street="Residency Road",
+            city="Bengaluru",
+            postal_code="560025",
+            house_type="Apartment"
+        ),
+        employment=EmploymentDetails(
+            type="Private Sector",
+            industry="Technology",
+            employer="Newgen Software",
+            experience="8 years",
+            work_address=AddressDetails(
+                line1="Manyata Tech Park",
+                city="Bengaluru",
+                postal_code="560045",
+            )
+        ),
+        income=IncomeDetails(
+            monthly="INR 125000",
+            obligations="18000",
+            credit_card_limit="INR 250000"
+        )
+    ),
     "5114881234": CustomerProfile(
         name="Abdul Rahman",
         phone="5114881234",

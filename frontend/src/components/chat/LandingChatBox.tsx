@@ -14,7 +14,7 @@ interface LandingChatBoxProps {
 
 function getLandingIntro(journeyVariant: JourneyVariant): string {
   if (journeyVariant === "india") {
-    return "Hi, I am Raya. I can guide you through the Personal Finance journey for India, or start the application when you are ready.";
+    return "Welcome to the Personal Loan application! I am Raya, your Personal Loan Advisor. would you like to start your loan journey ?";
   }
 
   return "Hi, I am Raya. You can ask me about the finance options, or tell me which journey you want to start.";
@@ -120,7 +120,7 @@ export function LandingChatBox({ onSelectProduct, journeyVariant = "default" }: 
   const handleOpenVoiceMode = () => {
     const intro =
       journeyVariant === "india"
-        ? "Hi, I am Raya. I am your personal finance assistant for India. I can explain the Personal Finance journey or start your application when you are ready."
+        ? "Welcome to the Personal Loan application! I am Raya, your Personal Loan Advisor. would you like to start your loan journey ?"
         : "Hi, I am Raya. I am your personal finance assistant. Let's start your digital finance application. You can ask me about the finance options, or tell me which journey you want to start.";
     setVoiceModeOpen(true);
     setVoicePanelText(intro);

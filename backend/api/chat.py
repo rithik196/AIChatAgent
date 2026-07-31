@@ -252,6 +252,8 @@ DECLINE_PHRASES = (
     "wait",
 )
 
+_INDIA_WIDGET_UNHANDLED = object()
+
 
 def _extract_digit_tokens(text: str) -> list[str]:
     tokens = re.findall(r"[a-z0-9]+", (text or "").lower())
@@ -364,6 +366,223 @@ def _default_gateway_session(session_id: str) -> dict:
         "disbursement": {},
         "_lastWidgetState": "identity/awaiting_id",
     }
+
+
+def _is_india_personal_session(session: dict | None) -> bool:
+    session = session or {}
+    return (
+        session.get("region") == "IN"
+        or session.get("journey_variant") == "india_personal"
+        or session.get("product") == "personal_loan"
+    )
+
+
+def _apply_gateway_journey_defaults(session: dict) -> dict:
+    if _is_india_personal_session(session):
+        session.setdefault("region", "IN")
+        session.setdefault("journey_variant", "india_personal")
+        session.setdefault("product", "personal_loan")
+        session.setdefault("step", "identity")
+        session.setdefault("sub_step", "awaiting_start")
+        session.setdefault("step_number", 1)
+        session.setdefault("total_steps", 5)
+        session.setdefault("user_type", "unknown")
+        session.setdefault("customerType", "UNKNOWN")
+        session.setdefault("journeyMode", "PRE_DEDUPE")
+        session.setdefault("journeyOrigin", "UNKNOWN")
+        session.setdefault("transitionReason", None)
+        session.setdefault("collected", {})
+        session.setdefault("offer", {})
+        session.setdefault("finance_summary", {})
+        session.setdefault("disbursement", {})
+        session.setdefault("_lastWidgetState", "identity/awaiting_start")
+        return session
+
+    session.setdefault("region", "SA")
+    session.setdefault("step", "identity")
+    session.setdefault("sub_step", "awaiting_id")
+    session.setdefault("step_number", 1)
+    session.setdefault("total_steps", 5)
+    session.setdefault("product", "cash_finance")
+    session.setdefault("user_type", "unknown")
+    session.setdefault("customerType", "UNKNOWN")
+    session.setdefault("journeyMode", "PRE_DEDUPE")
+    session.setdefault("journeyOrigin", "UNKNOWN")
+    session.setdefault("transitionReason", None)
+    session.setdefault("collected", {})
+    session.setdefault("offer", {})
+    session.setdefault("finance_summary", {})
+    session.setdefault("disbursement", {})
+    session.setdefault("_lastWidgetState", "identity/awaiting_id")
+    return session
+
+
+def _repair_legacy_india_entry_state(session: dict) -> dict:
+    if not _is_india_personal_session(session):
+        return session
+
+    collected = session.get("collected") or {}
+    has_identity = bool(collected.get("id_number") or session.get("id_number"))
+    if session.get("step") == "identity" and session.get("sub_step") == "awaiting_id" and not has_identity:
+        session["sub_step"] = "awaiting_start"
+        session["_lastWidgetState"] = "identity/awaiting_start"
+    return session
+
+
+def _resolve_india_session_phone(session: dict) -> str:
+    collected_phone = session.get("collected", {}).get("phone_number", "")
+    if collected_phone:
+        return str(collected_phone).strip()
+    return _get_phone_from_session_id(session.get("session_id", ""))
+
+
+def _resolve_india_welcome_name(session: dict) -> str:
+    phone = _resolve_india_session_phone(session)
+    if phone:
+        customer = get_customer_by_phone(phone)
+        if customer and getattr(customer, "name", None):
+            return customer.name
+    if phone == "8811223344":
+        return "Narendar Singh"
+    return "Narendra Kumar"
+
+
+def _hydrate_india_customer_profile(session: dict) -> None:
+    phone = _resolve_india_session_phone(session)
+    if phone:
+        customer = get_customer_by_phone(phone)
+        if customer is not None:
+            session["customer_profile"] = _customer_to_widget_data(customer)
+            return
+
+    session["customer_profile"] = {
+        "name": _resolve_india_welcome_name(session),
+        "phone": phone,
+        "email": "",
+        "personal": {
+            "idNumber": "",
+            "idExpirationDate": "",
+            "nationality": "India",
+            "levelOfEducation": "",
+            "maritalStatus": "",
+            "dependents": "",
+        },
+        "address": {},
+        "employment": {
+            "type": "",
+            "industry": "",
+            "employer": "",
+            "experience": "",
+            "workAddress": {},
+        },
+        "income": {
+            "monthly": "",
+            "obligations": "",
+            "creditCardLimit": "",
+        },
+    }
+
+
+def _extract_india_mobile_number(text: str) -> str | None:
+    normalized = _normalize_chat_text(text)
+    if not normalized:
+        return None
+
+    exact_digits = re.sub(r"\D", "", normalized)
+    if len(exact_digits) == 10:
+        return exact_digits
+    if len(exact_digits) == 12 and exact_digits.startswith("91"):
+        return exact_digits[-10:]
+
+    digit_tokens = _extract_digit_tokens(normalized)
+    if len(digit_tokens) == 10:
+        return "".join(digit_tokens)
+    if len(digit_tokens) == 12 and "".join(digit_tokens[:2]) == "91":
+        return "".join(digit_tokens[-10:])
+
+    return None
+
+
+def _india_mobile_prompt_text() -> str:
+    return "Let's begin with your Identity Verification.\nPlease let me know your 10-digit Mobile Number"
+
+
+def _india_mobile_prompt_ui_flags() -> dict[str, Any]:
+    return {
+        "show_step_tracker": True,
+        "tracker_step": 1,
+        "tracker_total": 5,
+        "tracker_variant": "check",
+    }
+
+
+def _seed_india_preapproved_offer(session: dict) -> None:
+    session["offer"] = {
+        **(session.get("offer") or {}),
+        "max_amount": 1500000,
+        "profit_rate": "11%",
+        "max_tenure": 84,
+        "currency": "INR",
+        "variant": "india_preapproved",
+    }
+
+
+def _resolve_india_widget(session: dict) -> dict | None | object:
+    step = session.get("step", "identity")
+    sub_step = session.get("sub_step", "")
+
+    if step != "identity":
+        return _INDIA_WIDGET_UNHANDLED
+
+    if sub_step == "awaiting_start":
+        return None
+
+    if sub_step == "awaiting_india_mobile":
+        return None
+
+    if sub_step == "identify_yourself":
+        return {
+            "widget": "NTBIntroductionWidget",
+            "data": {
+                "region": session.get("region"),
+                "journey_variant": session.get("journey_variant"),
+                "product": session.get("product"),
+            },
+        }
+
+    if sub_step == "awaiting_india_otp":
+        return {
+            "widget": "IndiaOtpWidget",
+            "data": {
+                "phone": _resolve_india_session_phone(session),
+                **_india_mobile_prompt_ui_flags(),
+            },
+        }
+
+    if sub_step == "india_loading":
+        return {
+            "widget": "LoadingWidget",
+            "data": {
+                "title": "Verifying OTP...",
+                "subtitle": "Fetching your profile details securely",
+                "auto_advance_ms": 2000,
+                "next_message": "loading_complete",
+                "silent": True,
+            },
+        }
+
+    if sub_step == "welcome_back":
+        return {
+            "widget": "WelcomeBackWidget",
+            "data": {
+                "name": _resolve_india_welcome_name(session),
+                "auto_advance_ms": 4000,
+                "next_message": "welcome_back_complete",
+                "silent": True,
+            },
+        }
+
+    return _INDIA_WIDGET_UNHANDLED
 
 
 def _delete_gateway_journey(session_id: str) -> None:
@@ -932,6 +1151,8 @@ def _clean_otp_phone(phone: str) -> str:
 
 
 def _get_otp_phone_from_session(session: dict, session_id: str) -> str:
+    if _is_india_personal_session(session):
+        return _clean_otp_phone(session.get("collected", {}).get("phone_number", "") or _get_phone_from_session_id(session_id))
     return _clean_otp_phone(_get_phone_from_session_id(session_id) or session.get("collected", {}).get("phone_number", ""))
 
 
@@ -1393,6 +1614,7 @@ def _resolve_step_tracker(step: str, sub_step: str, customer_type: str, session:
     if not is_etb:
         # NTB mapping
         tracker_map: dict[tuple[str, str], int] = {
+            ("identity", "awaiting_india_mobile"): 1,
             ("identity", "personal_details"): 1,
             ("offer", "pre_approved_offer"): 2,
             ("offer", "eligible"): 2,
@@ -1442,6 +1664,11 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
     tracker_data = _resolve_step_tracker(step, sub_step, customer_type, session)
     is_preapproved_path = customer_type == "ETB"
 
+    if _is_india_personal_session(session):
+        india_widget = _resolve_india_widget(session)
+        if india_widget is not _INDIA_WIDGET_UNHANDLED:
+            return india_widget
+
     if step == "identity" and sub_step == "nafath_pending":
         return {"widget": "NafathWidget", "data": {"nafath_code": session.get("nafath_code", math.floor(10 + random.random() * 89))}}
 
@@ -1455,7 +1682,14 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
         return {"widget": "LoadingWidget", "data": {"title": "Running Dedupe Check...", "subtitle": "Fetching and Verifying your records", "auto_advance_ms": 3000, "next_message": "dedupe_complete", "silent": True}}
 
     if step == "identity" and sub_step == "identify_yourself":
-        return {"widget": "NTBIntroductionWidget", "data": {}}
+        return {
+            "widget": "NTBIntroductionWidget",
+            "data": {
+                "region": session.get("region"),
+                "journey_variant": session.get("journey_variant"),
+                "product": session.get("product"),
+            },
+        }
 
     if step == "identity" and sub_step == "personal_details":
         completion_state = _get_personal_completion_state(session)
@@ -1652,6 +1886,27 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
         return {"widget": "LoadingWidget", "data": {"title": "Initiating eligibility check for you", "subtitle": "Running due diligence and regulatory checks", "auto_advance_ms": 3000, "next_message": "eligibility_check_complete", "silent": True}}
 
     if step == "offer" and sub_step == "pre_approved_offer":
+        if _is_india_personal_session(session):
+            offer = session.setdefault("offer", {})
+            offer.setdefault("max_amount", 150000)
+            offer.setdefault("profit_rate", "11%")
+            offer.setdefault("max_tenure", 84)
+            offer.setdefault("currency", "INR")
+            offer.setdefault("variant", "india_preapproved")
+            return {
+                "widget": "IndiaPreApprovedOfferWidget",
+                "data": {
+                    "max_amount": offer.get("max_amount", 150000),
+                    "profit_rate": offer.get("profit_rate", "11%"),
+                    "max_tenure": offer.get("max_tenure", 84),
+                    "currency": offer.get("currency", "INR"),
+                    "show_step_tracker": True,
+                    "tracker_step": 2,
+                    "tracker_total": 5,
+                    "tracker_variant": "check",
+                },
+            }
+
         offer = session.setdefault("offer", {})
         offer["max_amount"] = PREAPPROVED_ETB_AMOUNT
         offer.setdefault("profit_rate", "6.1%")
@@ -2068,10 +2323,43 @@ def _handle_active_widget_text_action(
     step = session.get("step", "identity")
     sub_step = session.get("sub_step", "")
 
-    def done(text: str, widget_spec_override: dict | None | object = ...) -> StreamingResponse:
+    def done(
+        text: str,
+        widget_spec_override: dict | None | object = ...,
+        ui_flags_override: dict[str, Any] | None = None,
+    ) -> StreamingResponse:
         _store_gateway_session(session_id, session)
         widget_spec = resolve_widget(session, None) if widget_spec_override is ... else widget_spec_override
-        return _stream_widget_response(text, widget_spec)
+        return _stream_widget_response(text, widget_spec, ui_flags_override)
+
+    if _is_india_personal_session(session) and step == "identity":
+        if sub_step == "awaiting_start":
+            if _is_continuation_message(raw_msg):
+                session["sub_step"] = "identify_yourself"
+                return done("")
+            if _is_decline_message(raw_msg):
+                return done("No problem. Let me know when you are ready to start your loan journey.", None)
+
+        if sub_step == "identify_yourself":
+            if _is_continuation_message(raw_msg):
+                session["sub_step"] = "awaiting_india_mobile"
+                return done(_india_mobile_prompt_text(), None, _india_mobile_prompt_ui_flags())
+            if _is_decline_message(raw_msg):
+                return done("No problem. Take your time and let me know when you're ready to begin.", None)
+
+        if sub_step == "awaiting_india_mobile":
+            mobile_number = _extract_india_mobile_number(raw_msg)
+            if mobile_number:
+                session.setdefault("collected", {})["phone_number"] = mobile_number
+                session["sub_step"] = "awaiting_india_otp"
+                return done("")
+
+        if sub_step == "awaiting_india_otp":
+            otp = _extract_otp_from_message(raw_msg, expected_len=6)
+            if otp:
+                session["india_verification_otp"] = otp
+                session["sub_step"] = "india_loading"
+                return done("")
 
     if step == "identity" and sub_step == "identify_yourself":
         if _is_continuation_message(raw_msg):
@@ -2244,6 +2532,24 @@ def _handle_widget_event(session: dict, session_id: str, raw_msg: str, normalize
         _store_gateway_session(session_id, session)
         widget_spec = resolve_widget(session, None) if widget_spec_override is ... else widget_spec_override
         return _stream_widget_response(text, widget_spec, ui_flags)
+
+    if _is_india_personal_session(session) and step == "identity":
+        if sub_step == "identify_yourself" and signal == "continue":
+            session["sub_step"] = "awaiting_india_mobile"
+            ui_flags.update(_india_mobile_prompt_ui_flags())
+            return done(_india_mobile_prompt_text(), None)
+
+        if sub_step == "india_loading" and signal == "loading_complete":
+            _hydrate_india_customer_profile(session)
+            session["sub_step"] = "welcome_back"
+            return done("")
+
+        if sub_step == "welcome_back" and signal == "welcome_back_complete":
+            _seed_india_preapproved_offer(session)
+            session["step"] = "offer"
+            session["step_number"] = 2
+            session["sub_step"] = "pre_approved_offer"
+            return done("")
 
     profile_completion_payload = _extract_prefixed_json_payload(raw_msg, "PROFILE_COMPLETION")
     if profile_completion_payload is not None:
@@ -2548,24 +2854,10 @@ async def chat(request: ChatRequest):
         elif isinstance(request.session, dict) and request.session:
             current_session = dict(request.session)
             current_session["session_id"] = session_id
-            current_session.setdefault("region", "SA")
-            current_session.setdefault("step", "identity")
-            current_session.setdefault("sub_step", "awaiting_id")
-            current_session.setdefault("step_number", 1)
-            current_session.setdefault("total_steps", 5)
-            current_session.setdefault("product", "cash_finance")
-            current_session.setdefault("user_type", "unknown")
-            current_session.setdefault("customerType", "UNKNOWN")
-            current_session.setdefault("journeyMode", "PRE_DEDUPE")
-            current_session.setdefault("journeyOrigin", "UNKNOWN")
-            current_session.setdefault("transitionReason", None)
-            current_session.setdefault("collected", {})
-            current_session.setdefault("offer", {})
-            current_session.setdefault("finance_summary", {})
-            current_session.setdefault("disbursement", {})
-            current_session.setdefault("_lastWidgetState", "identity/awaiting_id")
+            current_session = _apply_gateway_journey_defaults(current_session)
         else:
             current_session = _default_gateway_session(session_id)
+        current_session = _repair_legacy_india_entry_state(current_session)
         _store_gateway_session(session_id, current_session)
 
     if _is_completed_journey_session(current_session):
@@ -2574,6 +2866,8 @@ async def chat(request: ChatRequest):
         _store_gateway_session(session_id, current_session)
     else:
         current_session["session_id"] = session_id
+
+    current_session = _repair_legacy_india_entry_state(current_session)
 
     if _hydrate_customer_profile_if_available(current_session, session_id):
         _store_gateway_session(session_id, current_session)

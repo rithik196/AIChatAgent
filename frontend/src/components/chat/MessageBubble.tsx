@@ -39,7 +39,10 @@ import { IBANValidationWidget } from "../widgets/IBANValidationWidget";
 import { CommodityTradeAuthorizationWidget } from "../widgets/CommodityTradeAuthorizationWidget";
 import { PreApprovedOfferWidget } from "../widgets/PreApprovedOfferWidget";
 import { DelayTriggerWidget } from "../widgets/DelayTriggerWidget";
+import { IndiaOtpWidget } from "../widgets/IndiaOtpWidget";
+import { IndiaPreApprovedOfferWidget } from "../widgets/IndiaPreApprovedOfferWidget";
 import { StepIndicator } from "../widgets/StepIndicator";
+import { WelcomeBackWidget } from "../widgets/WelcomeBackWidget";
 import { ImportantText } from "../shared/ImportantText";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -49,6 +52,7 @@ type StepTrackerWidgetData = {
   show_step_tracker?: boolean;
   tracker_step?: number;
   tracker_total?: number;
+  tracker_variant?: "number" | "check";
 };
 
 export interface WidgetSpec {
@@ -67,6 +71,10 @@ export interface MessageMetadata {
   options?: Array<{ id: string; label: string; value: string }>;
   optionContext?: { type?: string; field?: string };
   postText?: string;
+  show_step_tracker?: boolean;
+  tracker_step?: number;
+  tracker_total?: number;
+  tracker_variant?: "number" | "check";
 }
 
 type WidgetComponent = React.ComponentType<{ data?: WidgetData; messageId?: string; widgetName?: string }>;
@@ -105,6 +113,9 @@ const WIDGET_REGISTRY: Record<string, WidgetComponent> = {
   CommodityTradeAuthorizationWidget,
   PreApprovedOfferWidget,
   DelayTriggerWidget,
+  IndiaOtpWidget,
+  IndiaPreApprovedOfferWidget,
+  WelcomeBackWidget,
 };
 
 export interface MessageBubbleProps {
@@ -266,6 +277,14 @@ export function MessageBubble({ messageId, role, content, parts, metadata, showW
   const sanitizedText = displayText.replace(/<WIDGET_DATA>[\s\S]*?<\/WIDGET_DATA>/g, "").trim();
   const WidgetComponent = widgetSpec ? WIDGET_REGISTRY[widgetSpec.widget] : null;
   const widgetData = widgetSpec?.data as StepTrackerWidgetData | undefined;
+  const trackerData: StepTrackerWidgetData | undefined = WidgetComponent
+    ? widgetData
+    : {
+        show_step_tracker: metadata?.show_step_tracker,
+        tracker_step: metadata?.tracker_step,
+        tracker_total: metadata?.tracker_total,
+        tracker_variant: metadata?.tracker_variant,
+      };
 
   React.useEffect(() => {
     if (!WidgetComponent || !showWidget || !widgetRef.current || widgetReportedRef.current) return;
@@ -463,6 +482,14 @@ export function MessageBubble({ messageId, role, content, parts, metadata, showW
 
   return (
     <div className={cn("flex flex-col w-full gap-2", isUser ? "items-end" : "items-start")} data-message-id={messageId}>
+      {!WidgetComponent && !isUser && (
+        <StepIndicator
+          show={trackerData?.show_step_tracker}
+          currentStep={trackerData?.tracker_step}
+          totalSteps={trackerData?.tracker_total}
+          variant={trackerData?.tracker_variant}
+        />
+      )}
       {renderTextBlock()}
       {WidgetComponent && showWidget && (
         <div ref={widgetRef} className="w-full" data-widget-message-id={messageId} data-widget-name={widgetSpec?.widget || ""}>
@@ -470,6 +497,7 @@ export function MessageBubble({ messageId, role, content, parts, metadata, showW
             show={widgetData?.show_step_tracker}
             currentStep={widgetData?.tracker_step}
             totalSteps={widgetData?.tracker_total}
+            variant={widgetData?.tracker_variant}
           />
           <WidgetComponent data={widgetSpec?.data} messageId={messageId} widgetName={widgetSpec?.widget || ""} />
         </div>

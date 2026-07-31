@@ -41,6 +41,14 @@ function getMessageText(message?: UIMessage): string {
   );
 }
 
+function buildJourneyWelcomeMessage(journeyKey: string, journeyLabel: string): string {
+  if (journeyKey === "india") {
+    return "Welcome to the Personal Loan application! I am Raya, your Personal Loan Advisor. would you like to start your loan journey ?";
+  }
+
+  return `Welcome to the ${journeyLabel} application! I am Raya, your Agentic Finance Advisor. To get started, could you please provide your National ID?`;
+}
+
 function hasMessageWidget(message?: UIMessage): boolean {
   if (!message) return false;
   const metadata = message.metadata as { widget?: unknown } | undefined;
@@ -462,7 +470,7 @@ export default function JourneyPage() {
             {
               id: `welcome_${journeyConfig.key}_${product}`,
               role: 'assistant' as const,
-              parts: [{ type: 'text' as const, text: `Welcome to the ${journeyLabel} application! I am Raya, your Agentic Finance Advisor. To get started, could you please provide your National ID?` }],
+              parts: [{ type: 'text' as const, text: buildJourneyWelcomeMessage(journeyConfig.key, journeyLabel) }],
             },
           ]);
         }
@@ -473,7 +481,7 @@ export default function JourneyPage() {
           {
             id: `welcome_${journeyConfig.key}_${product}`,
             role: 'assistant' as const,
-            parts: [{ type: 'text' as const, text: `Welcome to the ${journeyLabel} application! I am Raya, your Agentic Finance Advisor. To get started, could you please provide your National ID?` }],
+            parts: [{ type: 'text' as const, text: buildJourneyWelcomeMessage(journeyConfig.key, journeyLabel) }],
           },
         ]);
       });
@@ -1392,7 +1400,7 @@ function ChatView({ product, sessionId, initialMessages, initialSession, journey
         body: JSON.stringify({ sessionId }),
       });
     } finally {
-      router.replace("/login");
+      router.replace(buildLoginHref(journeyConfig.key));
     }
   };
 
