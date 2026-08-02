@@ -440,14 +440,14 @@ export default function LoginPage() {
             Raya
           </div>
           <div className="text-[10.5px] font-semibold text-slate-500 tracking-tight flex items-center gap-1">
-            <span>Your Personal Finance Assistant</span>
+            <span>Your Finance Assistant</span>
             <span className="w-1.5 h-1.5 bg-[#2EAF62] rounded-full animate-pulse" />
           </div>
         </div>
 
         <div className="text-center w-full px-1">
           <h2 className="text-base font-extrabold text-[#1F6FB2] tracking-tight leading-none mb-1">
-            Smarter Cash Finance
+            Smarter Finance
           </h2>
           <p className="text-[11px] text-[#555] font-medium leading-relaxed max-w-[270px] mx-auto">
             Apply in minutes through a friendly real-time chat with Advisor Raya.
