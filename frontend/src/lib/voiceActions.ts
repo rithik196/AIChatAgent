@@ -7,6 +7,8 @@ export type VoiceResolvedAction = {
   buttonLabels: string[];
   clickFirstButtonIfDisabled?: boolean;
   clickCheckboxFirst?: boolean;
+  fallbackVisibleText?: string;
+  fallbackSystemText?: string;
 };
 
 type WidgetSpec = {
@@ -31,6 +33,86 @@ function normalize(value: string): string {
 function matchesAnyPhrase(text: string, phrases: string[]): boolean {
   const normalizedText = normalize(text);
   return phrases.some((phrase) => normalizedText.includes(normalize(phrase)));
+}
+
+function getMessageText(message: UIMessage | undefined): string {
+  if (!message) return "";
+
+  const content = (message as { content?: unknown }).content;
+  if (typeof content === "string" && content.trim()) {
+    return content;
+  }
+
+  const parts = (message as { parts?: Array<{ type?: string; text?: string }> }).parts || [];
+  return parts
+    .filter((part) => part?.type === "text" && typeof part.text === "string")
+    .map((part) => part.text as string)
+    .join(" ")
+    .trim();
+}
+
+const SPOKEN_DIGITS: Record<string, string> = {
+  zero: "0",
+  oh: "0",
+  o: "0",
+  one: "1",
+  two: "2",
+  to: "2",
+  too: "2",
+  three: "3",
+  four: "4",
+  for: "4",
+  five: "5",
+  six: "6",
+  seven: "7",
+  eight: "8",
+  ate: "8",
+  nine: "9",
+};
+
+function extractOtpFromTranscript(transcript: string): { otp: string | null; hasOtpCue: boolean } {
+  const normalizedTranscript = normalize(transcript);
+  const hasOtpCue = matchesAnyPhrase(normalizedTranscript, [
+    "otp",
+    "o t p",
+    "one time password",
+    "verification code",
+    "security code",
+  ]);
+
+  const explicitDigits = normalizedTranscript.match(/\b\d{4,8}\b/);
+  if (explicitDigits?.[0]) {
+    return { otp: explicitDigits[0], hasOtpCue };
+  }
+
+  const tokens = normalizedTranscript.split(/\s+/).filter(Boolean);
+  const spokenDigits = tokens
+    .map((token) => {
+      if (SPOKEN_DIGITS[token] !== undefined) return SPOKEN_DIGITS[token];
+      if (/^\d+$/.test(token)) return token;
+      return "";
+    })
+    .join("");
+
+  if (spokenDigits.length >= 4 && spokenDigits.length <= 8) {
+    return { otp: spokenDigits, hasOtpCue };
+  }
+
+  return { otp: null, hasOtpCue };
+}
+
+function isOtpVerificationContext(message: UIMessage | undefined): boolean {
+  if (!message) return false;
+
+  const { widget } = widgetSpec(message);
+  if (widget === "OtpVerificationWidget" || widget === "FinalIVRConsentWidget" || widget === "LoadingWidget") {
+    return true;
+  }
+
+  const text = normalize(getMessageText(message));
+  if (!text) return false;
+
+  return matchesAnyPhrase(text, ["otp", "one time password", "verification code", "simah", "bureau", "ivr"]);
 }
 
 function widgetSpec(message: UIMessage | undefined): WidgetSpec {
@@ -124,10 +206,16 @@ function widgetAction(message: UIMessage | undefined, transcript: string): Voice
 
     case "PersonalDetailsWidget":
       if (matchesAnyPhrase(normalized, ["modify details", "change details", "edit details", "update details"])) {
-        return action(["Modify Details"]);
+        return action(["Modify Details"], {
+          fallbackVisibleText: "Modify Details",
+          fallbackSystemText: "__SYS__modify_section",
+        });
       }
       if (matchesAnyPhrase(normalized, ["confirm and continue", "confirm continue", "continue", "proceed", "done"])) {
-        return action(["Confirm & Continue", "Confirm and Continue"]);
+        return action(["Confirm & Continue", "Confirm and Continue"], {
+          fallbackVisibleText: "Details confirmed",
+          fallbackSystemText: "__SYS__continue",
+        });
       }
       return null;
 
@@ -189,7 +277,7 @@ function widgetAction(message: UIMessage | undefined, transcript: string): Voice
       return null;
 
     case "FinalIVRConsentWidget":
-      if (matchesAnyPhrase(normalized, ["send me an otp", "otp verification", "sms otp", "otp"])) {
+      if (matchesAnyPhrase(normalized, ["send me an otp", "send otp", "otp verification", "sms otp", "verify with otp", "otp"])) {
         return action(["OTP Verification", "SMS OTP"]);
       }
       if (matchesAnyPhrase(normalized, ["call me for ivr verification", "ivr call", "ivr"])) {
@@ -202,43 +290,75 @@ function widgetAction(message: UIMessage | undefined, transcript: string): Voice
 
     case "EligibleOfferWidget":
       if (matchesAnyPhrase(normalized, ["review details and proceed", "continue", "proceed", "review details"])) {
-        return action(["Review Details & Proceed"]);
+        return action(["Review Details & Proceed"], {
+          fallbackVisibleText: "I had reviewed the offer details and wish to proceed",
+          fallbackSystemText: "__SYS__continue",
+        });
       }
       return null;
 
     case "PreApprovedOfferWidget":
       if (matchesAnyPhrase(normalized, ["go with offer", "accept offer", "take offer"])) {
-        return action(["Go with offer"]);
+        return action(["Go with offer"], {
+          fallbackVisibleText: "Go with offer",
+          fallbackSystemText: "__SYS__accepted_pre_approved_offer",
+        });
       }
       if (matchesAnyPhrase(normalized, ["need higher amount", "higher amount", "more amount"])) {
-        return action(["Need higher amount"]);
+        return action(["Need higher amount"], {
+          fallbackVisibleText: "I need higher amount",
+          fallbackSystemText: "__SYS__higher_amount_requested",
+        });
       }
       return null;
 
     case "WantsMoreDecisionWidget":
-      if (matchesAnyPhrase(normalized, ["amount is okay", "okay", "accept", "eligible finance offer"])) {
-        return action(["Accept eligible finance offer"]);
+      if (matchesAnyPhrase(normalized, ["amount is okay", "okay", "accept", "eligible finance offer", "proceed", "yes"])) {
+        return action(["Proceed", "Amount is okay", "Accept eligible finance offer"], {
+          fallbackVisibleText: "Amount is okay",
+          fallbackSystemText: "__SYS__accepted_max_offer",
+        });
       }
-      if (matchesAnyPhrase(normalized, ["request for a higher amount", "higher amount", "want more"])) {
-        return action(["Request for Higher Amount"]);
+      if (matchesAnyPhrase(normalized, ["request for a higher amount", "higher amount", "want more", "need higher amount"])) {
+        return action(["Need Higher Amount", "Request for Higher Amount"], {
+          fallbackVisibleText: "I need a higher amount",
+          fallbackSystemText: "__SYS__higher_amount_requested",
+        });
       }
       return null;
 
     case "HigherAmountReviewWidget":
       if (matchesAnyPhrase(normalized, ["submit for review", "submit review", "review now"])) {
-        return action(["Submit for review"]);
+        return action(["Submit for review"], {
+          fallbackVisibleText: "Submit for review",
+          fallbackSystemText: "__SYS__submit_higher_amount_review",
+        });
       }
       if (matchesAnyPhrase(normalized, ["go back", "back"])) {
-        return action(["Go back"]);
+        return action(["Go back"], {
+          fallbackVisibleText: "Go back",
+          fallbackSystemText: "__SYS__higher_amount_review_go_back",
+        });
+      }
+      return null;
+
+    case "OfferSliderWidget":
+      if (matchesAnyPhrase(normalized, ["confirm finance plan", "confirm plan", "confirm", "done", "proceed"])) {
+        return action(["Confirm Finance Plan"]);
       }
       return null;
 
     case "FinanceSummaryWidget":
-      if (matchesAnyPhrase(normalized, ["confirm finance plan", "confirm plan", "proceed"])) {
-        return action(["Confirm Finance Plan"]);
+      if (matchesAnyPhrase(normalized, ["confirm finance plan", "confirm plan", "proceed", "commodity trade", "next step"])) {
+        return action(["Proceed to commodity trade", "Confirm Finance Plan"], {
+          fallbackVisibleText: "Proceed to commodity trade",
+          fallbackSystemText: "__SYS__continue",
+        });
       }
       if (matchesAnyPhrase(normalized, ["request higher amount", "higher amount", "modify amount", "modify tenure"])) {
-        return action(["Request higher amount", "Modify Amount or Tenure"]);
+        return action(["Modify Amount or Tenure", "Request higher amount"], {
+          fallbackVisibleText: "I wish to modify the amount/tenure",
+        });
       }
       return null;
 
@@ -246,38 +366,102 @@ function widgetAction(message: UIMessage | undefined, transcript: string): Voice
       if (matchesAnyPhrase(normalized, ["modify expenses", "edit expenses", "change expenses", "modify"])) {
         return action(["Modify"]);
       }
-      if (matchesAnyPhrase(normalized, ["save changes", "save updated expenses", "save"])) {
-        return action(["Save Changes"]);
+      if (
+        matchesAnyPhrase(normalized, [
+          "save changes",
+          "save updated expenses",
+          "save expense",
+          "save expenses",
+          "save my expense",
+          "save my expenses",
+          "save",
+        ])
+      ) {
+        return action(["Save Expenses", "Save Changes", "Continue"], {
+          fallbackVisibleText: "Save my expenses",
+          fallbackSystemText: "__SYS__expenses_confirm",
+        });
       }
       if (matchesAnyPhrase(normalized, ["continue", "confirm expenses", "confirm", "proceed"])) {
-        return action(["Continue"]);
+        return action(["Continue"], {
+          fallbackVisibleText: "Save my expenses",
+          fallbackSystemText: "__SYS__expenses_confirm",
+        });
+      }
+      return null;
+
+    case "GenerateContractWidget":
+      if (matchesAnyPhrase(normalized, [
+        "continue",
+        "proceed",
+        "go ahead",
+        "next",
+        "generate contract",
+        "generate documents",
+        "show documents",
+        "promissory note",
+      ])) {
+        return action(["Generate Contract & Promissory Note"], {
+          fallbackVisibleText: "Generate the Contract & Promissory Note",
+          fallbackSystemText: "__SYS__proceed_esign",
+        });
       }
       return null;
 
     case "DocumentPreviewWidget":
-      if (matchesAnyPhrase(normalized, ["generate contract", "promissory note", "e sign", "esign", "proceed to e sign"])) {
-        return action(["Generate Contract & Promissory Note", "Proceed to e-sign"]);
+      if (matchesAnyPhrase(normalized, ["next step", "proceed to next step"])) {
+        return action(["Proceed to next step"], {
+          fallbackVisibleText: "Proceed to next step",
+          fallbackSystemText: "__SYS__proceed_contract_prompt",
+        });
+      }
+      if (matchesAnyPhrase(normalized, ["continue", "proceed"])) {
+        return action(["Proceed to next step", "E-Sign via Nafath", "Proceed to e-sign"], {
+          fallbackVisibleText: "E-Sign via Nafath",
+          fallbackSystemText: "__SYS__proceed_esign",
+        });
+      }
+      if (matchesAnyPhrase(normalized, ["e sign", "esign", "proceed to e sign", "proceed to e-sign", "nafath", "sign documents"])) {
+        return action(["E-Sign via Nafath", "Generate Contract & Promissory Note", "Proceed to e-sign"], {
+          fallbackVisibleText: "E-Sign via Nafath",
+          fallbackSystemText: "__SYS__proceed_esign",
+        });
       }
       return null;
 
     case "CommodityTradeAuthorizationWidget":
-      if (matchesAnyPhrase(normalized, ["authorize trade", "commodity trade", "authorize"])) {
-        return action(["Authorize Trade"]);
+      if (matchesAnyPhrase(normalized, ["i authorize the trade", "authorize the trade", "authorize trade", "commodity trade", "yes authorize", "authorize"])) {
+        return action(["Authorize Trade"], {
+          clickCheckboxFirst: true,
+          clickFirstButtonIfDisabled: true,
+          fallbackVisibleText: "I authorize the commodity trade.",
+          fallbackSystemText: "__SYS__continue",
+        });
       }
       return null;
 
     case "ApplicationSummaryWidget":
-      if (matchesAnyPhrase(normalized, ["confirm and proceed", "final verification", "proceed"])) {
-        return action(["Confirm & Proceed"], { clickCheckboxFirst: true });
+      if (matchesAnyPhrase(normalized, ["confirm", "i confirm", "confirm details", "yes confirm", "confirm and proceed", "final verification", "proceed"])) {
+        return action(["Confirm & Proceed"], {
+          clickCheckboxFirst: true,
+          fallbackVisibleText: "I confirm all details. Proceed for final verification.",
+          fallbackSystemText: "__SYS__continue",
+        });
       }
       return null;
 
     case "IBANValidationWidget":
       if (matchesAnyPhrase(normalized, ["proceed to summary", "confirm iban", "proceed", "confirm"])) {
-        return action(["Proceed to Summary", "Confirm IBAN"], { clickCheckboxFirst: true, clickFirstButtonIfDisabled: true });
+        return action(["Proceed to Summary", "Confirm IBAN"], {
+          clickCheckboxFirst: true,
+          clickFirstButtonIfDisabled: true,
+          fallbackVisibleText: "Confirm and proceed",
+        });
       }
       if (matchesAnyPhrase(normalized, ["try different iban", "different iban", "enter another iban"])) {
-        return action(["Try Different IBAN", "Let me enter a different IBAN"]);
+        return action(["Try Different IBAN", "Let me enter a different IBAN"], {
+          fallbackVisibleText: "Let me enter a different IBAN",
+        });
       }
       return null;
 
@@ -285,8 +469,14 @@ function widgetAction(message: UIMessage | undefined, transcript: string): Voice
       if (matchesAnyPhrase(normalized, ["use selected account", "selected account", "use this account", "proceed with this account"])) {
         return action(["Use Selected Account"], { clickFirstButtonIfDisabled: true });
       }
+      if (matchesAnyPhrase(normalized, ["validate iban", "verify iban"])) {
+        return action(["Validate IBAN"]);
+      }
       if (matchesAnyPhrase(normalized, ["enter iban manually", "manual iban", "or enter iban manually"])) {
         return action(["Or enter IBAN manually"]);
+      }
+      if (matchesAnyPhrase(normalized, ["back to existing account", "back to existing accounts", "go back to accounts"])) {
+        return action(["Back to Existing Accounts"]);
       }
       return null;
 
@@ -313,5 +503,20 @@ export function resolveVoiceJourneyAction(
   latestOptionPrompt: UIMessage | undefined,
   transcript: string
 ): VoiceResolvedAction | null {
-  return buildOptionAction(latestOptionPrompt, transcript) || widgetAction(activeAssistant, transcript);
+  const { otp, hasOtpCue } = extractOtpFromTranscript(transcript);
+  if (otp && activeAssistant && (hasOtpCue || isOtpVerificationContext(activeAssistant))) {
+    return {
+      messageId: activeAssistant.id,
+      buttonLabels: [],
+      fallbackVisibleText: otp,
+    };
+  }
+
+  const optionAction = buildOptionAction(latestOptionPrompt, transcript);
+  if (optionAction) return optionAction;
+
+  const widgetResolvedAction = widgetAction(activeAssistant, transcript);
+  if (widgetResolvedAction) return widgetResolvedAction;
+
+  return null;
 }

@@ -2,7 +2,7 @@
 
 import React, { useState, useMemo } from 'react';
 import { motion } from 'framer-motion';
-import { VOICE_WIDGET_FIELD_UPDATE_EVENT, type VoiceWidgetFieldUpdate } from "@/lib/voiceWidgetFields";
+import { VOICE_WIDGET_FIELD_UPDATE_EVENT, VOICE_WIDGET_PROMPT_EVENT, type VoiceWidgetFieldUpdate } from "@/lib/voiceWidgetFields";
 
 interface OfferSliderWidgetProps {
   data?: {
@@ -16,6 +16,7 @@ interface OfferSliderWidgetProps {
 }
 
 const TENURE_OPTIONS = [12, 24, 36, 48, 60];
+const OFFER_SLIDER_RANGE_PROMPT = "Please select the amount or tenure within the shown range.";
 
 export function OfferSliderWidget({ data, messageId }: OfferSliderWidgetProps & { messageId?: string }) {
   const maxAmount = data?.max_amount || 250000;
@@ -39,16 +40,20 @@ export function OfferSliderWidget({ data, messageId }: OfferSliderWidgetProps & 
       if (!detail || detail.widget !== "OfferSliderWidget" || detail.messageId !== messageId) return;
 
       if (typeof detail.updates.amount === "number") {
-        const clamped = Math.min(maxAmount, Math.max(minAmount, detail.updates.amount));
-        setAmount(clamped);
-        setAmountInputStr(String(clamped));
+        if (detail.updates.amount < minAmount || detail.updates.amount > maxAmount) {
+          window.dispatchEvent(new CustomEvent(VOICE_WIDGET_PROMPT_EVENT, { detail: { text: OFFER_SLIDER_RANGE_PROMPT } }));
+          return;
+        }
+        setAmount(detail.updates.amount);
+        setAmountInputStr(String(detail.updates.amount));
       }
       if (typeof detail.updates.tenure === "number") {
         const targetTenure = detail.updates.tenure;
-        const closestTenure = TENURE_OPTIONS.reduce((best, option) =>
-          Math.abs(option - targetTenure) < Math.abs(best - targetTenure) ? option : best
-        );
-        setTenure(closestTenure);
+        if (!TENURE_OPTIONS.includes(targetTenure)) {
+          window.dispatchEvent(new CustomEvent(VOICE_WIDGET_PROMPT_EVENT, { detail: { text: OFFER_SLIDER_RANGE_PROMPT } }));
+          return;
+        }
+        setTenure(targetTenure);
         setShowTenureDropdown(false);
       }
     };
@@ -63,6 +68,25 @@ export function OfferSliderWidget({ data, messageId }: OfferSliderWidgetProps & 
     const emi = (amount * monthlyRate * Math.pow(1 + monthlyRate, tenure)) / (Math.pow(1 + monthlyRate, tenure) - 1);
     return Math.round(emi);
   }, [amount, tenure, profitRate]);
+
+  const buildFinancePlanPayload = React.useCallback(
+    () => ({
+      amount,
+      tenure,
+      profitRate: profitRateStr,
+      monthlyInstallment,
+    }),
+    [amount, tenure, profitRateStr, monthlyInstallment]
+  );
+
+  const confirmFinancePlan = React.useCallback(() => {
+    window.dispatchEvent(new CustomEvent('mock-send-message', {
+      detail: {
+        visibleText: 'I confirm this finance plan',
+        systemText: `__SYS__CONFIRM_FINANCE_PLAN: ${JSON.stringify(buildFinancePlanPayload())}`,
+      },
+    }));
+  }, [buildFinancePlanPayload]);
 
   return (
     <motion.div
@@ -211,19 +235,7 @@ export function OfferSliderWidget({ data, messageId }: OfferSliderWidgetProps & 
             <motion.button
               whileHover={{ scale: 1.01 }}
               whileTap={{ scale: 0.98 }}
-              onClick={() => {
-                window.dispatchEvent(new CustomEvent('mock-send-message', {
-                  detail: {
-                    visibleText: 'I confirm this finance plan',
-                    systemText: `__SYS__CONFIRM_FINANCE_PLAN: ${JSON.stringify({
-                      amount,
-                      tenure,
-                      profitRate: profitRateStr,
-                      monthlyInstallment,
-                    })}`,
-                  },
-                }));
-              }}
+              onClick={confirmFinancePlan}
               className="w-full py-3.5 journey-widget-button text-[14px] shadow-md hover:opacity-90 transition-all duration-300"
             >
               Confirm Finance Plan

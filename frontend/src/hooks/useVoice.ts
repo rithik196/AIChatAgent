@@ -64,6 +64,7 @@ export function useVoice({
   const [error, setError] = useState<string | null>(null);
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
   const micStreamRef = useRef<MediaStream | null>(null);
+  const listenRequestIdRef = useRef(0);
 
   // Hydration-safe: returns false on server, true on client (no mismatch)
   const supported = useSyncExternalStore(
@@ -85,7 +86,17 @@ export function useVoice({
     const SpeechRec = getSpeechRecognition();
     if (!SpeechRec) return;
 
+    const listenRequestId = listenRequestIdRef.current + 1;
+    listenRequestIdRef.current = listenRequestId;
     setError(null);
+
+    const synth = typeof window !== "undefined" ? window.speechSynthesis : null;
+    for (let attempt = 0; attempt < 80 && (synth?.speaking || synth?.pending); attempt += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, 250));
+      if (listenRequestIdRef.current !== listenRequestId) {
+        return;
+      }
+    }
 
     // Acquire mic permission first
     try {
@@ -156,6 +167,7 @@ export function useVoice({
 
   // ── Stop listening ────────────────────────────────────────────────
   const stopListening = useCallback(() => {
+    listenRequestIdRef.current += 1;
     recognitionRef.current?.stop();
     releaseMic();
     setVoiceState("idle");
@@ -225,6 +237,7 @@ export function useVoice({
   useEffect(() => {
     return () => {
       recognitionRef.current?.abort();
+      listenRequestIdRef.current += 1;
       releaseMic();
       window.speechSynthesis?.cancel();
     };

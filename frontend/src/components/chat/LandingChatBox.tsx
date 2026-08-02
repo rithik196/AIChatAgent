@@ -134,10 +134,10 @@ export function LandingChatBox({ onSelectProduct }: LandingChatBoxProps) {
     <div className="space-y-3">
       {voiceModeOpen ? (
         <div className="fixed inset-x-0 bottom-0 z-40 px-3 pb-3">
-          <VoiceModePanel
-            displayText={voiceModeText}
-            mode={voiceModeSpeaker}
-            voiceState={voiceState}
+            <VoiceModePanel
+              displayText={voiceModeText}
+              mode={voiceModeSpeaker}
+              voiceState={voiceState}
             allowUpload={false}
             isLoading={false}
             onUpload={() => {}}

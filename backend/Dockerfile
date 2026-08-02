@@ -12,6 +12,9 @@ RUN apt-get update \
         gnupg \
         ca-certificates \
         unixodbc \
+        chromium \
+        fonts-liberation \
+        fonts-noto-core \
     && curl -fsSL https://packages.microsoft.com/config/debian/12/packages-microsoft-prod.deb -o /tmp/packages-microsoft-prod.deb \
     && dpkg -i /tmp/packages-microsoft-prod.deb \
     && rm /tmp/packages-microsoft-prod.deb \
@@ -27,6 +30,7 @@ RUN pip install --no-cache-dir --upgrade pip \
 COPY backend /app/backend
 COPY shared /app/shared
 COPY workflow /app/workflow
+COPY frontend/public/assets /app/frontend/public/assets
 
 WORKDIR /app/backend
 

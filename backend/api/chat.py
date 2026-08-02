@@ -61,9 +61,19 @@ except Exception:
 
 COMMODITY_CERTIFICATE_TEMPLATE = REPO_ROOT / "frontend" / "public" / "assets" / "CommodityCertificate.html"
 COMMODITY_CERTIFICATE_OUTPUT_DIR = Path(os.getenv("COMMODITY_CERTIFICATE_OUTPUT_DIR", REPO_ROOT / ".data" / "generated_documents"))
-CHROME_CANDIDATES = (
-    Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),
-    Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"),
+_BROWSER_ENV_PATH = os.getenv("COMMODITY_CERTIFICATE_BROWSER") or os.getenv("BROWSER_EXECUTABLE_PATH")
+CHROME_CANDIDATES = tuple(
+    candidate
+    for candidate in (
+        Path(_BROWSER_ENV_PATH) if _BROWSER_ENV_PATH else None,
+        Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),
+        Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"),
+        Path("/usr/bin/chromium"),
+        Path("/usr/bin/chromium-browser"),
+        Path("/usr/bin/google-chrome"),
+        Path("/usr/bin/microsoft-edge"),
+    )
+    if candidate is not None
 )
 
 # ── In-memory session store (backed by agent persistence) ────────────
@@ -174,6 +184,41 @@ BUREAU_CONSENT_OTP_PROMPT = (
 FINAL_DISBURSEMENT_OTP_PROMPT = "Please enter the 4-digit OTP sent to your registered mobile number."
 OTP_RETRY_PROMPT = "The entered OTP is incorrect. Please re-enter the correct OTP."
 
+OTP_WORD_DIGITS = {
+    "zero": "0",
+    "oh": "0",
+    "o": "0",
+    "one": "1",
+    "won": "1",
+    "two": "2",
+    "to": "2",
+    "too": "2",
+    "three": "3",
+    "four": "4",
+    "for": "4",
+    "five": "5",
+    "six": "6",
+    "seven": "7",
+    "eight": "8",
+    "ate": "8",
+    "nine": "9",
+}
+
+OTP_MULTIPLIERS = {
+    "double": 2,
+    "triple": 3,
+}
+
+OTP_CONTEXT_HINTS = (
+    "otp",
+    "code",
+    "pin",
+    "passcode",
+    "verification",
+    "simah",
+    "absher",
+)
+
 CONTINUATION_PHRASES = (
     "yes",
     "yep",
@@ -216,6 +261,59 @@ DECLINE_PHRASES = (
     "hold on",
     "wait",
 )
+
+
+def _extract_digit_tokens(text: str) -> list[str]:
+    tokens = re.findall(r"[a-z0-9]+", (text or "").lower())
+    digits: list[str] = []
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+        multiplier = OTP_MULTIPLIERS.get(token)
+        if multiplier and i + 1 < len(tokens):
+            next_token = tokens[i + 1]
+            mapped = OTP_WORD_DIGITS.get(next_token)
+            if mapped is not None:
+                digits.extend([mapped] * multiplier)
+                i += 2
+                continue
+
+        if token in OTP_WORD_DIGITS:
+            digits.append(OTP_WORD_DIGITS[token])
+        elif token.isdigit():
+            digits.extend(list(token))
+        i += 1
+    return digits
+
+
+def _looks_like_otp_attempt(text: str) -> bool:
+    normalized = _normalize_chat_text(text)
+    if not normalized:
+        return False
+    if re.search(r"\d", normalized):
+        return True
+    if any(word in normalized for word in OTP_CONTEXT_HINTS):
+        return True
+    return bool(_extract_digit_tokens(normalized))
+
+
+def _extract_otp_from_message(text: str, expected_len: int = 4) -> str | None:
+    normalized = _normalize_chat_text(text)
+    if not normalized:
+        return None
+
+    exact_digits = re.sub(r"\D", "", normalized)
+    if len(exact_digits) == expected_len:
+        return exact_digits
+
+    digit_tokens = _extract_digit_tokens(normalized)
+    if len(digit_tokens) == expected_len:
+        return "".join(digit_tokens)
+
+    if len(digit_tokens) > expected_len and any(hint in normalized for hint in OTP_CONTEXT_HINTS):
+        return "".join(digit_tokens[-expected_len:])
+
+    return None
 
 
 def _gateway_session_path(session_id: str) -> Path:
@@ -278,8 +376,58 @@ def _default_gateway_session(session_id: str) -> dict:
     }
 
 
+def _safe_commodity_certificate_session_id(session_id: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", str(session_id or "session"))
+
+
+def _commodity_certificate_filename_from_value(value: Any) -> str | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+
+    filename = Path(value.split("?", 1)[0].strip()).name
+    if not filename.lower().endswith(".pdf"):
+        return None
+    if not filename.startswith("CommodityCertificate_"):
+        return None
+    if Path(filename).name != filename:
+        return None
+    return filename
+
+
+def _delete_generated_document_file(directory: Path, filename: str) -> None:
+    document_path = directory / filename
+    try:
+        if document_path.exists() and document_path.is_file():
+            document_path.unlink()
+    except OSError:
+        logger.exception("Failed to delete generated document %s", document_path)
+
+
+def _delete_generated_documents_for_session(session_id: str, session: dict | None = None) -> None:
+    filenames: set[str] = {f"CommodityCertificate_{_safe_commodity_certificate_session_id(session_id)}.pdf"}
+
+    certificate_state = session.get("commodity_certificate") if isinstance(session, dict) else None
+    if isinstance(certificate_state, dict):
+        for key in ("pdf_filename", "pdf_url"):
+            filename = _commodity_certificate_filename_from_value(certificate_state.get(key))
+            if filename:
+                filenames.add(filename)
+
+    if isinstance(session, dict):
+        filename = _commodity_certificate_filename_from_value(session.get("commodity_certificate_url"))
+        if filename:
+            filenames.add(filename)
+
+    legacy_dir = REPO_ROOT / "frontend" / "public" / "generated"
+    for filename in filenames:
+        _delete_generated_document_file(COMMODITY_CERTIFICATE_OUTPUT_DIR, filename)
+        _delete_generated_document_file(legacy_dir, filename)
+
+
 def _delete_gateway_journey(session_id: str) -> None:
-    SESSION_STORE.pop(session_id, None)
+    session = SESSION_STORE.pop(session_id, None) or _load_gateway_session(session_id)
+    _delete_generated_documents_for_session(session_id, session)
+
     if mongo_journey and mongo_journey.is_available():
         mongo_journey.delete_journey(session_id)
 
@@ -357,6 +505,16 @@ def _prefill_open_banking_expenses(session: dict) -> None:
     expenses["total"] = ETB_EXPENSES_TOTAL
 
 
+def _start_expenses_saving(session: dict) -> None:
+    expenses = session.setdefault("expenses", {})
+    if "breakdown" not in expenses and session.get("expenses_breakdown"):
+        expenses["breakdown"] = session.get("expenses_breakdown")
+    if "total" not in expenses and session.get("expenses_total") is not None:
+        expenses["total"] = session.get("expenses_total")
+    session["expenses_editing"] = False
+    session["sub_step"] = "expenses_saving"
+
+
 def _normalize_chat_text(text: str) -> str:
     normalized = (text or "").lower().strip()
     if normalized.startswith("__sys__"):
@@ -384,6 +542,23 @@ def _is_continuation_message(text: str) -> bool:
     return any(_contains_phrase(normalized, phrase) for phrase in CONTINUATION_PHRASES)
 
 
+def _looks_like_offer_continue_message(text: str) -> bool:
+    normalized = _normalize_chat_text(text)
+    if not normalized or _is_decline_message(normalized):
+        return False
+    if _is_continuation_message(normalized):
+        return True
+    if re.search(r"(?<!\w)continu\w*(?!\w)", normalized):
+        return True
+    if re.search(r"(?<!\w)proce\w*(?!\w)", normalized):
+        return True
+    if _contains_phrase(normalized, "review details"):
+        return True
+    if _contains_phrase(normalized, "review") and _contains_phrase(normalized, "detail"):
+        return True
+    return False
+
+
 def _looks_like_general_question(raw_text: str, session: dict | None = None) -> bool:
     text = (raw_text or "").strip()
     normalized = _normalize_chat_text(text)
@@ -391,7 +566,7 @@ def _looks_like_general_question(raw_text: str, session: dict | None = None) -> 
         return False
     if text.lower().startswith("__sys__"):
         return False
-    if re.fullmatch(r"[12]\d{9}", normalized) or re.fullmatch(r"\d{6}", normalized):
+    if re.fullmatch(r"[12]\d{9}", normalized) or re.fullmatch(r"\d{4}", normalized) or re.fullmatch(r"\d{6}", normalized):
         return False
     if looks_like_fallback_interruption and looks_like_fallback_interruption(raw_text, session or {}):
         return True
@@ -663,6 +838,14 @@ def _finalize_pending_profile_update(session: dict, section: str) -> bool:
         }
     _persist_profile_update(session, section, updates)
     return True
+
+
+UPDATE_SECTION_PROFILE_KEYS = {
+    "Personal Details": "personal",
+    "Address Details": "address",
+    "Employment Details": "employment",
+    "Income Details": "income",
+}
 
 
 def _ensure_session_customer_profile(session: dict) -> dict[str, Any]:
@@ -992,7 +1175,7 @@ def _build_application_summary_data(session: dict) -> dict:
 
 # ── Helpers ──────────────────────────────────────────────────────────
 
-def _generate_certificate_number(length: int = 20) -> str:
+def _generate_certificate_number(length: int = 14) -> str:
     alphabet = string.ascii_uppercase + string.digits
     return "".join(random.choices(alphabet, k=length))
 
@@ -1029,6 +1212,27 @@ def _resolve_commodity_certificate_amount(session: dict) -> int:
     return amount
 
 
+def _resolve_commodity_certificate_customer_name(session: dict) -> str:
+    profile = session.get("customer_profile") if isinstance(session.get("customer_profile"), dict) else {}
+    name = str(profile.get("name") or "").strip()
+    if name:
+        return name
+
+    try:
+        hydrated_profile = _build_personal_widget_data(session, session.get("session_id", "")) or {}
+    except Exception:
+        logger.exception("Failed to hydrate customer name for commodity certificate")
+        hydrated_profile = {}
+
+    name = str(hydrated_profile.get("name") or "").strip()
+    if name:
+        return name
+
+    collected = session.get("collected") if isinstance(session.get("collected"), dict) else {}
+    name = str(collected.get("full_name") or "").strip()
+    return name or "Customer"
+
+
 def _render_commodity_certificate_html(session: dict) -> str:
     if not COMMODITY_CERTIFICATE_TEMPLATE.exists():
         raise FileNotFoundError(f"Commodity certificate template not found: {COMMODITY_CERTIFICATE_TEMPLATE}")
@@ -1041,6 +1245,7 @@ def _render_commodity_certificate_html(session: dict) -> str:
     finance_amount = _resolve_commodity_certificate_amount(session)
     current_date = datetime.datetime.now().strftime("%d %B %Y")
     volume = finance_amount / COMMODITY_CERTIFICATE_PRICE if COMMODITY_CERTIFICATE_PRICE else 0.0
+    customer_name = _resolve_commodity_certificate_customer_name(session)
 
     replacements = {
         "&certificateNumber&": html.escape(certificate_number),
@@ -1051,6 +1256,8 @@ def _render_commodity_certificate_html(session: dict) -> str:
         "$Volume$": f"{volume:.2f}",
         "&Value&": f"{finance_amount:,.0f}",
         "$Value$": f"{finance_amount:,.0f}",
+        "&customerName&": html.escape(customer_name),
+        "$customerName$": html.escape(customer_name),
     }
 
     rendered = template
@@ -1059,12 +1266,62 @@ def _render_commodity_certificate_html(session: dict) -> str:
     return rendered
 
 
+def _render_commodity_certificate_pdf_from_html(session: dict, pdf_path: Path) -> bool:
+    browser = _select_browser_executable()
+    if not browser:
+        logger.warning("Commodity certificate PDF browser renderer unavailable: no Chrome/Edge executable found")
+        return False
+
+    rendered_html = _render_commodity_certificate_html(session)
+    temp_html_path: Path | None = None
+
+    try:
+        with tempfile.NamedTemporaryFile("w", suffix=".html", delete=False, encoding="utf-8") as temp_html:
+            temp_html.write(rendered_html)
+            temp_html_path = Path(temp_html.name)
+
+        command = [
+            str(browser),
+            "--headless",
+            "--disable-gpu",
+            "--no-sandbox",
+            "--disable-dev-shm-usage",
+            "--allow-file-access-from-files",
+            "--print-to-pdf-no-header",
+            "--no-pdf-header-footer",
+            f"--print-to-pdf={pdf_path}",
+            temp_html_path.resolve().as_uri(),
+        ]
+
+        result = subprocess.run(command, capture_output=True, text=True, timeout=45, check=False)
+        if result.returncode == 0 and pdf_path.exists() and pdf_path.stat().st_size > 0:
+            return True
+
+        logger.warning(
+            "Commodity certificate HTML-to-PDF rendering failed with code %s. stdout=%s stderr=%s",
+            result.returncode,
+            (result.stdout or "").strip(),
+            (result.stderr or "").strip(),
+        )
+        return False
+    except Exception:
+        logger.exception("Commodity certificate HTML-to-PDF rendering raised an exception")
+        return False
+    finally:
+        if temp_html_path and temp_html_path.exists():
+            try:
+                temp_html_path.unlink()
+            except OSError:
+                logger.warning("Failed to remove temporary commodity certificate HTML: %s", temp_html_path)
+
+
 def _ensure_commodity_certificate_pdf(session: dict) -> str:
     existing_url = session.get("commodity_certificate_url")
     if existing_url:
         existing_filename = session.get("commodity_certificate", {}).get("pdf_filename") or Path(str(existing_url)).name
         existing_path = COMMODITY_CERTIFICATE_OUTPUT_DIR / existing_filename
         if existing_path.exists():
+            _write_commodity_certificate_pdf(session, existing_path)
             return existing_url
 
     COMMODITY_CERTIFICATE_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -1085,8 +1342,20 @@ def _wrap_pdf_text(value: str, width: int = 92) -> list[str]:
     return textwrap.wrap(value, width=width, break_long_words=False, break_on_hyphens=False) or [""]
 
 
+def _estimate_pdf_text_width(text: str, size: int) -> float:
+    narrow = sum(1 for char in text if char in ".,:;!|'ilI ")
+    wide = sum(1 for char in text if char in "MWmw")
+    normal = max(len(text) - narrow - wide, 0)
+    return (narrow * 0.28 + normal * 0.5 + wide * 0.78) * size
+
+
 def _pdf_text_command(x: int, y: int, text: str, font: str = "F1", size: int = 12) -> str:
     return f"BT /{font} {size} Tf 1 0 0 1 {x} {y} Tm ({_pdf_escape_text(text)}) Tj ET"
+
+
+def _pdf_centered_text_command(y: int, text: str, font: str = "F1", size: int = 12, page_width: int = 595) -> str:
+    x = max(0, round((page_width - _estimate_pdf_text_width(text, size)) / 2))
+    return _pdf_text_command(x, y, text, font, size)
 
 
 def _compose_pdf_document(page_streams: list[str]) -> bytes:
@@ -1135,6 +1404,9 @@ def _compose_pdf_document(page_streams: list[str]) -> bytes:
 
 
 def _write_commodity_certificate_pdf(session: dict, pdf_path: Path) -> None:
+    if _render_commodity_certificate_pdf_from_html(session, pdf_path):
+        return
+
     certificate_state = session.setdefault("commodity_certificate", {})
     certificate_number = certificate_state.get("certificateNumber") or _generate_certificate_number()
     certificate_state["certificateNumber"] = certificate_number
@@ -1143,20 +1415,21 @@ def _write_commodity_certificate_pdf(session: dict, pdf_path: Path) -> None:
     volume = finance_amount / COMMODITY_CERTIFICATE_PRICE if COMMODITY_CERTIFICATE_PRICE else 0.0
     volume_text = f"{volume:.2f}"
     value_text = f"{finance_amount:,.0f}"
+    customer_name = _resolve_commodity_certificate_customer_name(session)
 
     page1: list[str] = []
-    page1.append(_pdf_text_command(150, 790, f"Certificate Number: {certificate_number}", "F2", 18))
+    page1.append(_pdf_centered_text_command(790, f"Certificate Number: {certificate_number}", "F2", 18))
     intro_lines = _wrap_pdf_text(
         "This is to certify that the following transaction has been executed through the Saudi Finance Company in accordance with the Rules of Saudi Islamic Services Ltd.",
-        88,
+        90,
     )
     y = 748
     for line in intro_lines:
-        page1.append(_pdf_text_command(60, y, line, "F1", 11))
+        page1.append(_pdf_centered_text_command(y, line, "F1", 11))
         y -= 16
 
-    page1.append(_pdf_text_command(60, y - 12, "Seller : Newgen Software", "F2", 11))
-    page1.append(_pdf_text_command(60, y - 28, "Buyer : Newgen Software", "F2", 11))
+    page1.append(_pdf_text_command(60, y - 12, "Seller : Newgen Bank", "F2", 11))
+    page1.append(_pdf_text_command(60, y - 28, f"Buyer : {customer_name}", "F2", 11))
 
     rows = [
         ("Bid No :", certificate_number),
@@ -1180,7 +1453,7 @@ def _write_commodity_certificate_pdf(session: dict, pdf_path: Path) -> None:
         table_y -= 22
 
     page2: list[str] = []
-    page2.append(_pdf_text_command(60, 790, "Notes :", "F2", 14))
+    page2.append(_pdf_centered_text_command(790, "Notes :", "F2", 14))
     notes = [
         'This e-Certificate has the benefit of, and is generated pursuant to, the Rules of Saudi Islamic Services Ltd. ("Rules"). The Rules form an integral part hereof.',
         "This e-Certificate is valid only in the Saudi Finance Company. BMIS will not be responsible and be held liable for any loss or damage arising from any unauthorised use of this e-Certificate.",
@@ -1193,7 +1466,7 @@ def _write_commodity_certificate_pdf(session: dict, pdf_path: Path) -> None:
     for idx, note in enumerate(notes, start=1):
         wrapped = _wrap_pdf_text(f"{idx}. {note}", 88)
         for line in wrapped:
-            page2.append(_pdf_text_command(60, note_y, line, "F1", 11))
+            page2.append(_pdf_text_command(72, note_y, line, "F1", 11))
             note_y -= 16
         note_y -= 8
 
@@ -1409,6 +1682,30 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
             },
         }
 
+    if step == "identity" and sub_step == "expenses_saving":
+        return {
+            "widget": "LoadingWidget",
+            "data": {
+                "title": "Saving Monthly Expenses",
+                "subtitle": "Please wait while we save your expense details.",
+                "auto_advance_ms": 2000,
+                "next_message": "expenses_saved",
+                "silent": True,
+            },
+        }
+
+    if step == "identity" and sub_step == "expenses_saved":
+        return {
+            "widget": "VerificationSuccessWidget",
+            "data": {
+                "title": "Expenses Saved Successfully",
+                "subtitle": "Your monthly expenses have been saved successfully.",
+                "auto_advance_ms": 2000,
+                "next_message": "expenses_saved_complete",
+                "silent": True,
+            },
+        }
+
     if step == "identity" and sub_step == "bureau_consent":
         _ensure_bureau_otp_sent(session, session.get("session_id", ""))
         session.pop("bureau_otp_error", None)
@@ -1617,17 +1914,9 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
         }
 
     if step == "offer" and sub_step == "slider":
-        offer = session.get("offer", {})
         return {
             "widget": "OfferSliderWidget",
-            "data": {
-                "max_amount": offer.get("max_amount", 250000),
-                "min_amount": 5000,
-                "profit_rate": offer.get("profit_rate", "6.1%"),
-                "default_tenure": offer.get("max_tenure", 60) if is_preapproved_path else 36,
-                "default_amount": offer.get("max_amount", 250000) if is_preapproved_path else None,
-                "is_preapproved_path": is_preapproved_path,
-            },
+            "data": _build_offer_slider_data(session, is_preapproved_path),
         }
 
     if step == "offer" and sub_step == "summary":
@@ -1874,19 +2163,17 @@ def _handle_active_widget_text_action(
 
     if step == "identity" and sub_step == "expenses":
         if _is_expenses_confirmation_message(raw_msg) or normalized_msg == "expenses_confirm":
-            expenses = session.setdefault("expenses", {})
-            if "breakdown" not in expenses and session.get("expenses_breakdown"):
-                expenses["breakdown"] = session.get("expenses_breakdown")
-            if "total" not in expenses and session.get("expenses_total") is not None:
-                expenses["total"] = session.get("expenses_total")
-            session["expenses_editing"] = False
-            session["sub_step"] = "bureau_consent"
-            _ensure_bureau_otp_sent(session, session.get("session_id", ""))
-            return done(BUREAU_CONSENT_OTP_PROMPT)
+            _start_expenses_saving(session)
+            return done("Saving your monthly expenses. Please wait while we save your expense details.")
         if any(_contains_phrase(normalized_msg, phrase) for phrase in ("modify expenses", "edit expenses", "change expenses")):
             session["expenses_editing"] = True
             session.setdefault("expenses", {})
             return done("Edit the category amounts below, then save your changes.")
+
+    if step == "offer" and sub_step == "eligible":
+        if _looks_like_offer_continue_message(raw_msg):
+            session["sub_step"] = "wants_more_decision"
+            return done("Please confirm whether the maximum eligible amount is okay for you.")
 
     if step == "offer" and sub_step in {"wants_more_review", "wants_more_open_banking"}:
         if any(_contains_phrase(normalized_msg, phrase) for phrase in ("go back", "back", "cancel review")):
@@ -1923,6 +2210,39 @@ def _build_finance_summary(amount: int, tenure: int, profit_rate_text: Any = Non
         "profit_rate": f"{annual_rate:g}%",
         "monthly_installment": monthly_installment,
         "total_payable": monthly_installment * int(tenure),
+    }
+
+
+def _coerce_int(value: Any, fallback: int) -> int:
+    parsed = _parse_currency_amount(value)
+    if parsed is None:
+        return int(fallback)
+    return int(round(parsed))
+
+
+def _build_offer_slider_data(session: dict, is_preapproved_path: bool | None = None) -> dict:
+    offer = session.get("offer") or {}
+    if is_preapproved_path is None:
+        customer_type = session.get("customerType") or ("ETB" if session.get("user_type") == "existing" else "NTB")
+        is_preapproved_path = customer_type == "ETB"
+
+    min_amount = 5000
+    max_amount = _coerce_int(offer.get("max_amount"), 250000)
+    default_amount = max_amount if is_preapproved_path else int(round(max_amount * 0.6))
+    default_amount = min(max_amount, max(min_amount, default_amount))
+
+    default_tenure = _coerce_int(
+        offer.get("max_tenure"),
+        DEFAULT_OFFER_TENURE,
+    ) if is_preapproved_path else 36
+
+    return {
+        "max_amount": max_amount,
+        "min_amount": min_amount,
+        "profit_rate": offer.get("profit_rate", "6.1%"),
+        "default_tenure": default_tenure,
+        "default_amount": default_amount,
+        "is_preapproved_path": is_preapproved_path,
     }
 
 
@@ -2010,7 +2330,11 @@ def _is_widget_event(raw_msg: str, normalized_msg: str) -> bool:
         "i do not consent",
         "otp verification",
         "ivr verification",
+        "go with offer",
+        "accepted_pre_approved_offer",
+        "i need higher amount",
         "need higher amount",
+        "higher_amount_requested",
         "request for a higher amount",
         "continue with current eligible amount",
     }
@@ -2126,12 +2450,12 @@ def _handle_widget_event(session: dict, session_id: str, raw_msg: str, normalize
 
     if step == "offer":
         if sub_step == "pre_approved_offer":
-            if signal == "accepted_pre_approved_offer":
+            if signal in {"accepted_pre_approved_offer", "go with offer"}:
                 session["step"] = "identity"
                 session["sub_step"] = "bureau_consent"
                 _ensure_bureau_otp_sent(session, session.get("session_id", ""))
                 return done(BUREAU_CONSENT_OTP_PROMPT)
-            if signal in {"higher_amount_requested", "need higher amount", "request for a higher amount"}:
+            if signal in {"higher_amount_requested", "need higher amount", "i need higher amount", "request for a higher amount"}:
                 session["wants_more"] = True
                 session["journeyMode"] = "NTB_ENRICHMENT"
                 session["journeyOrigin"] = session.get("customerType", "UNKNOWN")
@@ -2163,9 +2487,10 @@ def _handle_widget_event(session: dict, session_id: str, raw_msg: str, normalize
 
         payload = _extract_prefixed_json_payload(raw_msg, "CONFIRM_FINANCE_PLAN")
         if sub_step == "slider" and payload is not None:
-            amount = int(payload.get("amount") or payload.get("loan_amount") or session.get("offer", {}).get("max_amount", 0))
-            tenure = int(payload.get("tenure") or payload.get("tenure_months") or 36)
-            rate = payload.get("profitRate") or session.get("offer", {}).get("profit_rate", "6.1%")
+            slider_defaults = _build_offer_slider_data(session)
+            amount = _coerce_int(payload.get("amount") or payload.get("loan_amount"), slider_defaults["default_amount"])
+            tenure = _coerce_int(payload.get("tenure") or payload.get("tenure_months"), slider_defaults["default_tenure"])
+            rate = payload.get("profitRate") or slider_defaults["profit_rate"]
             session["finance_summary"] = _build_finance_summary(amount, tenure, rate)
             session["finance_amount"] = amount
             session["sub_step"] = "summary"
@@ -2194,7 +2519,7 @@ def _handle_widget_event(session: dict, session_id: str, raw_msg: str, normalize
 
         if sub_step == "certificate" and signal == "proceed_contract_prompt":
             session["sub_step"] = "contract_prompt"
-            return done("")
+            return done("We're almost there! Your Finance Contract and Promissory Note are being generated.")
 
         if sub_step == "contract_prompt" and signal == "proceed_esign":
             session["step"] = "esign"
@@ -2217,7 +2542,7 @@ def _handle_widget_event(session: dict, session_id: str, raw_msg: str, normalize
             session["step"] = "disburse"
             session["step_number"] = 5
             session["sub_step"] = "account"
-            return done("**Congratulations!** \n\n Your documents have been successfully signed and verified.\n\n Next, please select the account that should be created with the approved funds.")
+            return done("**Congratulations!** \n\n Your documents have been successfully signed and verified.\n\n Next, please select the account that should be credited with the approved funds.")
 
     if step == "disburse":
         if sub_step == "account":
@@ -2379,23 +2704,23 @@ async def chat(request: ChatRequest):
     if active_widget_text_response is not None:
         return active_widget_text_response
 
-    # Compatibility quick-path: keep legacy 6-digit e-sign OTP behavior unchanged.
-    if last_user_msg and re.fullmatch(r"\d{6}", last_user_msg):
+    # Compatibility quick-path for legacy e-sign OTP state.
+    # Unified to a 4-digit code so voice and text behavior stay consistent end-to-end.
+    esign_otp = _extract_otp_from_message(last_user_msg, expected_len=4)
+    if esign_otp:
         sub = current_session.get("sub_step", "")
         if current_session.get("step") == "esign" and sub == "otp_ivr":
-            # Treat entered 6-digit as successful verification (no real-time backend OTP required)
             current_session["step"] = "disburse"
             current_session["sub_step"] = "account"
             _store_gateway_session(session_id, current_session)
 
-            # Return an immediate SSE response with the account selector widget
             widget_spec = resolve_widget(current_session, None)
             response_text = "OTP verification successful. Proceeding to disbursement account selection."
             return _stream_widget_response(response_text, widget_spec)
 
     bureau_otp_payload = _extract_prefixed_json_payload(last_user_msg, "BUREAU_OTP_VERIFY")
     if bureau_otp_payload is not None and current_session.get("step") == "identity":
-        otp = str(bureau_otp_payload.get("otp", "")).strip()
+        otp = _extract_otp_from_message(str(bureau_otp_payload.get("otp", "")).strip(), expected_len=4) or ""
         if current_session.get("sub_step") == "bureau_consent" and _verify_bureau_otp(current_session, session_id, otp):
             current_session["sub_step"] = "bureau_otp_verifying"
             current_session.pop("bureau_otp_error", None)
@@ -2411,10 +2736,12 @@ async def chat(request: ChatRequest):
         response_text = f"{OTP_RETRY_PROMPT} {BUREAU_CONSENT_OTP_PROMPT}"
         return _stream_widget_response(response_text, widget_spec)
 
-    if last_user_msg and re.fullmatch(r"\d{4}", last_user_msg):
-        sub = current_session.get("sub_step", "")
-        if current_session.get("step") == "disburse" and sub == "otp_entry":
-            if _verify_disbursement_otp(current_session, session_id, last_user_msg):
+    extracted_otp = _extract_otp_from_message(last_user_msg, expected_len=4)
+    sub = current_session.get("sub_step", "")
+
+    if current_session.get("step") == "disburse" and sub == "otp_entry":
+        if extracted_otp:
+            if _verify_disbursement_otp(current_session, session_id, extracted_otp):
                 current_session["sub_step"] = "otp_verifying"
                 current_session.pop("disbursement_otp_error", None)
                 _store_gateway_session(session_id, current_session)
@@ -2428,8 +2755,18 @@ async def chat(request: ChatRequest):
             response_text = f"{OTP_RETRY_PROMPT} {FINAL_DISBURSEMENT_OTP_PROMPT}"
             return _stream_widget_response(response_text, widget_spec)
 
-        if current_session.get("step") == "identity" and sub == "bureau_consent":
-            if _verify_bureau_otp(current_session, session_id, last_user_msg):
+        if last_user_msg and not _looks_like_general_question(last_user_msg, current_session):
+            widget_spec = resolve_widget(current_session, None)
+            response_text = (
+                "I could not capture a valid 4-digit OTP. "
+                "Please say or enter only the four digits clearly, for example: one nine nine five. "
+                f"{FINAL_DISBURSEMENT_OTP_PROMPT}"
+            )
+            return _stream_widget_response(response_text, widget_spec)
+
+    if current_session.get("step") == "identity" and sub == "bureau_consent":
+        if extracted_otp:
+            if _verify_bureau_otp(current_session, session_id, extracted_otp):
                 current_session["sub_step"] = "bureau_otp_verifying"
                 current_session.pop("bureau_otp_error", None)
                 _store_gateway_session(session_id, current_session)
@@ -2443,6 +2780,15 @@ async def chat(request: ChatRequest):
             response_text = f"{OTP_RETRY_PROMPT} {BUREAU_CONSENT_OTP_PROMPT}"
             return _stream_widget_response(response_text, widget_spec)
 
+        if _looks_like_otp_attempt(last_user_msg) and not _looks_like_general_question(last_user_msg, current_session):
+            widget_spec = resolve_widget(current_session, None)
+            response_text = (
+                "I could not capture a valid 4-digit Absher OTP. "
+                "Please say or enter only the four digits clearly, for example: one nine nine five. "
+                f"{BUREAU_CONSENT_OTP_PROMPT}"
+            )
+            return _stream_widget_response(response_text, widget_spec)
+
     # Quick-path: internal widget signals should not fall through to the LLM layer.
     # This keeps button clicks deterministic even if the session is momentarily behind
     # the widget that emitted the signal.
@@ -2452,9 +2798,42 @@ async def chat(request: ChatRequest):
         "bureau_consent_denied",
         "bureau_otp_verified",
         "bureau_success_complete",
+        "expenses_saved",
+        "expenses_saved_complete",
         "eligibility_check_complete",
     }:
         current_sub = current_session.get("sub_step", "")
+        if direct_signal == "expenses_saved" and current_sub == "expenses_saving":
+            current_session["sub_step"] = "expenses_saved"
+            _store_gateway_session(session_id, current_session)
+            widget_spec = resolve_widget(current_session, None)
+            response_text = "Your monthly expenses have been saved successfully."
+            return StreamingResponse(
+                _build_sse_stream(response_text, widget_spec),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "x-vercel-ai-ui-message-stream": "v1",
+                },
+            )
+
+        if direct_signal == "expenses_saved_complete" and current_sub == "expenses_saved":
+            current_session["sub_step"] = "bureau_consent"
+            _ensure_bureau_otp_sent(current_session, session_id)
+            _store_gateway_session(session_id, current_session)
+            widget_spec = resolve_widget(current_session, None)
+            response_text = BUREAU_CONSENT_OTP_PROMPT
+            return StreamingResponse(
+                _build_sse_stream(response_text, widget_spec),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "x-vercel-ai-ui-message-stream": "v1",
+                },
+            )
+
         if direct_signal == "eligibility_check_complete" and current_sub in {
             "personal_details",
             "bureau_consent",
@@ -2557,10 +2936,10 @@ async def chat(request: ChatRequest):
     if current_session.get("step") == "identity":
         if current_session.get("sub_step") == "updating_details" and normalized_user_msg == "update_complete":
             updating_section = (current_session.get("updating") or {}).get("section")
-            if updating_section == "Income Details":
-                _finalize_pending_profile_update(current_session, "income")
-            elif updating_section == "Employment Details":
-                _finalize_pending_profile_update(current_session, "employment")
+            profile_section = UPDATE_SECTION_PROFILE_KEYS.get(updating_section)
+            if profile_section:
+                _finalize_pending_profile_update(current_session, profile_section)
+                _ensure_session_customer_profile(current_session)
             current_session["sub_step"] = "personal_details"
             current_session.pop("updating", None)
             current_session.pop("pending_income_verification", None)
@@ -2754,12 +3133,10 @@ async def chat(request: ChatRequest):
             )
 
         if normalized_user_msg == "expenses_confirm":
-            current_session["sub_step"] = "bureau_consent"
-            current_session["expenses_editing"] = False
-            _ensure_bureau_otp_sent(current_session, session_id)
+            _start_expenses_saving(current_session)
             _store_gateway_session(session_id, current_session)
             widget_spec = resolve_widget(current_session, None)
-            response_text = BUREAU_CONSENT_OTP_PROMPT
+            response_text = "Saving your monthly expenses. Please wait while we save your expense details."
             return StreamingResponse(
                 _build_sse_stream(response_text, widget_spec),
                 media_type="text/event-stream",
@@ -2844,12 +3221,10 @@ async def chat(request: ChatRequest):
         expenses_confirm_payload = _extract_prefixed_json_payload(last_user_msg, "UPDATE_EXPENSES_CONFIRM")
         if expenses_confirm_payload is not None:
             _apply_deterministic_profile_update(current_session, "UPDATE_EXPENSES", expenses_confirm_payload)
-            current_session["sub_step"] = "bureau_consent"
-            current_session["expenses_editing"] = False
-            _ensure_bureau_otp_sent(current_session, session_id)
+            _start_expenses_saving(current_session)
             _store_gateway_session(session_id, current_session)
             widget_spec = resolve_widget(current_session, None)
-            response_text = BUREAU_CONSENT_OTP_PROMPT
+            response_text = "Saving your monthly expenses. Please wait while we save your expense details."
             return StreamingResponse(
                 _build_sse_stream(response_text, widget_spec),
                 media_type="text/event-stream",

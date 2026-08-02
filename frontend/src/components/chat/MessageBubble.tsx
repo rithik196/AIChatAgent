@@ -42,6 +42,7 @@ import { DelayTriggerWidget } from "../widgets/DelayTriggerWidget";
 import { StepIndicator } from "../widgets/StepIndicator";
 import { ImportantText } from "../shared/ImportantText";
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 type WidgetData = any;
 
 type StepTrackerWidgetData = {
@@ -369,19 +370,95 @@ export function MessageBubble({ messageId, role, content, parts, metadata, showW
     if (!speak || !sanitizedText.trim()) return;
 
     const clean = sanitizedText.replace(/\*\*/g, "").replace(/[#_~`>]/g, "");
-    window.speechSynthesis?.cancel();
+    const synth = typeof window !== "undefined" ? window.speechSynthesis : null;
+    const UtteranceCtor =
+      typeof window !== "undefined" ? window.SpeechSynthesisUtterance : undefined;
+    if (!synth || !UtteranceCtor) return;
 
-    const utterance = new SpeechSynthesisUtterance(clean);
-    utterance.lang = "en-US";
+    let finished = false;
+    let attemptCounter = 0;
 
-    const femaleVoice = getFemaleVoice("en-US");
-    if (femaleVoice) utterance.voice = femaleVoice;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      setIsSpeaking(false);
+    };
 
-    utterance.pitch = 1.1;
-    utterance.onstart = () => setIsSpeaking(true);
-    utterance.onend = () => setIsSpeaking(false);
-    utterance.onerror = () => setIsSpeaking(false);
-    window.speechSynthesis.speak(utterance);
+    const speakAttempt = (preferFemaleVoice: boolean) => {
+      if (finished) return;
+      attemptCounter += 1;
+      const currentAttempt = attemptCounter;
+      let started = false;
+
+      let utterance: SpeechSynthesisUtterance;
+      try {
+        utterance = new UtteranceCtor(clean);
+      } catch {
+        finish();
+        return;
+      }
+
+      utterance.lang = "en-US";
+      if (preferFemaleVoice) {
+        const femaleVoice = getFemaleVoice("en-US");
+        if (femaleVoice) utterance.voice = femaleVoice;
+      }
+
+      utterance.pitch = 1.1;
+      utterance.rate = 1.0;
+      utterance.volume = 1;
+
+      const startWatchdog = window.setTimeout(() => {
+        if (finished || currentAttempt !== attemptCounter || started) return;
+        if (preferFemaleVoice) {
+          speakAttempt(false);
+          return;
+        }
+        finish();
+      }, 1200);
+
+      const clearWatchdog = () => {
+        clearTimeout(startWatchdog);
+      };
+
+      utterance.onstart = () => {
+        if (finished || currentAttempt !== attemptCounter) return;
+        started = true;
+        clearWatchdog();
+        setIsSpeaking(true);
+      };
+
+      utterance.onend = () => {
+        if (finished || currentAttempt !== attemptCounter) return;
+        clearWatchdog();
+        finish();
+      };
+
+      utterance.onerror = () => {
+        if (finished || currentAttempt !== attemptCounter) return;
+        clearWatchdog();
+        if (preferFemaleVoice) {
+          speakAttempt(false);
+          return;
+        }
+        finish();
+      };
+
+      try {
+        synth.cancel();
+        if (typeof synth.resume === "function") synth.resume();
+        synth.speak(utterance);
+      } catch {
+        clearWatchdog();
+        if (preferFemaleVoice) {
+          speakAttempt(false);
+          return;
+        }
+        finish();
+      }
+    };
+
+    speakAttempt(true);
   };
 
   return (

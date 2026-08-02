@@ -26,6 +26,10 @@ const EDITABLE_WIDGETS = new Set<EditableVoiceWidget>([
   "ExpensesWidget",
 ]);
 
+export function isEditableVoiceWidget(widget: string | null | undefined): widget is EditableVoiceWidget {
+  return Boolean(widget && EDITABLE_WIDGETS.has(widget as EditableVoiceWidget));
+}
+
 function normalize(text: string): string {
   return text
     .toLowerCase()
@@ -34,6 +38,39 @@ function normalize(text: string): string {
     .replace(/\s+/g, " ")
     .trim();
 }
+
+const DIGIT_WORDS: Record<string, string> = {
+  zero: "0",
+  oh: "0",
+  o: "0",
+  one: "1",
+  won: "1",
+  two: "2",
+  to: "2",
+  too: "2",
+  three: "3",
+  four: "4",
+  for: "4",
+  five: "5",
+  six: "6",
+  seven: "7",
+  eight: "8",
+  ate: "8",
+  nine: "9",
+};
+
+const EDUCATION_OPTIONS = [
+  "Graduation",
+  "Primary Education",
+  "Intermediate (Middle School)",
+  "Secondary (High School)",
+  "Diploma (Associate / Intermediate)",
+  "Bachelor's Degree",
+  "Master's Degree",
+  "Doctorate (PhD)",
+];
+
+const MARITAL_OPTIONS = ["Single", "Married", "Divorced", "Widowed", "Separated", "Polygamous"];
 
 function titleCase(value: string): string {
   return value
@@ -44,13 +81,40 @@ function titleCase(value: string): string {
 }
 
 function numberFromSpeech(value: string): number | null {
-  const compact = value.replace(/,/g, "");
+  const compact = value.replace(/,/g, "").trim();
+  if (!compact) return null;
+
+  const applyAmountScale = (amount: number): number => {
+    if (/\b(lakh|lakhs|lac|lacs)\b/i.test(compact)) return amount * 100000;
+    if (/\b(thousand|k)\b/i.test(compact)) return amount * 1000;
+    if (/\b(million|m)\b/i.test(compact)) return amount * 1000000;
+    return amount;
+  };
+
+  const digitTokens = compact
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, " ")
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((token) => {
+      if (DIGIT_WORDS[token] !== undefined) return DIGIT_WORDS[token];
+      if (/^\d+$/.test(token)) return token;
+      return "";
+    })
+    .filter(Boolean);
+
+  if (digitTokens.length >= 2) {
+    const digitStream = digitTokens.join("");
+    const parsedDigits = Number(digitStream);
+    if (!Number.isNaN(parsedDigits)) {
+      return parsedDigits;
+    }
+  }
+
   const digitMatch = compact.match(/\d+(?:\.\d+)?/);
   if (digitMatch) {
     const parsed = Number(digitMatch[0]);
-    if (/\b(thousand|k)\b/i.test(compact)) return parsed * 1000;
-    if (/\b(million|m)\b/i.test(compact)) return parsed * 1000000;
-    return parsed;
+    return applyAmountScale(parsed);
   }
 
   const words: Record<string, number> = {
@@ -103,6 +167,10 @@ function numberFromSpeech(value: string): number | null {
     } else if (token === "hundred") {
       current = Math.max(current, 1) * 100;
       sawNumber = true;
+    } else if (token === "lakh" || token === "lakhs" || token === "lac" || token === "lacs") {
+      total += Math.max(current, 1) * 100000;
+      current = 0;
+      sawNumber = true;
     } else if (token === "thousand") {
       total += Math.max(current, 1) * 1000;
       current = 0;
@@ -117,11 +185,48 @@ function numberFromSpeech(value: string): number | null {
   return sawNumber ? total + current : null;
 }
 
+function expenseAmountFromSpeech(value: string): number | null {
+  const compact = value.replace(/,/g, "").trim();
+  if (!compact) return null;
+
+  const explicitNumbers = compact.match(/\d+(?:\.\d+)?/g);
+  if (explicitNumbers?.length) {
+    const lastNumber = Number(explicitNumbers[explicitNumbers.length - 1]);
+    if (Number.isNaN(lastNumber)) return null;
+    if (/\b(thousand|k)\b/i.test(compact)) return lastNumber * 1000;
+    if (/\b(million|m)\b/i.test(compact)) return lastNumber * 1000000;
+    return lastNumber;
+  }
+
+  const amountOnly = compact
+    .toLowerCase()
+    .replace(
+      /\b(update|change|set|replace|make|modify|my|the|expense|expenses|amount|cost|value|to|as|is|equals|equal|be|with)\b/g,
+      " "
+    )
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return numberFromSpeech(amountOnly);
+}
+
 function extractValueAfter(text: string, fieldPattern: string): string {
-  const match = text.match(
-    new RegExp(`(?:${fieldPattern})(?:\\s+(?:to|as|is|equals|equal to|be|with))?\\s+(.+)$`, "i")
+  const forwardMatch = text.match(
+    new RegExp(`(?:${fieldPattern})(?:\\s+(?:to|as|is|equals|equal to|be|will be|should be|with))?\\s+(.+)$`, "i")
   );
-  return (match?.[1] || "").trim().replace(/[.?!]$/g, "").trim();
+  if (forwardMatch?.[1]) {
+    return forwardMatch[1].trim().replace(/[.?!]$/g, "").trim();
+  }
+
+  const backwardMatch = text.match(new RegExp(`(.+?)\\s+(?:${fieldPattern})\\b`, "i"));
+  if (!backwardMatch?.[1]) return "";
+  return backwardMatch[1]
+    .trim()
+    .replace(/[.?!]$/g, "")
+    .trim()
+    .split(/\s+/)
+    .slice(-5)
+    .join(" ");
 }
 
 function cleanEmail(value: string): string {
@@ -141,13 +246,13 @@ function closestOption(value: string, options: string[]): string {
   return match || titleCase(value);
 }
 
-function hasEditIntent(text: string): boolean {
-  return /\b(update|change|set|replace|make|modify)\b/.test(text);
+function exactOptionMatch(value: string, options: string[]): string | null {
+  const normalizedValue = normalize(value);
+  const match = options.find((option) => normalize(option) === normalizedValue);
+  return match || null;
 }
 
 function parsePersonal(text: string): Record<string, string> | null {
-  if (!hasEditIntent(text)) return null;
-
   if (/\b(email|email id|mail)\b/.test(text)) {
     const explicitEmail = text.match(/[a-z0-9._%+-]+(?:@|\s+at\s+)[a-z0-9.-]+(?:\.|\s+dot\s+)[a-z]{2,}/i)?.[0];
     const raw = explicitEmail || extractValueAfter(text, "email(?: id)?|mail");
@@ -159,22 +264,23 @@ function parsePersonal(text: string): Record<string, string> | null {
     const value = extractValueAfter(text, "level of education|education|qualification");
     if (!value) return null;
     return {
-      levelOfEducation: closestOption(value, [
-        "Graduation",
-        "Primary Education",
-        "Intermediate (Middle School)",
-        "Secondary (High School)",
-        "Diploma (Associate / Intermediate)",
-        "Bachelor's Degree",
-        "Master's Degree",
-        "Doctorate (PhD)",
-      ]),
+      levelOfEducation: closestOption(value, EDUCATION_OPTIONS),
     };
+  }
+
+  const directEducation = exactOptionMatch(text, EDUCATION_OPTIONS);
+  if (directEducation) {
+    return { levelOfEducation: directEducation };
   }
 
   if (/\b(marital|marital status|single|married|divorced|widowed|separated)\b/.test(text)) {
     const value = extractValueAfter(text, "marital status|marital") || text;
-    return { maritalStatus: closestOption(value, ["Single", "Married", "Divorced", "Widowed", "Separated", "Polygamous"]) };
+    return { maritalStatus: closestOption(value, MARITAL_OPTIONS) };
+  }
+
+  const directMarital = exactOptionMatch(text, MARITAL_OPTIONS);
+  if (directMarital) {
+    return { maritalStatus: directMarital };
   }
 
   if (/\b(dependents?|number of dependents?)\b/.test(text)) {
@@ -184,12 +290,17 @@ function parsePersonal(text: string): Record<string, string> | null {
     return { dependents: count >= 6 ? "6+" : String(count) };
   }
 
+  if (/^(?:zero|one|two|three|four|five|six|seven|eight|nine|\d+|six plus|6\+)$/i.test(text)) {
+    const count = numberFromSpeech(text);
+    if (count !== null) {
+      return { dependents: count >= 6 ? "6+" : String(count) };
+    }
+  }
+
   return null;
 }
 
 function parseAddress(text: string): Record<string, string> | null {
-  if (!hasEditIntent(text)) return null;
-
   const fields: Array<[RegExp, string, string]> = [
     [/\b(address line 1|line one|line 1)\b/, "line1", "address line 1|line one|line 1"],
     [/\b(address line 2|line two|line 2)\b/, "line2", "address line 2|line two|line 2"],
@@ -210,8 +321,6 @@ function parseAddress(text: string): Record<string, string> | null {
 }
 
 function parseEmployment(text: string): Record<string, string> | null {
-  if (!hasEditIntent(text)) return null;
-
   const fields: Array<[RegExp, string, string]> = [
     [/\b(employer type|employment type)\b/, "employerType", "employer type|employment type"],
     [/\b(employer name|company name|employer)\b/, "employerName", "employer name|company name|employer"],
@@ -233,31 +342,55 @@ function parseEmployment(text: string): Record<string, string> | null {
 }
 
 function parseIncome(text: string): Record<string, string> | null {
-  if (!hasEditIntent(text)) return null;
-  if (!/\b(monthly income|income|salary)\b/.test(text)) return null;
-  const amount = numberFromSpeech(extractValueAfter(text, "monthly income|income|salary") || text);
+  const candidate = /\b(monthly income|income|salary)\b/.test(text)
+    ? extractValueAfter(text, "monthly income|income|salary") || text
+    : text;
+  const amount = numberFromSpeech(candidate);
   return amount === null ? null : { monthlyIncome: String(Math.round(amount)) };
 }
 
-function parseOffer(text: string): Record<string, number> | null {
-  if (!hasEditIntent(text)) return null;
-
-  if (/\b(amount|finance amount|loan amount)\b/.test(text)) {
-    const amount = numberFromSpeech(extractValueAfter(text, "finance amount|loan amount|amount") || text);
-    return amount === null ? null : { amount: Math.round(amount) };
+function extractTenureValue(text: string): number | null {
+  const tenureValue = extractValueAfter(text, "tenure|duration");
+  if (tenureValue) {
+    return numberFromSpeech(tenureValue);
   }
 
-  if (/\b(tenure|months?|duration)\b/.test(text)) {
-    const tenure = numberFromSpeech(extractValueAfter(text, "tenure|months?|duration") || text);
-    return tenure === null ? null : { tenure: Math.round(tenure) };
+  const beforeMonths = text.match(/(?:tenure|duration)?\s*([a-z0-9\s-]{1,40})\s+months?\b/i);
+  if (beforeMonths?.[1]) {
+    const candidate = beforeMonths[1].replace(/\b(amount|finance amount|loan amount)\b.*$/i, "").trim();
+    return numberFromSpeech(candidate || beforeMonths[1]);
   }
-
   return null;
 }
 
-function parseExpenses(text: string): Record<string, string> | null {
-  if (!hasEditIntent(text)) return null;
+function parseOffer(text: string): Record<string, number> | null {
+  const updates: Record<string, number> = {};
 
+  if (/\b(tenure|months?|duration)\b/.test(text)) {
+    const tenure = extractTenureValue(text);
+    if (tenure !== null) {
+      updates.tenure = Math.round(tenure);
+    }
+  }
+
+  if (/\b(amount|finance amount|loan amount)\b/.test(text)) {
+    const amount = numberFromSpeech(extractValueAfter(text, "finance amount|loan amount|amount") || text);
+    if (amount !== null) {
+      updates.amount = Math.round(amount);
+    }
+  }
+
+  if (Object.keys(updates).length === 0 && !/\b(months?|tenure|duration)\b/.test(text)) {
+    const fallbackAmount = numberFromSpeech(text);
+    if (fallbackAmount !== null) {
+      updates.amount = Math.round(fallbackAmount);
+    }
+  }
+
+  return Object.keys(updates).length > 0 ? updates : null;
+}
+
+function parseExpenses(text: string): Record<string, string> | null {
   const fields: Array<[RegExp, string, string]> = [
     [/\b(housing|rent)\b/, "housing", "housing|rent"],
     [/\b(food|groceries)\b/, "food", "food|groceries"],
@@ -269,7 +402,7 @@ function parseExpenses(text: string): Record<string, string> | null {
 
   for (const [matcher, key, pattern] of fields) {
     if (!matcher.test(text)) continue;
-    const amount = numberFromSpeech(extractValueAfter(text, pattern) || text);
+    const amount = expenseAmountFromSpeech(extractValueAfter(text, pattern) || text);
     if (amount === null) return null;
     return { [key]: String(Math.round(amount)) };
   }
@@ -297,26 +430,17 @@ function parseWidgetUpdate(widget: EditableVoiceWidget, transcript: string): Rec
   }
 }
 
-export function resolveVisibleVoiceWidgetUpdate(transcript: string): VoiceWidgetFieldUpdate | null {
-  if (typeof document === "undefined") return null;
+export function resolveVisibleVoiceWidgetUpdate(
+  messageId: string | undefined,
+  widgetName: string | null | undefined,
+  transcript: string
+): VoiceWidgetFieldUpdate | null {
+  if (!messageId || !isEditableVoiceWidget(widgetName)) return null;
 
-  const widgets = Array.from(
-    document.querySelectorAll<HTMLElement>("[data-widget-message-id][data-widget-name]")
-  ).filter((element) => element.offsetParent !== null);
+  const updates = parseWidgetUpdate(widgetName, transcript);
+  if (!updates || Object.keys(updates).length === 0) return null;
 
-  for (let i = widgets.length - 1; i >= 0; i--) {
-    const element = widgets[i];
-    const widget = element.dataset.widgetName as EditableVoiceWidget | undefined;
-    const messageId = element.dataset.widgetMessageId;
-    if (!widget || !messageId || !EDITABLE_WIDGETS.has(widget)) continue;
-
-    const updates = parseWidgetUpdate(widget, transcript);
-    if (!updates || Object.keys(updates).length === 0) continue;
-
-    return { messageId, widget, updates };
-  }
-
-  return null;
+  return { messageId, widget: widgetName, updates };
 }
 
 export function dispatchVoiceWidgetFieldUpdate(update: VoiceWidgetFieldUpdate): void {

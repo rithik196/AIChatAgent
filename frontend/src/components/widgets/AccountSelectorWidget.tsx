@@ -125,6 +125,15 @@ export function AccountSelectorWidget({ data }: AccountSelectorWidgetProps) {
                           animate={{ opacity: 1, x: 0 }}
                           transition={{ duration: 0.25, delay: idx * 0.04 }}
                           onClick={() => setSelected(idx)}
+                          data-account-option="true"
+                          data-account-index={idx}
+                          data-account-type={account.type}
+                          data-account-iban={account.iban}
+                          data-account-bank={account.bank}
+                          data-account-beneficiary={account.beneficiary || ""}
+                          data-account-last4={account.iban.replace(/\s/g, "").slice(-4)}
+                          data-account-last6={account.iban.replace(/\s/g, "").slice(-6)}
+                          data-account-selected={effectiveSelected === idx ? "true" : "false"}
                           className={`w-full text-left p-4 rounded-[16px] border transition-all duration-300 relative overflow-hidden ${
                             effectiveSelected === idx
                               ? 'border-[#1B739E] bg-white'
@@ -174,6 +183,7 @@ export function AccountSelectorWidget({ data }: AccountSelectorWidgetProps) {
                       }
                     }}
                     disabled={effectiveSelected === null}
+                    data-account-submit="true"
                     className="w-full py-4 journey-widget-button type-title-sm shadow-lg transition-all duration-300"
                   >
                     Use Selected Account
@@ -183,6 +193,7 @@ export function AccountSelectorWidget({ data }: AccountSelectorWidgetProps) {
                       setManualIBAN('');
                       setUseManualEntry(true);
                     }}
+                    data-account-manual-entry="true"
                     className="w-full py-4 journey-widget-button type-title-sm shadow-lg transition-all duration-300"
                   >
                     Or Enter IBAN manually
@@ -235,12 +246,14 @@ export function AccountSelectorWidget({ data }: AccountSelectorWidgetProps) {
                       }
                     }}
                     disabled={manualIBAN.replace(/\s/g, '').length < 20}
+                    data-account-validate="true"
                     className="w-full py-4 journey-widget-button type-title-sm shadow-lg transition-all duration-300"
                   >
                     Validate IBAN
                   </motion.button>
                   <button
                     onClick={restoreRegisteredAccounts}
+                    data-account-back="true"
                     className="w-full py-4 journey-widget-button type-title-sm shadow-lg transition-all duration-300 bg-transparent text-[#1B739E] border border-[#1B739E] hover:bg-[#1B739E]/10"
                   >
                     Back to Existing Accounts
