@@ -2,7 +2,13 @@
 
 import React from 'react';
 import { motion } from 'framer-motion';
-const steps = [
+type NTBIntroductionWidgetData = {
+  region?: string;
+  journey_variant?: string;
+  product?: string;
+};
+
+const defaultSteps = [
   { id: 1, label: "Identity Verification" },
   { id: 2, label: "Personalized Offer" },
   { id: 3, label: "Commodity Trade" },
@@ -10,7 +16,28 @@ const steps = [
   { id: 5, label: "Account Selection and Disbursement" }
 ];
 
-export function NTBIntroductionWidget() {
+const indiaSteps = [
+  { id: 1, label: "Identity Verification" },
+  { id: 2, label: "Personalized Offer" },
+  { id: 3, label: "Document Upload" },
+  { id: 4, label: "Income Analysis" },
+  { id: 5, label: "Disbursement" }
+];
+
+function isIndiaJourney(data?: NTBIntroductionWidgetData): boolean {
+  if (!data) return false;
+
+  return data.region === "IN" || data.journey_variant === "india_personal";
+}
+
+export function NTBIntroductionWidget({ data }: { data?: NTBIntroductionWidgetData }) {
+  const indiaJourney = isIndiaJourney(data);
+  const steps = indiaJourney ? indiaSteps : defaultSteps;
+  const title = indiaJourney ? "Excellent choice !" : "Journey Overview";
+  const description = indiaJourney
+    ? "To get your funds ready, we will move through a simple 5-step journey:"
+    : "We'll guide you through a simple 5-step process to get your funds ready.";
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 15 }}
@@ -26,10 +53,10 @@ export function NTBIntroductionWidget() {
             transition={{ delay: 0.2 }}
           >
             <h3 className="journey-heading mb-2">
-              Journey Overview
+              {title}
             </h3>
             <p className="journey-body mb-6 text-[#425768]">
-              We'll guide you through a simple 5-step process to get your funds ready.
+              {description}
             </p>
           </motion.div>
 
@@ -74,7 +101,7 @@ export function NTBIntroductionWidget() {
             }}
             className="w-full py-3.5 journey-widget-button text-[14px] shadow-[0_0_15px_rgba(255,255,255,0.1)] hover:shadow-[0_0_20px_rgba(255,255,255,0.2)] hover:scale-[1.02] transition-all duration-300 active:scale-95"
           >
-            Let's Begin
+            Let&apos;s Begin
           </motion.button>
         </div>
       </div>

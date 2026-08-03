@@ -79,6 +79,19 @@ CONTINUATION_PHRASES = {
     "confirmed",
 }
 
+ENTRY_START_PHRASES = {
+    "yes start",
+    "start application",
+    "start the application",
+    "start loan application",
+    "start the loan application",
+    "start journey",
+    "begin journey",
+    "begin the journey",
+    "start loan journey",
+    "start the loan journey",
+}
+
 DECLINE_PHRASES = {
     "no",
     "nope",
@@ -155,6 +168,15 @@ OUT_OF_SCOPE_ANSWER = (
 )
 
 
+def _is_india_personal_session(session: dict[str, Any] | None) -> bool:
+    session = session or {}
+    return (
+        session.get("region") == "IN"
+        or session.get("journey_variant") == "india_personal"
+        or session.get("product") == "personal_loan"
+    )
+
+
 def normalize_chat_text(text: str) -> str:
     normalized = (text or "").strip().lower()
     normalized = normalized.replace("\u2019", "'")
@@ -174,6 +196,8 @@ def _is_valid_step_data(text: str, normalized: str, session: dict[str, Any]) -> 
         return True
     if normalized in CONTINUATION_PHRASES or normalized in DECLINE_PHRASES:
         return True
+    if any(_contains_phrase(normalized, phrase) for phrase in ENTRY_START_PHRASES):
+        return True
     if re.fullmatch(r"[12]\d{9}", normalized):
         return True
     if re.fullmatch(r"\d{6}", normalized):
@@ -185,11 +209,36 @@ def _is_valid_step_data(text: str, normalized: str, session: dict[str, Any]) -> 
     return False
 
 
+def _has_continuation_intent(normalized: str, session: dict[str, Any]) -> bool:
+    if normalized in CONTINUATION_PHRASES:
+        return True
+    if any(_contains_phrase(normalized, phrase) for phrase in ENTRY_START_PHRASES):
+        return True
+
+    if session.get("step") == "identity" and session.get("sub_step") in {"awaiting_id", "identify_yourself"}:
+        continuation_signals = (
+            "yes",
+            "sure",
+            "okay",
+            "go ahead",
+            "continue",
+            "proceed",
+            "start",
+            "begin",
+        )
+        if any(_contains_phrase(normalized, phrase) for phrase in continuation_signals):
+            return True
+
+    return False
+
+
 def looks_like_fallback_interruption(raw_text: str, session: dict[str, Any] | None = None) -> bool:
     session = session or {}
     text = (raw_text or "").strip()
     normalized = normalize_chat_text(text)
     if not normalized or _is_valid_step_data(text, normalized, session):
+        return False
+    if _has_continuation_intent(normalized, session):
         return False
     if any(_contains_phrase(normalized, phrase) for phrase in SMALL_TALK_PHRASES):
         return True
@@ -204,6 +253,8 @@ def build_resume_prompt(session: dict[str, Any] | None = None) -> str:
     session = session or {}
     step = str(session.get("step") or "identity")
     sub_step = str(session.get("sub_step") or "awaiting_id")
+    if _is_india_personal_session(session) and step == "identity" and sub_step == "awaiting_id":
+        sub_step = "identify_yourself"
     prompt = RESUME_PROMPTS.get((step, sub_step))
     if prompt:
         return prompt
@@ -217,7 +268,13 @@ def build_resume_prompt(session: dict[str, Any] | None = None) -> str:
 
 
 def compose_fallback_response(answer: str | None, session: dict[str, Any] | None = None) -> str:
-    cleaned_answer = (answer or "").strip() or OUT_OF_SCOPE_ANSWER
+    cleaned_answer = (answer or "").strip()
+    if not cleaned_answer:
+        cleaned_answer = (
+            "I can help with questions related to this Personal Loan journey, but I cannot assist with that topic here."
+            if _is_india_personal_session(session)
+            else OUT_OF_SCOPE_ANSWER
+        )
     resume_prompt = build_resume_prompt(session)
     if resume_prompt.lower() in cleaned_answer.lower():
         return cleaned_answer

@@ -199,7 +199,20 @@ function widgetAction(message: UIMessage | undefined, transcript: string): Voice
       return null;
 
     case "NTBIntroductionWidget":
-      if (matchesAnyPhrase(normalized, ["let's begin", "lets begin", "begin", "start"])) {
+      if (matchesAnyPhrase(normalized, [
+        "let's begin",
+        "lets begin",
+        "begin",
+        "start",
+        "yes",
+        "yes please",
+        "yes start",
+        "continue",
+        "proceed",
+        "go ahead",
+        "start the loan application",
+        "begin the journey",
+      ])) {
         return action(["Let's Begin", "Let's begin"]);
       }
       return null;
