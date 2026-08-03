@@ -13,6 +13,41 @@ _STOPWORDS = {
     "who", "why", "will", "with", "you", "your",
 }
 
+SMALL_TALK_SCOPE = "small_talk"
+BANKING_SCOPE = "banking_or_journey"
+OUT_OF_SCOPE = "out_of_scope"
+
+_SMALL_TALK_EXACT = {
+    "hi",
+    "hy",
+    "hii",
+    "hello",
+    "hey",
+    "hey there",
+    "good morning",
+    "good afternoon",
+    "good evening",
+    "how are you",
+    "how are you doing",
+    "how are you today",
+    "are you there",
+    "thank you",
+    "thanks",
+    "nice to meet you",
+    "whats up",
+    "what's up",
+}
+
+_SMALL_TALK_PREFIXES = (
+    "hi ",
+    "hy ",
+    "hello ",
+    "hey ",
+    "good morning ",
+    "good afternoon ",
+    "good evening ",
+)
+
 
 @lru_cache(maxsize=1)
 def _load_faq_data() -> dict[str, Any]:
@@ -22,6 +57,21 @@ def _load_faq_data() -> dict[str, Any]:
 
 def _normalize(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "").lower()).strip()
+
+
+def _normalize_for_scope(text: str) -> str:
+    normalized = _normalize(text).replace("\u2019", "'")
+    normalized = re.sub(r"[^\w\s']", " ", normalized)
+    return re.sub(r"\s+", " ", normalized).strip()
+
+
+def _is_small_talk(message: str) -> bool:
+    normalized = _normalize_for_scope(message)
+    if not normalized:
+        return False
+    if normalized in _SMALL_TALK_EXACT:
+        return True
+    return any(normalized.startswith(prefix) for prefix in _SMALL_TALK_PREFIXES)
 
 
 def _tokens(text: str) -> set[str]:
@@ -123,17 +173,56 @@ def retrieve_general_query_context(message: str, session: dict[str, Any], limit:
     }
 
 
+def classify_query_scope(
+    message: str,
+    session: dict[str, Any] | None = None,
+    retrieved: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Classify whether a free-text query is allowed for Raya to answer."""
+    msg = _normalize(message)
+    if not msg:
+        return {"scope": OUT_OF_SCOPE, "domain": None, "score": 0}
+
+    if _is_small_talk(message):
+        return {"scope": SMALL_TALK_SCOPE, "domain": "small_talk", "score": 1}
+
+    retrieved = retrieved or retrieve_general_query_context(message, session or {}, limit=2)
+    matches = retrieved.get("matches", [])
+    top = matches[0] if matches else {}
+    score = float(top.get("score") or 0)
+    if top and score >= 2.5:
+        return {"scope": BANKING_SCOPE, "domain": top.get("id"), "score": score}
+
+    if retrieved.get("is_banking_context"):
+        return {"scope": BANKING_SCOPE, "domain": top.get("id"), "score": score}
+
+    return {"scope": OUT_OF_SCOPE, "domain": OUT_OF_SCOPE, "score": 0}
+
+
+def out_of_scope_message() -> str:
+    data = _load_faq_data()
+    return (data.get("out_of_scope_messages") or ["Sorry, I can only assist with banking-related queries."])[0]
+
+
+def small_talk_response() -> str:
+    return "I'm doing well, thank you. I'm here to help with your Cash Finance application."
+
+
 def answer_general_query(message: str, session: dict[str, Any]) -> dict[str, Any] | None:
     msg = _normalize(message)
     if not msg:
         return None
 
     retrieved = retrieve_general_query_context(message, session, limit=2)
+    scope = classify_query_scope(message, session, retrieved)
+    if scope["scope"] == SMALL_TALK_SCOPE:
+        return None
+
     matches = retrieved["matches"]
     if matches and matches[0]["score"] >= 2.5:
         return {"text": matches[0]["response"], "domain": matches[0]["id"], "score": matches[0]["score"]}
 
-    if not retrieved["is_banking_context"]:
+    if scope["scope"] == OUT_OF_SCOPE:
         fallback = retrieved["out_of_scope_message"]
         return {"text": fallback, "domain": "out_of_scope", "score": 0}
 

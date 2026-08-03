@@ -44,9 +44,21 @@ AGENT_DIR = REPO_ROOT / "agent"
 if str(AGENT_DIR) not in sys.path:
     sys.path.append(str(AGENT_DIR))
 try:
-    from knowledge.faq_engine import answer_general_query as answer_gateway_general_query
+    from knowledge.faq_engine import (
+        OUT_OF_SCOPE,
+        SMALL_TALK_SCOPE,
+        answer_general_query as answer_gateway_general_query,
+        classify_query_scope as classify_gateway_query_scope,
+        out_of_scope_message as gateway_out_of_scope_message,
+        small_talk_response as gateway_small_talk_response,
+    )
 except Exception:
+    OUT_OF_SCOPE = "out_of_scope"
+    SMALL_TALK_SCOPE = "small_talk"
     answer_gateway_general_query = None
+    classify_gateway_query_scope = None
+    gateway_out_of_scope_message = None
+    gateway_small_talk_response = None
 
 try:
     from shared.journey_fallback import compose_fallback_response, looks_like_fallback_interruption
@@ -808,6 +820,17 @@ def _answer_gateway_question(raw_text: str, session: dict) -> str | None:
     is_question = _looks_like_general_question(raw_text, session)
     if not is_question:
         return None
+    if classify_gateway_query_scope:
+        scope = classify_gateway_query_scope(raw_text, session)
+        if scope.get("scope") == OUT_OF_SCOPE:
+            answer = gateway_out_of_scope_message() if gateway_out_of_scope_message else (
+                "I'm sorry, but I'm not able to assist with that request. Please try asking about our banking services or your Cash Finance application."
+            )
+            return compose_fallback_response(answer, session) if compose_fallback_response else answer
+        if scope.get("scope") == SMALL_TALK_SCOPE:
+            return gateway_small_talk_response() if gateway_small_talk_response else (
+                "I'm doing well, thank you. I'm here to help with your Cash Finance application."
+            )
     if answer_gateway_general_query:
         try:
             faq = answer_gateway_general_query(raw_text, session)
@@ -828,6 +851,10 @@ async def _answer_gateway_question_with_agent(raw_text: str, session_id: str, se
     is_question = _looks_like_general_question(raw_text, session)
     if not is_question:
         return None
+    if classify_gateway_query_scope:
+        scope = classify_gateway_query_scope(raw_text, session)
+        if scope.get("scope") == OUT_OF_SCOPE:
+            return _answer_gateway_question(raw_text, session)
     try:
         async with httpx.AsyncClient(timeout=20.0) as client:
             resp = await client.post(

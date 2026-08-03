@@ -14,7 +14,16 @@ from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 from graph.graph import agent_app
 from graph.nodes import _chat, RESPOND_MODEL
-from knowledge.faq_engine import answer_general_query, retrieve_general_query_context
+from knowledge.faq_engine import (
+    BANKING_SCOPE,
+    OUT_OF_SCOPE,
+    SMALL_TALK_SCOPE,
+    answer_general_query,
+    classify_query_scope,
+    out_of_scope_message,
+    retrieve_general_query_context,
+    small_talk_response,
+)
 from shared.journey_fallback import compose_fallback_response
 from persistence import get_session, save_session, append_messages, get_conversation, delete_journey
 
@@ -143,7 +152,14 @@ async def answer_question(req: QuestionRequest):
         session = dict(req.session or {})
         retrieved = retrieve_general_query_context(req.message, session, limit=4)
         matches = retrieved.get("matches", [])
-        is_casual_voice_chat = not matches and not retrieved.get("is_banking_context")
+        scope = classify_query_scope(req.message, session, retrieved)
+
+        if scope["scope"] == OUT_OF_SCOPE:
+            response_text = compose_fallback_response(out_of_scope_message(), session)
+            return QuestionResponse(response=response_text, domain=OUT_OF_SCOPE, confidence=0)
+
+        if scope["scope"] == SMALL_TALK_SCOPE:
+            return QuestionResponse(response=small_talk_response(), domain="small_talk", confidence=1)
 
         knowledge_lines = []
         for match in matches:
@@ -157,9 +173,8 @@ async def answer_question(req: QuestionRequest):
                 "role": "system",
                 "content": (
                     "You are answering a customer's question during a Cash Finance digital journey. "
-                    "Answer both banking questions and harmless casual voice-mode conversation naturally and warmly. "
-                    "If the customer greets you, asks how you are, or makes small talk, respond like Raya as a friendly human assistant. "
-                    "If the message is banking/journey related, answer it using the supplied knowledge and session context. "
+                    "Only answer banking, finance, current application journey, or platform-support questions using the supplied knowledge and session context. "
+                    "Do not answer unrelated general-knowledge, entertainment, sports, politics, or open-web questions. "
                     "Do not advance, reset, or change the journey. Do not ask the customer to proceed unless the question explicitly asks for the next action. "
                     "If the knowledge is insufficient for a banking question, give a concise safe answer and say the bank will confirm final policy during verification. "
                     "Keep the answer short, clear, and specific to the user's question."
@@ -184,7 +199,7 @@ async def answer_question(req: QuestionRequest):
         if not response_text:
             fallback = answer_general_query(req.message, session)
             response_text = fallback["text"] if fallback else "I can answer questions about your Cash Finance journey while keeping your application at the same step."
-        if not is_casual_voice_chat:
+        if scope["scope"] == BANKING_SCOPE:
             response_text = compose_fallback_response(response_text, session)
 
         top = matches[0] if matches else {}
