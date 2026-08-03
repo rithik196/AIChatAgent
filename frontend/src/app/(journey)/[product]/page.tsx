@@ -14,7 +14,7 @@ import { useVoice } from '@/hooks/useVoice';
 import { SpeakContext } from '@/hooks/SpeakContext';
 import { buildDisbursementVoiceSummary, buildVoicePreviewText, buildVoiceSpeechText } from '@/lib/voicePrompt';
 import { resolveVoiceJourneyAction, type VoiceResolvedAction } from '@/lib/voiceActions';
-import { dispatchVoiceWidgetFieldUpdate, isEditableVoiceWidget, resolveVisibleVoiceWidgetUpdate, VOICE_WIDGET_PROMPT_EVENT } from '@/lib/voiceWidgetFields';
+import { dispatchVoiceWidgetFieldUpdate, isEditableVoiceWidget, resolveVisibleVoiceWidgetUpdate, VOICE_WIDGET_PROMPT_EVENT, type VoiceWidgetFieldUpdate } from '@/lib/voiceWidgetFields';
 import { PersonalDetailsWidget } from '@/components/widgets/PersonalDetailsWidget';
 import type { PersonalDetailsWidgetProps } from '@/components/widgets/PersonalDetailsWidget';
 import type { MessageBubbleProps } from '@/components/chat/MessageBubble';
@@ -212,6 +212,8 @@ const VOICE_TTS_FAILSAFE_EXTRA_MS = 2500;
 const VOICE_ASSISTANT_ECHO_GUARD_MS = 4000;
 const VOICE_WIDGET_UPDATE_PROMPT =
   "Updated. You can make another change or say save changes.";
+const OFFER_SLIDER_RANGE_PROMPT = "Please select the amount or tenure within the shown range.";
+const OFFER_SLIDER_TENURE_OPTIONS = [12, 24, 36, 48, 60];
 
 const SPOKEN_DIGIT_MAP: Record<string, string> = {
   zero: "0",
@@ -366,6 +368,36 @@ function getMessageWidgetData(message?: UIMessage): Record<string, unknown> | nu
   }
 
   return null;
+}
+
+function numberFromWidgetData(value: unknown, fallback: number): number {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number(value.replace(/,/g, ""));
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return fallback;
+}
+
+function isOfferSliderVoiceUpdateOutOfRange(
+  update: VoiceWidgetFieldUpdate,
+  widgetData: Record<string, unknown> | null
+): boolean {
+  if (update.widget !== "OfferSliderWidget") return false;
+
+  const minAmount = numberFromWidgetData(widgetData?.min_amount, 5000);
+  const maxAmount = numberFromWidgetData(widgetData?.max_amount, 250000);
+  const amount = update.updates.amount;
+  if (typeof amount === "number" && (amount < minAmount || amount > maxAmount)) {
+    return true;
+  }
+
+  const tenure = update.updates.tenure;
+  if (typeof tenure === "number" && !OFFER_SLIDER_TENURE_OPTIONS.includes(tenure)) {
+    return true;
+  }
+
+  return false;
 }
 
 function getVoiceSpeechContent(message: UIMessage | undefined): { previewText: string; speechText: string } {
@@ -1005,6 +1037,17 @@ function ChatView({ product, sessionId, initialMessages, initialSession, journey
         text
       );
       if (widgetUpdate) {
+        if (isOfferSliderVoiceUpdateOutOfRange(widgetUpdate, getMessageWidgetData(activeAssistant))) {
+          pendingVoiceInteractionRef.current = null;
+          resetToIdleRef.current?.();
+          autoListenAfterSpeechRef.current = false;
+          activeVoicePreviewIdRef.current = null;
+          setActiveVoicePreviewId(null);
+          setLastVoiceUserText("");
+          window.dispatchEvent(new CustomEvent(VOICE_WIDGET_PROMPT_EVENT, { detail: { text: OFFER_SLIDER_RANGE_PROMPT } }));
+          return;
+        }
+
         const spokenIncomeValue =
           widgetUpdate.widget === "ModifyIncomeWidget" && typeof widgetUpdate.updates.monthlyIncome === "string"
             ? Number(widgetUpdate.updates.monthlyIncome.replace(/\D/g, "") || "0")
