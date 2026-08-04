@@ -396,7 +396,7 @@ function LoginPageInner() {
               Raya
             </div>
             <div className="text-[10.5px] font-semibold text-slate-500 tracking-tight flex items-center gap-1">
-              <span>Your Personal {journeyConfig.head} Assistant</span>
+              <span>Your  {journeyConfig.head} Assistant</span>
               <span className="w-1.5 h-1.5 bg-[#2EAF62] rounded-full animate-pulse" />
             </div>
           </div>
