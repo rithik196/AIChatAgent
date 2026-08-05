@@ -622,8 +622,8 @@ function LoginPageInner() {
           <div className="text-[10px] font-bold text-[#1F6FB2] tracking-widest uppercase mb-0.5">
             Raya
           </div>
-          <div className="text-[10.5px] font-semibold text-slate-500 tracking-tight flex items-center gap-1">
-            <span>Your Personal {journeyConfig.head} Assistant</span>
+          <div className="text-[10.5px] font-bold text-slate-500 tracking-tight flex items-center gap-1">
+            <span>Your {journeyConfig.head} Assistant</span>
             <span className="w-1.5 h-1.5 bg-[#2EAF62] rounded-full animate-pulse" />
           </div>
         </div>
