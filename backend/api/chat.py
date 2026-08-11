@@ -1005,6 +1005,99 @@ def _looks_like_offer_continue_message(text: str) -> bool:
     return False
 
 
+def _normalize_india_offer_choice_text(text: str) -> str:
+    normalized = _normalize_chat_text(text)
+    normalized = re.sub(r"[^a-z0-9\s]", " ", normalized)
+    return re.sub(r"\s+", " ", normalized).strip()
+
+
+def _resolve_india_offer_choice_signal(session: dict, text: str) -> str | None:
+    if not _is_india_personal_session(session):
+        return None
+    if session.get("step") != "offer":
+        return None
+
+    sub_step = session.get("sub_step", "")
+    if sub_step not in {"pre_approved_offer", "india_post_employment_offer"}:
+        return None
+
+    normalized = _normalize_india_offer_choice_text(text)
+    if not normalized:
+        return None
+
+    question_starters = (
+        "what", "why", "how", "when", "where", "which", "who",
+        "can you", "could you", "do i", "does", "is", "are",
+        "will", "would", "should", "tell me", "explain", "describe",
+    )
+    if any(normalized.startswith(starter) for starter in question_starters):
+        return None
+
+    negative_phrases = (
+        "do not accept",
+        "dont accept",
+        "don't accept",
+        "don t accept",
+        "not accept",
+        "decline",
+        "reject",
+    )
+    if any(_contains_phrase(normalized, phrase) for phrase in negative_phrases):
+        return None
+
+    accept_phrases = (
+        "accept",
+        "accept offer",
+        "accept the offer",
+        "accept this offer",
+        "accept preapproved offer",
+        "accept the preapproved offer",
+        "accept pre approved offer",
+        "accept the pre approved offer",
+        "accept pre approved loan offer",
+        "i accept",
+        "i accept offer",
+        "i accept the offer",
+        "i accept this offer",
+        "accept counter offer",
+        "accept counter loan offer",
+        "accept the counter offer",
+        "go with offer",
+        "go ahead with this offer",
+        "yes accept",
+    )
+    higher_amount_phrases = (
+        "need higher amount",
+        "need a higher amount",
+        "higher amount",
+        "more amount",
+        "need more amount",
+        "higher loan amount",
+        "i want higher amount",
+        "i want a higher amount",
+        "i want more amount",
+        "want higher amount",
+        "want more amount",
+        "request higher amount",
+        "request a higher amount",
+    )
+
+    accept_match = any(_contains_phrase(normalized, phrase) for phrase in accept_phrases)
+    higher_amount_match = any(_contains_phrase(normalized, phrase) for phrase in higher_amount_phrases)
+    if accept_match == higher_amount_match:
+        return None
+
+    if sub_step == "india_post_employment_offer":
+        return "india_counter_offer_higher_amount_requested" if higher_amount_match else "india_post_employment_offer_accepted"
+    return "higher_amount_requested" if higher_amount_match else "accepted_pre_approved_offer"
+
+
+def _india_offer_choice_retry_text(session: dict) -> str:
+    if session.get("sub_step") == "india_post_employment_offer" and session.get("wants_more"):
+        return "Sorry, I didn't understand. Please say Accept Counter Loan Offer or Need Higher Amount."
+    return "Sorry, I didn't understand. Please say Accept Pre-Approved Offer or Need Higher Amount."
+
+
 def _looks_like_general_question(raw_text: str, session: dict | None = None) -> bool:
     text = (raw_text or "").strip()
     normalized = _normalize_chat_text(text)
@@ -2744,7 +2837,7 @@ def _handle_active_widget_text_action(
     raw_msg: str,
     normalized_msg: str,
 ) -> StreamingResponse | None:
-    if not raw_msg or _looks_like_general_question(raw_msg):
+    if not raw_msg:
         return None
     if raw_msg.lower().strip().startswith("__sys__"):
         return None
@@ -2760,6 +2853,49 @@ def _handle_active_widget_text_action(
         _store_gateway_session(session_id, session)
         widget_spec = resolve_widget(session, None) if widget_spec_override is ... else widget_spec_override
         return _stream_widget_response(text, widget_spec, ui_flags_override)
+
+    if _is_india_personal_session(session) and step == "offer" and sub_step in {"pre_approved_offer", "india_post_employment_offer"}:
+        india_offer_signal = _resolve_india_offer_choice_signal(session, raw_msg)
+        if sub_step == "pre_approved_offer":
+            if india_offer_signal == "accepted_pre_approved_offer":
+                session["step"] = "identity"
+                session["step_number"] = 2
+                session["sub_step"] = "india_bureau_otp_intro"
+                intro_text = INDIA_BUREAU_OTP_INTRO_TEMPLATE.format(
+                    phone=_resolve_india_masked_phone(session)
+                )
+                return done(intro_text)
+            if india_offer_signal == "higher_amount_requested":
+                session["wants_more"] = True
+                session.pop("india_higher_amount_rejoin_used", None)
+                session["journeyMode"] = "NTB_ENRICHMENT"
+                session["journeyOrigin"] = session.get("customerType", "UNKNOWN")
+                session["transitionReason"] = "Customer requested higher amount than pre-approved ETB offer"
+                session["step"] = "identity"
+                session["step_number"] = 2
+                session["sub_step"] = "india_bureau_otp_intro"
+                intro_text = INDIA_BUREAU_OTP_INTRO_TEMPLATE.format(
+                    phone=_resolve_india_masked_phone(session)
+                )
+                return done(intro_text)
+
+        if sub_step == "india_post_employment_offer":
+            if india_offer_signal == "india_post_employment_offer_accepted":
+                session.pop("india_counter_offer_review_origin", None)
+                session["step"] = "identity"
+                session["step_number"] = 3
+                session["sub_step"] = "india_personal_details_review"
+                return done("")
+            if india_offer_signal == "india_counter_offer_higher_amount_requested":
+                session["wants_more"] = True
+                session["india_counter_offer_review_origin"] = True
+                session["sub_step"] = "wants_more_review"
+                return done("Please review the manual review request details below.")
+
+        return done(_india_offer_choice_retry_text(session))
+
+    if _looks_like_general_question(raw_msg):
+        return None
 
     if _is_india_personal_session(session) and step == "identity":
         if sub_step == "awaiting_start":
@@ -2975,6 +3111,10 @@ def _resolve_india_spoken_signal(session: dict, normalized_msg: str) -> str | No
 
     if sub_step == "identify_yourself" and _matches_any_phrase(text, ("continue", "start", "begin", "let s begin", "lets begin")):
         return "continue"
+
+    india_offer_signal = _resolve_india_offer_choice_signal(session, text)
+    if india_offer_signal:
+        return india_offer_signal
 
     if sub_step == "india_post_employment_offer":
         if _matches_any_phrase(text, ("accept", "accept offer", "accept this offer", "accept pre approved offer", "accept counter offer", "go with offer")):

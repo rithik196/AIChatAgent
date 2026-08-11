@@ -231,31 +231,110 @@ function widgetAction(message: UIMessage | undefined, transcript: string): Voice
       return null;
 
     case "IndiaPreApprovedOfferWidget":
-      if (matchesAnyPhrase(normalized, [
+      const indiaOfferData = data as {
+        accept_label?: string;
+        accept_signal?: string;
+        secondary_label?: string;
+        secondary_signal?: string;
+      } | undefined;
+      const indiaAcceptLabel = indiaOfferData?.accept_label ?? "Accept Pre-Approved Offer";
+      const indiaAcceptSignal = indiaOfferData?.accept_signal ?? "__SYS__accepted_pre_approved_offer";
+      const indiaSecondaryLabel = indiaOfferData?.secondary_label ?? "Need Higher Amount";
+      const indiaSecondarySignal = indiaOfferData?.secondary_signal ?? "__SYS__higher_amount_requested";
+      const indiaQuestionStarters = [
+        "what",
+        "why",
+        "how",
+        "when",
+        "where",
+        "which",
+        "who",
+        "can you",
+        "could you",
+        "do i",
+        "does",
+        "is",
+        "are",
+        "will",
+        "would",
+        "should",
+        "tell me",
+        "explain",
+        "describe",
+      ];
+      const indiaAcceptPhrases = [
         "accept",
         "accept offer",
+        "accept the offer",
+        "accept this offer",
+        "accept preapproved offer",
+        "accept the preapproved offer",
         "accept pre approved offer",
+        "accept the pre approved offer",
         "accept pre approved loan offer",
+        "i accept offer",
+        "i accept the offer",
+        "i accept this offer",
         "accept counter offer",
+        "accept counter loan offer",
+        "accept the counter offer",
         "go with offer",
         "go ahead with this offer",
         "yes accept",
+      ];
+      const indiaHigherAmountPhrases = [
+        "need higher amount",
+        "need a higher amount",
+        "higher amount",
+        "more amount",
+        "need more amount",
+        "higher loan amount",
+        "i want higher amount",
+        "i want a higher amount",
+        "i want more amount",
+        "want higher amount",
+        "want more amount",
+        "request a higher amount",
+        "request higher amount",
+      ];
+
+      if (matchesAnyPhrase(normalized, [
+        "do not accept",
+        "dont accept",
+        "don t accept",
+        "not accept",
+        "decline",
+        "reject",
       ])) {
+        return null;
+      }
+
+      if (indiaQuestionStarters.some((starter) => normalized.startsWith(starter))) {
+        return null;
+      }
+
+      const indiaAcceptMatch = matchesAnyPhrase(normalized, indiaAcceptPhrases);
+      const indiaHigherAmountMatch = matchesAnyPhrase(normalized, indiaHigherAmountPhrases);
+      if (indiaAcceptMatch === indiaHigherAmountMatch) {
+        return null;
+      }
+
+      if (indiaAcceptMatch) {
         return action([
+          indiaAcceptLabel,
           "Accept Pre-Approved Offer",
           "Accept Pre-Approved Loan Offer",
           "Accept Counter Loan Offer",
-        ]);
+        ], {
+          fallbackVisibleText: indiaAcceptLabel,
+          fallbackSystemText: indiaAcceptSignal,
+        });
       }
-      if (matchesAnyPhrase(normalized, [
-        "need higher amount",
-        "higher amount",
-        "more amount",
-        "higher loan amount",
-        "i want higher amount",
-        "request higher amount",
-      ])) {
-        return action(["Need Higher Amount"]);
+      if (indiaHigherAmountMatch) {
+        return action([indiaSecondaryLabel, "Need Higher Amount"], {
+          fallbackVisibleText: indiaSecondaryLabel,
+          fallbackSystemText: indiaSecondarySignal,
+        });
       }
       return null;
 
