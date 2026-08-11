@@ -121,7 +121,7 @@ _OTP_WORD_DIGITS = {
 }
 
 
-def _extract_spoken_otp(text: str, expected_len: int = 4) -> str | None:
+def _extract_spoken_otp(text: str, expected_len: int = 4, strict_len: bool = False) -> str | None:
     normalized = _normalize_user_text(text)
     if not normalized:
         return None
@@ -140,7 +140,7 @@ def _extract_spoken_otp(text: str, expected_len: int = 4) -> str | None:
 
     if len(spoken_digits) == expected_len:
         return "".join(spoken_digits)
-    if len(spoken_digits) > expected_len:
+    if not strict_len and len(spoken_digits) > expected_len:
         return "".join(spoken_digits[-expected_len:])
     return None
 
@@ -168,7 +168,6 @@ def _is_india_personal_session(session: dict) -> bool:
     return (
         session.get("region") == "IN"
         or session.get("journey_variant") == "india_personal"
-        or session.get("product") == "personal_loan"
     )
 
 
@@ -656,7 +655,7 @@ def _deterministic_classify(msg: str, step: str, sub_step: str, session: dict) -
                 return {"step": "identity", "intent": "STEP_DATA", "data": {"india_mobile_number": mobile_number}}
 
         elif _is_india_personal_session(session) and sub_step == "awaiting_india_otp":
-            otp = _extract_spoken_otp(msg, expected_len=6)
+            otp = _extract_spoken_otp(msg, expected_len=6, strict_len=True)
             if otp:
                 return {"step": "identity", "intent": "STEP_DATA", "data": {"india_otp": otp}}
 

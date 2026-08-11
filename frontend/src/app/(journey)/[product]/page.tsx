@@ -564,6 +564,7 @@ function ChatView({ product, sessionId, initialMessages, initialSession, journey
     action: VoiceResolvedAction | null;
     needsWidget: boolean;
   } | null>(null);
+  const pendingMockMessagesRef = useRef<Array<{ detail: unknown; localBubbleAdded: boolean }>>([]);
   const autoListenAfterSpeechRef = useRef(false);
 
   const clearVoiceCommitTimer = useCallback(() => {
@@ -911,7 +912,20 @@ function ChatView({ product, sessionId, initialMessages, initialSession, journey
     [flushPendingVoiceInteraction]
   );
 
-  const dispatchMockMessage = useCallback((detail: unknown) => {
+  const appendLocalMockVisibleBubble = useCallback((visibleText: string) => {
+    const trimmed = visibleText.trim();
+    if (!trimmed) return;
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        role: "user",
+        parts: [{ type: "text", text: trimmed }],
+      } as UIMessage,
+    ]);
+  }, [setMessages]);
+
+  const flushMockMessage = useCallback((detail: unknown, localBubbleAdded = false) => {
     if (typeof detail === "string") {
       sendMessage({ text: detail });
       return;
@@ -927,17 +941,8 @@ function ChatView({ product, sessionId, initialMessages, initialSession, journey
           ? ((detail as { systemText: string }).systemText || "").trim()
           : "";
 
-      // Add a local visible bubble only when sending a hidden/system command.
-      // If we are sending visibleText directly, sendMessage already creates the user message.
-      if (visibleText && systemText) {
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-            role: "user",
-            parts: [{ type: "text", text: visibleText }],
-          } as UIMessage,
-        ]);
+      if (visibleText && systemText && !localBubbleAdded) {
+        appendLocalMockVisibleBubble(visibleText);
       }
 
       if (systemText) {
@@ -946,7 +951,38 @@ function ChatView({ product, sessionId, initialMessages, initialSession, journey
         sendMessage({ text: visibleText });
       }
     }
-  }, [sendMessage, setMessages]);
+  }, [appendLocalMockVisibleBubble, sendMessage]);
+
+  const dispatchMockMessage = useCallback((detail: unknown) => {
+    if (isLoading) {
+      let localBubbleAdded = false;
+      if (detail && typeof detail === "object") {
+        const visibleText =
+          typeof (detail as { visibleText?: unknown }).visibleText === "string"
+            ? ((detail as { visibleText: string }).visibleText || "").trim()
+            : "";
+        const systemText =
+          typeof (detail as { systemText?: unknown }).systemText === "string"
+            ? ((detail as { systemText: string }).systemText || "").trim()
+            : "";
+        if (visibleText && systemText) {
+          appendLocalMockVisibleBubble(visibleText);
+          localBubbleAdded = true;
+        }
+      }
+      pendingMockMessagesRef.current.push({ detail, localBubbleAdded });
+      return;
+    }
+
+    flushMockMessage(detail);
+  }, [appendLocalMockVisibleBubble, flushMockMessage, isLoading]);
+
+  useEffect(() => {
+    if (isLoading) return;
+    const nextPending = pendingMockMessagesRef.current.shift();
+    if (!nextPending) return;
+    flushMockMessage(nextPending.detail, nextPending.localBubbleAdded);
+  }, [flushMockMessage, isLoading]);
 
   const latestOptionPrompt = useMemo(
     () =>
@@ -985,7 +1021,9 @@ function ChatView({ product, sessionId, initialMessages, initialSession, journey
       return;
     }
 
-    const activeAssistant = bufferedAssistant || lastAssistant;
+    const activeAssistant = bufferedAssistant && hasMessageWidget(bufferedAssistant)
+      ? bufferedAssistant
+      : lastAssistant;
     const activeWidgetName = getMessageWidgetName(activeAssistant);
 
     if (voiceModeRef.current && voiceModeOpen) {
@@ -1289,10 +1327,18 @@ function ChatView({ product, sessionId, initialMessages, initialSession, journey
 
   const chatWindowIsLoading = isLoading && !voiceModeOpen;
   const voiceModeSpeaker = voiceState === "speaking" || Boolean(activeVoicePreviewId) ? "ai" : "user";
+  const suppressLastVoiceTranscript = journeyConfig.key === "india" && voiceState === "listening";
   const voiceModeText =
     voiceModeSpeaker === "ai"
       ? voicePanelText || getMessageText(bufferedAssistant) || lastAssistantText || "I am ready when you are."
-      : interimText || lastVoiceUserText || "I am listening.";
+      : interimText || (suppressLastVoiceTranscript ? "" : lastVoiceUserText) || "I am listening.";
+
+  useEffect(() => {
+    if (!voiceModeOpen) return;
+    if (journeyConfig.key !== "india") return;
+    if (voiceState !== "listening") return;
+    setLastVoiceUserText("");
+  }, [journeyConfig.key, voiceModeOpen, voiceState]);
 
   useEffect(() => {
     if (!voiceModeOpen || isLoading) return;

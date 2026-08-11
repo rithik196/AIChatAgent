@@ -28,6 +28,8 @@ DOCUSIGN_PORTAL_BASE_URL = os.getenv(
     "DOCUSIGN_PORTAL_BASE_URL",
     "https://tytlmsdemo.newgensoftware.net:8443/docusign218/qs01",
 ).rstrip("/")
+DEFAULT_DOCUSIGN_SIGNER_EMAIL = os.getenv("DEFAULT_DOCUSIGN_SIGNER_EMAIL", "bhavya@gmail.com")
+INDIA_DOCUSIGN_SIGNER_EMAIL = os.getenv("INDIA_DOCUSIGN_SIGNER_EMAIL", "vaidaryan5@gmail.com")
 
 
 def _build_docusign_link(
@@ -36,11 +38,13 @@ def _build_docusign_link(
     doc_name: str,
     transaction_id: str,
     page: int,
+    region: str = "SA",
 ) -> str:
+    final_signer_email = INDIA_DOCUSIGN_SIGNER_EMAIL if region == "IN" else signer_email
     return (
         f"{DOCUSIGN_PORTAL_BASE_URL}"
         f"?signerName={quote_plus(signer_name)}"
-        f"&signerEmail={quote_plus(signer_email)}"
+        f"&signerEmail={quote_plus(final_signer_email)}"
         f"&docName={quote_plus(doc_name)}"
         f"&transactionId={quote_plus(transaction_id)}"
         f"&x=400&y=680&page={page}"
@@ -77,18 +81,70 @@ def _build_open_banking_email(customer_name: str) -> dict[str, str]:
     return {"subject": subject, "mailBody": mail_body}
 
 
+def _build_india_higher_amount_open_banking_email(customer_name: str) -> dict[str, str]:
+    subject = "Action Required: Review & Approve Account Aggregator Consent"
+    mail_body = f"""
+<html>
+<body style="margin:0; padding:0; background:#f8fafc; font-family: Arial, sans-serif; color:#0f172a;">
+  <div style="padding: 28px 16px;">
+    <div style="max-width: 560px; margin: 0 auto; background: #ffffff; border-radius: 18px; padding: 28px; box-shadow: 0 8px 28px rgba(15, 23, 42, 0.08); border: 1px solid #e2e8f0;">
+      <h2 style="margin: 0 0 10px 0; color: #1f3c88; font-size: 24px; line-height: 1.2;">Hello {customer_name},</h2>
+      <p style="margin: 0 0 18px 0; font-size: 15px; line-height: 1.7; color: #334155;">
+        You&apos;ve taken a step towards your loan application. To securely fetch your financial information, we need your consent via Account Aggregator.
+      </p>
+
+      <div style="border: 1px solid #dbe7ff; background: #f8fbff; border-radius: 16px; padding: 20px; margin: 0 0 20px 0; text-align: center;">
+        <p style="margin: 0 0 8px 0; font-size: 16px; font-weight: 700; color: #0f172a;">Action Required</p>
+        <p style="margin: 0 0 16px 0; font-size: 14px; line-height: 1.6; color: #475569;">
+          Please click the button below to review and approve the consent request. This will help us retrieve your financial data securely.
+        </p>
+        <a href="#" style="display:inline-block; padding: 12px 24px; border-radius: 9999px; background:#1457D7; color:#ffffff; text-decoration:none; font-size:14px; font-weight:700;">
+          Review &amp; Approve Consent
+        </a>
+        <p style="margin: 14px 0 0 0; font-size: 12px; color: #64748b;">This link is valid for 24 hours from the time of this email.</p>
+      </div>
+
+      <div style="margin: 0 0 18px 0;">
+        <p style="margin: 0 0 6px 0; font-size: 14px; font-weight: 700; color: #0f172a;">Why is this needed?</p>
+        <p style="margin: 0; font-size: 13px; line-height: 1.6; color: #475569;">
+          Your consent allows us to securely access your financial information from your bank via Account Aggregator to process your loan application faster.
+        </p>
+      </div>
+
+      <div style="margin: 0 0 18px 0;">
+        <p style="margin: 0 0 6px 0; font-size: 14px; font-weight: 700; color: #0f172a;">Important Notes:</p>
+        <ul style="margin: 0; padding-left: 18px; color: #475569; font-size: 13px; line-height: 1.7;">
+          <li>This link is unique to you. Please do not share it with anyone.</li>
+          <li>If you did not initiate this request, please ignore this email.</li>
+          <li>For any queries, contact our support team.</li>
+        </ul>
+      </div>
+
+      <div style="border-top: 1px solid #e2e8f0; padding-top: 16px; font-size: 13px; color: #475569;">
+        <p style="margin: 0 0 6px 0; font-weight: 700;">Need Help?</p>
+        <p style="margin: 0;">1800-123-4567 &nbsp; | &nbsp; support@loanagent.com</p>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
+""".strip()
+
+    return {"subject": subject, "mailBody": mail_body}
+
+
 def _build_docusign_email(customer_name: str) -> dict[str, str]:
     subject = "Action Required: Review and Sign Your Documents"
     contract_url = _build_docusign_link(
         customer_name,
-        "bhavya@gmail.com",
+    DEFAULT_DOCUSIGN_SIGNER_EMAIL,
         "ContractSaudi",
         "ContractSaudi",
         9,
     )
     promissory_url = _build_docusign_link(
         customer_name,
-        "bhavya@gmail.com",
+    DEFAULT_DOCUSIGN_SIGNER_EMAIL,
         "PromissoryNote",
         "PromissoryNote",
         4,
@@ -131,6 +187,50 @@ def _build_docusign_email(customer_name: str) -> dict[str, str]:
     return {"subject": subject, "mailBody": mail_body}
 
 
+def _build_india_docusign_email(customer_name: str, template: str = "preapproved") -> dict[str, str]:
+    subject = "Action Required: Review and Sign Your Facility Letter"
+    is_higher_amount = template == "higher_amount"
+    doc_name = "Facility_Letter_NHA" if is_higher_amount else "Facility_Letter_PAO"
+    facility_url = _build_docusign_link(
+        customer_name,
+        INDIA_DOCUSIGN_SIGNER_EMAIL,
+        doc_name,
+        doc_name,
+        1,
+        region="IN",
+    )
+    offer_type = "counter" if is_higher_amount else "pre-approved"
+    mail_body = f"""
+<html>
+<body style="margin:0; padding:0; background:#f8fafc; font-family: Arial, sans-serif; color:#0f172a;">
+  <div style="padding: 32px 20px;">
+    <div style="max-width: 560px; margin: 0 auto; background: #ffffff; border-radius: 18px; padding: 32px; box-shadow: 0 8px 28px rgba(15, 23, 42, 0.08);">
+      <h2 style="margin: 0 0 10px 0; color: #1f3c88; font-size: 24px; line-height: 1.2;">E-Sign Your Facility Letter</h2>
+      <p style="margin: 0 0 18px 0; color: #64748b; font-size: 14px;">Hello {customer_name},</p>
+      <p style="margin: 0 0 22px 0; font-size: 15px; line-height: 1.7; color: #0f172a;">
+        Your {offer_type} facility letter is ready for electronic signature. Please click the button below to review and e-sign your document.
+      </p>
+
+      <div style="margin: 0 0 18px 0;">
+        <p style="margin: 0 0 10px 0; font-size: 15px; font-weight: 700; color: #0f172a;">{doc_name}</p>
+        <a href="{facility_url}" target="_blank" rel="noopener noreferrer" style="display: inline-block; padding: 12px 22px; border-radius: 9999px; background: #1f3c88; color: #ffffff; text-decoration: none; font-size: 14px; font-weight: 700;">
+          Proceed to E-Sign
+        </a>
+      </div>
+
+      <p style="margin: 22px 0 0 0; font-size: 13px; line-height: 1.6; color: #64748b;">
+        If a button does not open correctly, please copy and paste the link into your browser.
+      </p>
+      <p style="margin: 10px 0 0 0; font-size: 12px; color: #cbd5e1; text-align: center;">Powered by Raya Finance Agent</p>
+    </div>
+  </div>
+</body>
+</html>
+""".strip()
+
+    return {"subject": subject, "mailBody": mail_body}
+
+
 def _log_email_request(prefix: str, url: str, customer_email: str, payload: dict[str, Any]) -> None:
     logger.info("[%s] url=%s", prefix, url)
     logger.info("[%s] mailTo=%s", prefix, customer_email)
@@ -138,45 +238,56 @@ def _log_email_request(prefix: str, url: str, customer_email: str, payload: dict
     logger.info("[%s] mailBody=%s", prefix, payload.get("mailBody"))
 
 
-def send_open_banking_email(customer_email: str, customer_name: str) -> bool:
-    """Send the Open Banking consent email through ConsentPortalBackend."""
-    payload: dict[str, Any] = {
-        **_build_open_banking_email(customer_name),
-        "mailTo": customer_email,
-        "documentIndex": "",
-    }
+def send_open_banking_email(customer_email: str, customer_name: str, template: str = "default") -> bool:
+  """Send the Open Banking consent email through ConsentPortalBackend."""
+  email_builder = _build_india_higher_amount_open_banking_email if template == "india_higher_amount" else _build_open_banking_email
+  payload: dict[str, Any] = {
+    **email_builder(customer_name),
+    "mailTo": customer_email,
+    "documentIndex": "",
+  }
 
-    url = f"{CONSENT_PORTAL_BASE_URL}{CONSENT_PORTAL_EMAIL_PATH}"
-    _log_email_request("ConsentPortal open banking email request prepared", url, customer_email, payload)
+  url = f"{CONSENT_PORTAL_BASE_URL}{CONSENT_PORTAL_EMAIL_PATH}"
+  _log_email_request("ConsentPortal open banking email request prepared", url, customer_email, payload)
 
-    try:
-        with httpx.Client(timeout=20.0) as client:
-            response = client.post(url, json=payload)
-        logger.info(
-            "ConsentPortal open banking email API response: status=%s mailTo=%s body=%s",
-            response.status_code,
-            customer_email,
-            response.text,
-        )
-        if response.status_code >= 400:
-            logger.error(
-                "ConsentPortal email API failed: status=%s body=%s",
-                response.status_code,
-                response.text,
-            )
-            return False
+  try:
+    with httpx.Client(timeout=20.0) as client:
+      response = client.post(url, json=payload)
+    logger.info(
+      "ConsentPortal open banking email API response: status=%s mailTo=%s body=%s",
+      response.status_code,
+      customer_email,
+      response.text,
+    )
+    if response.status_code >= 400:
+      logger.error(
+        "ConsentPortal email API failed: status=%s body=%s",
+        response.status_code,
+        response.text,
+      )
+      return False
 
-        logger.info("ConsentPortal open banking email API called successfully for: %s | url=%s", customer_email, url)
-        return True
-    except Exception as exc:
-        logger.error("ConsentPortal email API request failed: %s", exc)
-        return False
+    logger.info("ConsentPortal open banking email API called successfully for: %s | url=%s", customer_email, url)
+    return True
+  except Exception as exc:
+    logger.error("ConsentPortal email API request failed: %s", exc)
+    return False
 
 
-def send_docusign_email(customer_email: str, customer_name: str) -> bool:
+def send_docusign_email(
+    customer_email: str,
+    customer_name: str,
+    template: str = "default",
+    region: str = "SA",
+) -> bool:
     """Send the e-sign document email through ConsentPortalBackend."""
+    email_content = (
+        _build_india_docusign_email(customer_name, template=template)
+        if region == "IN"
+        else _build_docusign_email(customer_name)
+    )
     payload: dict[str, Any] = {
-        **_build_docusign_email(customer_name),
+        **email_content,
         "mailTo": customer_email,
         "documentIndex": "",
     }

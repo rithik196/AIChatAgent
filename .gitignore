@@ -1,8 +1,31 @@
 # Persistent data store (sessions + conversations)
 .data/
+
+# Python cache
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+
+# Environment files
 .env
+.env.local
+.env.*.local
+
+# Python virtual environments
 .venv/
 venv/
+env/
+
+# IDE / OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Backend generated documents
+backend/generated_documents/
+
+# Temp files
+tmp/
 

@@ -112,7 +112,7 @@ const INDIA_JOURNEY_CONFIG: JourneyConfig = {
   formDescription: "Enter your India mobile number to receive a secure OTP and continue.",
   phoneCtaLabel: "Continue",
   otpTitle: "Verify Your OTP",
-  otpDescription: "We sent a 4-digit verification code to",
+  otpDescription: "We sent a 6-digit verification code to",
   otpSubmitLabel: "Verify OTP & Continue",
   otpSuccessDescription: "OTP verified. Taking you to your India personal finance journey...",
   agentName: "Loan Agent",
