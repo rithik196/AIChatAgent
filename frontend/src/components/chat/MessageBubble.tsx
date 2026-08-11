@@ -41,6 +41,12 @@ import { PreApprovedOfferWidget } from "../widgets/PreApprovedOfferWidget";
 import { DelayTriggerWidget } from "../widgets/DelayTriggerWidget";
 import { IndiaOtpWidget } from "../widgets/IndiaOtpWidget";
 import { IndiaPreApprovedOfferWidget } from "../widgets/IndiaPreApprovedOfferWidget";
+import { IndiaBureauVerifiedWidget } from "../widgets/IndiaBureauVerifiedWidget";
+import { IndiaEmploymentFetchingWidget } from "../widgets/IndiaEmploymentFetchingWidget";
+import { IndiaEmploymentDetailsWidget } from "../widgets/IndiaEmploymentDetailsWidget";
+import { IndiaFacilityLetterWidget } from "../widgets/IndiaFacilityLetterWidget";
+import { IndiaPostEsignSummaryWidget } from "../widgets/IndiaPostEsignSummaryWidget";
+import { IndiaPersonalDetailsWidget } from "../widgets/IndiaPersonalDetailsWidget";
 import { StepIndicator } from "../widgets/StepIndicator";
 import { WelcomeBackWidget } from "../widgets/WelcomeBackWidget";
 import { ImportantText } from "../shared/ImportantText";
@@ -115,6 +121,12 @@ const WIDGET_REGISTRY: Record<string, WidgetComponent> = {
   DelayTriggerWidget,
   IndiaOtpWidget,
   IndiaPreApprovedOfferWidget,
+  IndiaBureauVerifiedWidget,
+  IndiaEmploymentFetchingWidget,
+  IndiaEmploymentDetailsWidget,
+  IndiaFacilityLetterWidget,
+  IndiaPostEsignSummaryWidget,
+  IndiaPersonalDetailsWidget,
   WelcomeBackWidget,
 };
 

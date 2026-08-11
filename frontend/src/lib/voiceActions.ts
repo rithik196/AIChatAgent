@@ -217,6 +217,128 @@ function widgetAction(message: UIMessage | undefined, transcript: string): Voice
       }
       return null;
 
+    case "IndiaOtpWidget":
+      if (matchesAnyPhrase(normalized, [
+        "did not receive otp",
+        "did not receive the otp",
+        "did not receive one time password",
+        "resend otp",
+        "resend",
+        "send otp again",
+      ])) {
+        return action(["Did not receive the One-Time Password"]);
+      }
+      return null;
+
+    case "IndiaPreApprovedOfferWidget":
+      if (matchesAnyPhrase(normalized, [
+        "accept",
+        "accept offer",
+        "accept pre approved offer",
+        "accept pre approved loan offer",
+        "accept counter offer",
+        "go with offer",
+        "go ahead with this offer",
+        "yes accept",
+      ])) {
+        return action([
+          "Accept Pre-Approved Offer",
+          "Accept Pre-Approved Loan Offer",
+          "Accept Counter Loan Offer",
+        ]);
+      }
+      if (matchesAnyPhrase(normalized, [
+        "need higher amount",
+        "higher amount",
+        "more amount",
+        "higher loan amount",
+        "i want higher amount",
+        "request higher amount",
+      ])) {
+        return action(["Need Higher Amount"]);
+      }
+      return null;
+
+    case "IndiaEmploymentDetailsWidget":
+      if (matchesAnyPhrase(normalized, [
+        "confirm details",
+        "confirm employment details",
+        "these details are accurate",
+        "details are accurate",
+        "continue",
+        "proceed",
+      ])) {
+        return action(["I confirm these details are accurate"]);
+      }
+      if (matchesAnyPhrase(normalized, [
+        "modify employment details",
+        "modify my employment",
+        "modify employment",
+        "modify my employ",
+        "edit employment details",
+        "change employment details",
+        "change employ",
+        "update employment details",
+      ])) {
+        return action(["I wish to modify my Employment Details"], {
+          fallbackVisibleText: "I wish to modify my Employment Details",
+          fallbackSystemText: "__SYS__india_modify_employment",
+        });
+      }
+      if (matchesAnyPhrase(normalized, ["save changes", "save employment details", "save updated employment details", "save"])) {
+        return action(["Save Changes"]);
+      }
+      if (matchesAnyPhrase(normalized, ["back to review", "go back", "back"])) {
+        return action(["Back to Review"]);
+      }
+      return null;
+
+    case "IndiaPersonalDetailsWidget":
+      if (matchesAnyPhrase(normalized, [
+        "confirm details",
+        "confirm personal details",
+        "these details are accurate",
+        "details are accurate",
+        "continue",
+        "proceed",
+      ])) {
+        return action(["I confirm these details are accurate"]);
+      }
+      if (matchesAnyPhrase(normalized, [
+        "modify personal details",
+        "modify my personal",
+        "modify personal",
+        "edit personal details",
+        "change personal details",
+        "change personal",
+        "update personal details",
+      ])) {
+        return action(["I wish to modify my personal details"], {
+          fallbackVisibleText: "I wish to modify my personal details",
+          fallbackSystemText: "__SYS__india_modify_personal_details",
+        });
+      }
+      if (matchesAnyPhrase(normalized, ["save changes", "save personal details", "save updated personal details", "save"])) {
+        return action(["Save Changes"]);
+      }
+      if (matchesAnyPhrase(normalized, ["back to review", "go back", "back"])) {
+        return action(["Back to Review"]);
+      }
+      return null;
+
+    case "IndiaFacilityLetterWidget":
+      if (matchesAnyPhrase(normalized, [
+        "e sign",
+        "esign",
+        "sign",
+        "sign document",
+        "proceed to sign",
+        "continue to e sign",
+      ])) {
+        return action(["E-Sign"]);
+      }
+      return null;
+
     case "PersonalDetailsWidget":
       if (matchesAnyPhrase(normalized, ["modify details", "change details", "edit details", "update details"])) {
         return action(["Modify Details"], {

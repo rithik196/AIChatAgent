@@ -33,6 +33,11 @@ from utils.eligibility import calculate_max_eligible_amount
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+INDIA_MAIL_RECIPIENT = "vaidaryan5@gmail.com"
+INDIA_DISPLAY_EMAIL = "narendar.singh@gmail.com"
+INDIA_ESIGN_DOC_PREAPPROVED = "Facility_Letter_PAO.pdf"
+INDIA_ESIGN_DOC_HIGHER_AMOUNT = "Facility_Letter_NHA.pdf"
+
 _STREAM_SESSION_ID: ContextVar[str | None] = ContextVar("stream_session_id", default=None)
 _STREAM_USER_TEXT: ContextVar[str | None] = ContextVar("stream_user_text", default=None)
 
@@ -193,6 +198,13 @@ BUREAU_CONSENT_OTP_PROMPT = (
     "Please enter the Absher OTP sent to your registered mobile number to verify your consent and enable us to fetch your SIMAH bureau data."
 )
 
+INDIA_BUREAU_OTP_INTRO_TEMPLATE = (
+    "Great! I've sent a 6-digit OTP to your registered mobile number {phone}."
+)
+INDIA_BUREAU_OTP_PROMPT = "Please share the 6-digit OTP here so I can verify it."
+INDIA_BUREAU_OTP_ACK = "Thank you! Let me verify that for you."
+INDIA_BUREAU_OTP_RETRY_PROMPT = "I could not capture a valid 6-digit OTP. Please share the 6-digit OTP here so I can verify it."
+
 FINAL_DISBURSEMENT_OTP_PROMPT = "Please enter the 4-digit OTP sent to your registered mobile number."
 OTP_RETRY_PROMPT = "The entered OTP is incorrect. Please re-enter the correct OTP."
 
@@ -311,7 +323,7 @@ def _looks_like_otp_attempt(text: str) -> bool:
     return bool(_extract_digit_tokens(normalized))
 
 
-def _extract_otp_from_message(text: str, expected_len: int = 4) -> str | None:
+def _extract_otp_from_message(text: str, expected_len: int = 4, strict_len: bool = False) -> str | None:
     normalized = _normalize_chat_text(text)
     if not normalized:
         return None
@@ -324,7 +336,7 @@ def _extract_otp_from_message(text: str, expected_len: int = 4) -> str | None:
     if len(digit_tokens) == expected_len:
         return "".join(digit_tokens)
 
-    if len(digit_tokens) > expected_len and any(hint in normalized for hint in OTP_CONTEXT_HINTS):
+    if not strict_len and len(digit_tokens) > expected_len and any(hint in normalized for hint in OTP_CONTEXT_HINTS):
         return "".join(digit_tokens[-expected_len:])
 
     return None
@@ -395,8 +407,33 @@ def _is_india_personal_session(session: dict | None) -> bool:
     return (
         session.get("region") == "IN"
         or session.get("journey_variant") == "india_personal"
-        or session.get("product") == "personal_loan"
     )
+
+
+def _get_india_mail_recipient(session: dict | None = None) -> str:
+    return INDIA_MAIL_RECIPIENT
+
+
+def _get_mail_recipient(session: dict | None, email: str | None) -> str | None:
+    if _is_india_personal_session(session):
+        return _get_india_mail_recipient(session)
+    return email
+
+
+def _get_india_esign_document(session: dict) -> str:
+    return INDIA_ESIGN_DOC_HIGHER_AMOUNT if session.get("wants_more") else INDIA_ESIGN_DOC_PREAPPROVED
+
+
+def _get_open_banking_template(session: dict | None) -> str:
+    if _is_india_personal_session(session) and (session or {}).get("wants_more"):
+        return "india_higher_amount"
+    return "default"
+
+
+def _get_docusign_template(session: dict | None) -> str:
+    if _is_india_personal_session(session):
+        return "higher_amount" if (session or {}).get("wants_more") else "preapproved"
+    return "default"
 
 
 def _apply_gateway_journey_defaults(session: dict) -> dict:
@@ -459,14 +496,151 @@ def _resolve_india_session_phone(session: dict) -> str:
 
 
 def _resolve_india_welcome_name(session: dict) -> str:
+    return "Narendar Singh"
+
+
+def _resolve_india_masked_phone(session: dict) -> str:
     phone = _resolve_india_session_phone(session)
-    if phone:
-        customer = get_customer_by_phone(phone)
-        if customer and getattr(customer, "name", None):
-            return customer.name
-    if phone == "8811223344":
-        return "Narendar Singh"
-    return "Narendra Kumar"
+    digits = re.sub(r"\D", "", phone)
+    if len(digits) >= 10:
+        last_ten = digits[-10:]
+        return f"+91 {last_ten[:2]}XXXXXX{last_ten[-2:]}"
+    return "+91 98XXXXXX45"
+
+
+def _format_india_display_dob(raw_value: str) -> str:
+    value = (raw_value or "").strip()
+    if not value:
+        return "15/01/1990"
+    for fmt in ("%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d"):
+        try:
+            return datetime.datetime.strptime(value, fmt).strftime("%d/%m/%Y")
+        except ValueError:
+            continue
+    return value
+
+
+def _build_india_bureau_verified_widget_data(session: dict) -> dict[str, Any]:
+    applicant_name = "Narendar Singh"
+    dob_value = "15/01/1990"
+
+    return {
+        "title": "Bureau Details Verified Successfully!",
+        "subtitle": "Your bureau details have been retrieved and verified. You can now continue with your loan application.",
+        "applicant": applicant_name,
+        "date_of_birth": dob_value,
+        "bureau_status": "Verified",
+        "auto_advance_ms": 2200,
+        "next_message": "india_employment_fetching",
+        "silent": True,
+    }
+
+
+def _build_india_employment_widget_data(session: dict, editable: bool = False) -> dict[str, Any]:
+    profile = _ensure_session_customer_profile(session)
+    employment = profile.setdefault("employment", {})
+    work_address = employment.setdefault("workAddress", {})
+
+    def ensure_value(container: dict[str, Any], key: str, fallback: str) -> str:
+        value = str(container.get(key, "") or "").strip()
+        if value:
+            return value
+        container[key] = fallback
+        return fallback
+
+    employment_type = ensure_value(employment, "type", "Salaried")
+    industry_type = "IT"
+    employment["industry"] = industry_type
+    total_experience = ensure_value(employment, "experience", "12 Years")
+    employer_name = ensure_value(employment, "employer", "Newgen Software Technologies Limited")
+    uan = ensure_value(employment, "uan", "101234567890")
+    employee_member_id = "DSNHP00140020000021762"
+    employment["employeeMemberId"] = employee_member_id
+    employee_name = "Narendar Singh"
+    employment["employeeName"] = employee_name
+    uan_status = ensure_value(employment, "uanStatus", "Active")
+    work_address_line1 = ensure_value(work_address, "line1", "Manyata Tech Park")
+    work_city = ensure_value(work_address, "city", "Bengaluru")
+    work_postal_code = ensure_value(work_address, "postalCode", "560045")
+
+    return {
+        "mode": "edit" if editable else "view",
+        "title": "Employment Details",
+        "employment_type": employment_type,
+        "industry_type": industry_type,
+        "total_experience": total_experience,
+        "employer_name": employer_name,
+        "uan": uan,
+        "employee_member_id": employee_member_id,
+        "employee_name": employee_name,
+        "uan_status": uan_status,
+        "work_address": work_address_line1,
+        "work_city": work_city,
+        "work_postal_code": work_postal_code,
+    }
+
+
+def _build_india_higher_amount_proof_choice_data() -> dict[str, Any]:
+    return {
+        "title": "Verify Income For Higher Amount",
+        "description": "Please proceed ahead to upload your salary bank statement or provide consent using Account Aggregator. You can choose either option below.",
+        "primary_label": "Upload Salary Bank Statement",
+        "primary_caption": "Upload your salary bank statement (PDF, JPG, PNG)",
+        "primary_signal": "upload_statement",
+        "primary_visible_text": "Upload Salary Bank Statement",
+        "secondary_label": "Use Account Aggregator",
+        "secondary_caption": "We will send a secure link to your email to provide consent",
+        "secondary_signal": "open_banking",
+        "secondary_visible_text": "Use Account Aggregator",
+    }
+
+
+def _build_india_personal_review_widget_data(session: dict, editable: bool = False) -> dict[str, Any]:
+    review = session.setdefault("india_personal_review", {})
+
+    def ensure_value(container: dict[str, Any], key: str, fallback: str) -> str:
+        value = str(container.get(key, "") or "").strip()
+        if value:
+            return value
+        container[key] = fallback
+        return fallback
+
+    name = "Narendar Singh"
+    review["name"] = name
+    phone = ensure_value(review, "phone", "+91 8811234433")
+    review["email"] = INDIA_DISPLAY_EMAIL
+    email = INDIA_DISPLAY_EMAIL
+    aadhaar_number = ensure_value(review, "aadhaar_number", "XXXX XXXX 6832")
+    gender = ensure_value(review, "gender", "Male")
+    date_of_birth = "15/01/1990"
+    review["date_of_birth"] = date_of_birth
+    residential_address = "23, Jasari Khatima, Jhunkat, Udham Singh Nagar, Uttarakhand-262308, India"
+    review["residential_address"] = residential_address
+    marital_status = ensure_value(review, "marital_status", "Single")
+    nationality = ensure_value(review, "nationality", "Indian")
+    father_name = ensure_value(review, "father_name", "Ramesh Singh")
+    dependents = ensure_value(review, "dependents", "04")
+    income_type = ensure_value(review, "income_type", "Salaried")
+
+    return {
+        "mode": "edit" if editable else "view",
+        "name": name,
+        "phone": phone,
+        "email": email,
+        "aadhaar_number": aadhaar_number,
+        "gender": gender,
+        "date_of_birth": date_of_birth,
+        "residential_address": residential_address,
+        "marital_status": marital_status,
+        "nationality": nationality,
+        "father_name": father_name,
+        "dependents": dependents,
+        "income_type": income_type,
+        "show_step_tracker": True,
+        "tracker_step": 3,
+        "tracker_total": 5,
+        "tracker_variant": "check",
+    }
 
 
 def _hydrate_india_customer_profile(session: dict) -> None:
@@ -539,14 +713,20 @@ def _india_mobile_prompt_ui_flags() -> dict[str, Any]:
 
 
 def _seed_india_preapproved_offer(session: dict) -> None:
-    session["offer"] = {
-        **(session.get("offer") or {}),
-        "max_amount": 1500000,
-        "profit_rate": "11%",
-        "max_tenure": 84,
-        "currency": "INR",
-        "variant": "india_preapproved",
-    }
+    offer = dict(session.get("offer") or {})
+    if _is_india_personal_session(session) and session.get("wants_more"):
+        offer["max_amount"] = 2100000
+        offer["profit_rate"] = "11%"
+        offer["max_tenure"] = 84
+        offer["currency"] = "INR"
+        offer["variant"] = "india_counter_offer"
+    else:
+        offer.setdefault("max_amount", 1500000)
+        offer.setdefault("profit_rate", "11%")
+        offer.setdefault("max_tenure", 84)
+        offer.setdefault("currency", "INR")
+        offer.setdefault("variant", "india_preapproved")
+    session["offer"] = offer
 
 
 def _resolve_india_widget(session: dict) -> dict | None | object:
@@ -601,6 +781,113 @@ def _resolve_india_widget(session: dict) -> dict | None | object:
                 "auto_advance_ms": 4000,
                 "next_message": "welcome_back_complete",
                 "silent": True,
+            },
+        }
+
+    if sub_step == "india_bureau_otp_intro":
+        return {
+            "widget": "DelayTriggerWidget",
+            "data": {
+                "auto_advance_ms": 200,
+                "next_message": "india_bureau_show_prompt",
+                "silent": True,
+            },
+        }
+
+    if sub_step == "india_bureau_otp_prompt":
+        return None
+
+    if sub_step == "india_bureau_otp_received":
+        return {
+            "widget": "DelayTriggerWidget",
+            "data": {
+                "auto_advance_ms": 300,
+                "next_message": "india_bureau_start_verification",
+                "silent": True,
+            },
+        }
+
+    if sub_step == "india_bureau_otp_verifying":
+        return {
+            "widget": "LoadingWidget",
+            "data": {
+                "title": "Verifying OTP...",
+                "subtitle": "",
+                "auto_advance_ms": 1600,
+                "next_message": "india_bureau_otp_verified",
+                "silent": True,
+            },
+        }
+
+    if sub_step == "india_bureau_verified":
+        return {
+            "widget": "IndiaBureauVerifiedWidget",
+            "data": _build_india_bureau_verified_widget_data(session),
+        }
+
+    if sub_step == "india_higher_amount_proof_choice":
+        return {
+            "widget": "IncomeProofChoiceWidget",
+            "data": _build_india_higher_amount_proof_choice_data(),
+        }
+
+    if sub_step == "india_higher_amount_open_banking_email_sent":
+        return {
+            "widget": "DelayTriggerWidget",
+            "data": {
+                "auto_advance_ms": 10000,
+                "next_message": "open_banking_linked",
+                "silent": True,
+            },
+        }
+
+    if sub_step == "india_employment_fetching":
+        return {
+            "widget": "IndiaEmploymentFetchingWidget",
+            "data": {
+                "title": "Fetching Employment Details...",
+                "subtitle": "Retrieving and verifying your employment information...",
+                "auto_advance_ms": 5600,
+                "next_message": "india_employment_details_ready",
+                "silent": True,
+            },
+        }
+
+    if sub_step == "india_employment_details":
+        return {
+            "widget": "IndiaEmploymentDetailsWidget",
+            "data": _build_india_employment_widget_data(session),
+        }
+
+    if sub_step == "india_modify_employment_details":
+        return {
+            "widget": "IndiaEmploymentDetailsWidget",
+            "data": _build_india_employment_widget_data(session, editable=True),
+        }
+
+    if sub_step == "india_personal_details_review":
+        return {
+            "widget": "IndiaPersonalDetailsWidget",
+            "data": _build_india_personal_review_widget_data(session),
+        }
+
+    if sub_step == "india_modify_personal_details":
+        return {
+            "widget": "IndiaPersonalDetailsWidget",
+            "data": _build_india_personal_review_widget_data(session, editable=True),
+        }
+
+    if sub_step == "india_esign_request":
+        return {
+            "widget": "IndiaFacilityLetterWidget",
+            "data": {
+                "title": "Facility Letter",
+                "subtitle": "Ready for E-Sign",
+                "document": {
+                    "name": "Facility Letter",
+                    "type": "pdf",
+                    "url": f"/assets/{_get_india_esign_document(session)}",
+                },
             },
         }
 
@@ -1145,7 +1432,7 @@ def _persist_profile_update(session: dict, section: str, updates: dict[str, Any]
 
     elif section == "employment":
         employment = profile.setdefault("employment", {})
-        for key in ("type", "industry", "employer", "experience"):
+        for key in ("type", "industry", "employer", "experience", "uan", "employeeMemberId", "employeeName", "uanStatus"):
             if updates.get(key) is not None:
                 employment[key] = str(updates.get(key, "")).strip()
         work_address_in = updates.get("workAddress") if isinstance(updates.get("workAddress"), dict) else {}
@@ -1416,6 +1703,71 @@ def _build_application_summary_data(session: dict) -> dict:
             "beneficiary": account.get("beneficiary", ""),
         },
         "is_etb": customer_type == "ETB",
+    }
+
+
+def _build_india_post_esign_summary_data(session: dict) -> dict:
+    profile = _build_personal_widget_data(session, session.get("session_id", "")) or session.get("customer_profile") or {}
+    finance = session.get("finance_summary") or {}
+    selected_account = session.get("selected_account") or {}
+    is_india_higher_amount = _is_india_personal_session(session) and bool(session.get("wants_more"))
+
+    customer_name = profile.get("name") or session.get("collected", {}).get("full_name") or "Narendar Singh"
+    finance_amount = 2100000 if is_india_higher_amount else int(finance.get("amount") or session.get("offer", {}).get("max_amount") or 1500000)
+    tenure = 84 if is_india_higher_amount else int(finance.get("tenure") or session.get("offer", {}).get("max_tenure") or 84)
+    profit_rate = "11%" if is_india_higher_amount else (finance.get("profit_rate") or session.get("offer", {}).get("profit_rate") or "11%")
+    monthly_installment = 35957 if is_india_higher_amount else int(finance.get("monthly_installment") or 26584)
+    total_payable = 3020398 if is_india_higher_amount else int(finance.get("total_payable") or 2215477)
+
+    bank_name = selected_account.get("bank") or "ICICI Bank"
+    beneficiary = selected_account.get("beneficiary") or customer_name
+    account_number = selected_account.get("iban") or "XXXXXX112233"
+    ifsc_code = session.get("repayment_account", {}).get("ifsc_code") or "ICIC0001234"
+    validation_status = session.get("repayment_account", {}).get("validation_status") or "Pending"
+    disbursed_to = selected_account.get("display_name") or selected_account.get("name") or "Savings Account ******7223"
+
+    return {
+        "customerName": customer_name,
+        "footerMessage": {
+            "earlySettlement": "Should you wish to make an early settlement, please contact us at least 30 days in advance.",
+            "pleasureMessage": f"It has been a genuine pleasure assisting you today, {customer_name}.",
+            "successMessage": "We wish you every success with your plans, and we look forward to continuing to be of service.",
+            "supportMessage": "Our team is available 24 hours a day, 7 days a week should you need any assistance. Simply call 022-234-5678 or return to this assistant at any time.",
+            "thankYouMessage": "Thank you for choosing ICICI Bank.",
+        },
+        "loanDetails": {
+            "loanNumber": session.get("loan_number") or ("PL-2026-XXXXX1879" if is_india_higher_amount else "PL-2026-XXXX1841"),
+            "date": session.get("disbursement_date") or "06 July 2026",
+            "loanAmount": finance_amount,
+            "disbursedTo": disbursed_to or "Savings Account ******7223",
+            "repaymentPeriod": f"{tenure} Months",
+            "interestRate": profit_rate,
+            "firstInstallmentDue": session.get("first_installment_due") or "03 August 2026",
+            "monthlyInstallment": monthly_installment,
+            "totalPayable": total_payable,
+        },
+        "repaymentAccount": {
+            "accountNumber": account_number,
+            "ifscCode": ifsc_code,
+            "accountHolderName": beneficiary,
+            "bankValidationStatus": validation_status,
+            "bankName": bank_name,
+            "branch": session.get("repayment_account", {}).get("branch") or "Greater Kailash, Delhi",
+        },
+        "submitClose": {
+            "completed": bool(session.get("india_submit_close_completed")),
+            "buttonLabel": "Submit & Close",
+            "closingText": (
+                "Should you wish to make an early settlement, please contact us at least 30 days in advance. "
+                "It has been a genuine pleasure assisting you today, Narendar Singh. "
+                "We wish you every success with your plans and we look forward to continuing to be of service. "
+                "Our team is available 24 hours a day, 7 days a week should you need any assistance, simply call "
+                "022-1234-5678 or return to this assistant at any time. Thank you for choosing ICICI Bank."
+            ),
+        },
+        "show_step_tracker": True,
+        "tracker_step": 5,
+        "tracker_total": 5,
     }
 
 
@@ -2019,6 +2371,63 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
                 },
             }
 
+    if step == "offer" and sub_step == "india_offer_details_loading":
+        is_counter_offer = bool(session.get("wants_more"))
+        return {
+            "widget": "IndiaEmploymentFetchingWidget",
+            "data": {
+                "title": "Retrieving Counter Offer Details..." if is_counter_offer else "Retrieving Pre-Approved Loan Offer Details...",
+                "subtitle": "This may take a few seconds. Please wait.",
+                "auto_advance_ms": 2400,
+                "next_message": "india_offer_details_ready",
+                "silent": True,
+            },
+        }
+
+    if step == "offer" and sub_step == "india_post_employment_offer":
+        offer = session.setdefault("offer", {})
+        is_counter_offer = bool(session.get("wants_more"))
+        max_amount = 2100000 if is_counter_offer else offer.get("max_amount", 150000)
+        profit_rate = "11%" if is_counter_offer else offer.get("profit_rate", "11%")
+        max_tenure = 84 if is_counter_offer else offer.get("max_tenure", 84)
+        currency = "INR" if is_counter_offer else offer.get("currency", "INR")
+        return {
+            "widget": "IndiaPreApprovedOfferWidget",
+            "data": {
+                "max_amount": max_amount,
+                "profit_rate": profit_rate,
+                "max_tenure": max_tenure,
+                "currency": currency,
+                "offer_style": "counter_loan" if is_counter_offer else "preapproved",
+                "heading": "Congratulations, Narendar Singh!",
+                "intro_text": (
+                    "I\'m pleased to present you with a counter offer of "
+                    if is_counter_offer
+                    else "I\'m pleased to present you with a pre-approved Personal Loan offer of "
+                ),
+                "prompt_text": (
+                    "Would you like to accept this counter offer, or would you like to request a higher amount?"
+                    if is_counter_offer
+                    else "Would you like to accept this pre-approved offer?"
+                ),
+                "note_text": (
+                    "This counter offer has been generated based on your updated employment profile and financial evaluation."
+                    if is_counter_offer
+                    else "Note : This offer has been calculated based on your verified income and existing financial obligations, in full accordance with RBI's responsible lending guidelines"
+                ),
+                "card_title": "Counter Loan Offer Details" if is_counter_offer else "Pre-Approved Offer",
+                "accept_label": "Accept Counter Loan Offer" if is_counter_offer else "Accept Pre-Approved Loan Offer",
+                "accept_signal": "__SYS__india_post_employment_offer_accepted",
+                "show_secondary_action": True,
+                "secondary_label": "Need Higher Amount",
+                "secondary_signal": "__SYS__india_counter_offer_higher_amount_requested",
+                "show_step_tracker": True,
+                "tracker_step": 2,
+                "tracker_total": 5,
+                "tracker_variant": "check",
+            },
+        }
+
         offer = session.setdefault("offer", {})
         offer["max_amount"] = PREAPPROVED_ETB_AMOUNT
         offer.setdefault("profit_rate", "6.1%")
@@ -2233,6 +2642,20 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
         }
 
     if step == "esign" and sub_step == "documents":
+        if _is_india_personal_session(session):
+            return {
+                "widget": "IndiaFacilityLetterWidget",
+                "data": {
+                    "title": "Facility Letter",
+                    "subtitle": "Ready for E-Sign",
+                    "document": {
+                        "name": "Facility Letter",
+                        "type": "pdf",
+                        "url": f"/assets/{_get_india_esign_document(session)}",
+                    },
+                    **tracker_data,
+                },
+            }
         return {
             "widget": "DocumentPreviewWidget",
             "data": {
@@ -2261,6 +2684,12 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
 
     if step == "esign" and sub_step == "otp_ivr":
         return {"widget": "OtpVerificationWidget", "data": {}}
+
+    if _is_india_personal_session(session) and step == "disburse" and sub_step == "india_summary":
+        return {
+            "widget": "IndiaPostEsignSummaryWidget",
+            "data": _build_india_post_esign_summary_data(session),
+        }
 
     if step == "done":
         finance = session.get("finance_summary") or {}
@@ -2457,13 +2886,26 @@ def _handle_active_widget_text_action(
                 session.setdefault("collected", {})["phone_number"] = mobile_number
                 session["sub_step"] = "awaiting_india_otp"
                 return done("")
+            if re.search(r"\d", _normalize_chat_text(raw_msg)):
+                return done("Enter correct mobile number", None, _india_mobile_prompt_ui_flags())
 
         if sub_step == "awaiting_india_otp":
-            otp = _extract_otp_from_message(raw_msg, expected_len=6)
+            otp = _extract_otp_from_message(raw_msg, expected_len=6, strict_len=True)
             if otp:
                 session["india_verification_otp"] = otp
                 session["sub_step"] = "india_loading"
                 return done("")
+            if _looks_like_otp_attempt(raw_msg) and not _looks_like_general_question(raw_msg, session):
+                return done("Please enter a valid 6-digit OTP.", None)
+
+        if sub_step == "india_bureau_otp_prompt":
+            otp = _extract_otp_from_message(raw_msg, expected_len=6, strict_len=True)
+            if otp:
+                session["india_bureau_otp"] = otp
+                session["sub_step"] = "india_bureau_otp_received"
+                return done(INDIA_BUREAU_OTP_ACK)
+            if _looks_like_otp_attempt(raw_msg) and not _looks_like_general_question(raw_msg, session):
+                return done(INDIA_BUREAU_OTP_RETRY_PROMPT, None)
 
     if step == "identity" and sub_step == "identify_yourself":
         if _is_continuation_message(raw_msg):
@@ -2594,13 +3036,13 @@ def _send_docusign_for_session(session: dict, session_id: str) -> None:
     profile = _build_personal_widget_data(session, session_id) or session.get("customer_profile") or {}
     if profile and not session.get("customer_profile"):
         session["customer_profile"] = profile
-    email = profile.get("email")
+    email = _get_mail_recipient(session, profile.get("email"))
     name = profile.get("name") or session.get("collected", {}).get("full_name") or "Customer"
     if not email:
         logger.warning("[routing] session=%s skipped docusign email because customer_profile.email is missing", session_id)
         return
     try:
-        if send_docusign_email(email, name):
+        if send_docusign_email(email, name, template=_get_docusign_template(session), region=session.get("region", "SA")):
             session["docusign_email_sent"] = True
     except Exception as exc:
         logger.error("Failed to trigger Docusign email for session %s: %s", session_id, exc)
@@ -2630,6 +3072,8 @@ def _finish_disbursement(session: dict) -> None:
 def _is_widget_event(raw_msg: str, normalized_msg: str) -> bool:
     raw = (raw_msg or "").strip()
     lower = raw.lower()
+    if lower.startswith(("__sys__update_", "__sys__profile_completion:")):
+        return False
     if lower.startswith("__sys__"):
         return True
     if lower.startswith(("account_selected::", "iban_entered::", "document_uploaded:")):
@@ -2653,13 +3097,84 @@ def _is_widget_event(raw_msg: str, normalized_msg: str) -> bool:
     }
 
 
+def _matches_any_phrase(normalized_text: str, phrases: tuple[str, ...]) -> bool:
+    return any(phrase in normalized_text for phrase in phrases)
+
+
+def _resolve_india_spoken_signal(session: dict, normalized_msg: str) -> str | None:
+    if not _is_india_personal_session(session):
+        return None
+
+    sub_step = session.get("sub_step", "")
+    text = normalized_msg.strip()
+    if not text:
+        return None
+
+    if sub_step == "identify_yourself" and _matches_any_phrase(text, ("continue", "start", "begin", "let s begin", "lets begin")):
+        return "continue"
+
+    if sub_step == "india_post_employment_offer":
+        if _matches_any_phrase(text, ("accept", "accept offer", "accept this offer", "accept pre approved offer", "accept counter offer", "go with offer")):
+            return "india_post_employment_offer_accepted"
+        if _matches_any_phrase(text, ("need higher amount", "higher amount", "more amount", "request higher amount")):
+            return "india_counter_offer_higher_amount_requested"
+
+    if sub_step == "india_employment_details":
+        if _matches_any_phrase(text, ("confirm details", "details are accurate", "i confirm", "continue", "proceed")):
+            return "india_employment_confirmed"
+        if _matches_any_phrase(text, (
+            "modify employment",
+            "modify my employment",
+            "modify my employ",
+            "edit employment",
+            "change employment",
+            "change employ",
+            "update employment",
+        )):
+            return "india_modify_employment"
+
+    if sub_step == "india_modify_employment_details":
+        if _matches_any_phrase(text, ("go back", "back to review", "back")):
+            return "india_cancel_employment_edit"
+
+    if sub_step == "india_personal_details_review":
+        if _matches_any_phrase(text, ("confirm details", "details are accurate", "i confirm", "continue", "proceed")):
+            return "india_personal_details_confirmed"
+        if _matches_any_phrase(text, (
+            "modify personal",
+            "modify my personal",
+            "edit personal",
+            "change personal",
+            "update personal",
+        )):
+            return "india_modify_personal_details"
+
+    if sub_step == "india_modify_personal_details":
+        if _matches_any_phrase(text, ("go back", "back to review", "back")):
+            return "india_cancel_personal_edit"
+
+    if sub_step == "india_esign_request" and _matches_any_phrase(text, ("e sign", "esign", "sign", "sign document", "proceed to sign")):
+        return "proceed_esign"
+    if sub_step == "india_summary" and _matches_any_phrase(text, ("submit and close", "submit close", "close journey", "close")):
+        return "india_submit_close"
+
+    if sub_step in {"wants_more_review", "wants_more_open_banking"}:
+        if _matches_any_phrase(text, ("submit for review", "submit review", "submit", "review now")):
+            return "submit_higher_amount_review"
+        if _matches_any_phrase(text, ("go back", "back to review", "back")):
+            return "higher_amount_review_go_back"
+
+    return None
+
+
 def _handle_widget_event(session: dict, session_id: str, raw_msg: str, normalized_msg: str) -> StreamingResponse | None:
-    if not _is_widget_event(raw_msg, normalized_msg):
+    india_spoken_signal = _resolve_india_spoken_signal(session, normalized_msg)
+    if not _is_widget_event(raw_msg, normalized_msg) and not india_spoken_signal:
         return None
 
     raw = (raw_msg or "").strip()
     raw_lower = raw.lower()
-    signal = normalized_msg
+    signal = india_spoken_signal or normalized_msg
     step = session.get("step", "identity")
     sub_step = session.get("sub_step", "")
     response_text = "Please continue."
@@ -2682,10 +3197,162 @@ def _handle_widget_event(session: dict, session_id: str, raw_msg: str, normalize
             return done("")
 
         if sub_step == "welcome_back" and signal == "welcome_back_complete":
+            if session.get("wants_more") and not session.get("india_higher_amount_rejoin_used"):
+                session["india_higher_amount_rejoin_used"] = True
+                session["step"] = "identity"
+                session["step_number"] = 2
+                session["sub_step"] = "india_bureau_otp_intro"
+                intro_text = INDIA_BUREAU_OTP_INTRO_TEMPLATE.format(
+                    phone=_resolve_india_masked_phone(session)
+                )
+                return done(intro_text)
             _seed_india_preapproved_offer(session)
             session["step"] = "offer"
             session["step_number"] = 2
             session["sub_step"] = "pre_approved_offer"
+            return done("")
+
+        if sub_step == "india_bureau_otp_intro" and signal == "india_bureau_show_prompt":
+            session["sub_step"] = "india_bureau_otp_prompt"
+            return done(INDIA_BUREAU_OTP_PROMPT, None)
+
+        if sub_step == "india_bureau_otp_received" and signal == "india_bureau_start_verification":
+            session["sub_step"] = "india_bureau_otp_verifying"
+            return done("")
+
+        if sub_step == "india_bureau_otp_verifying" and signal == "india_bureau_otp_verified":
+            session["sub_step"] = "india_bureau_verified"
+            return done("")
+
+        if sub_step == "india_bureau_verified" and signal == "india_employment_fetching":
+            if session.get("wants_more"):
+                session["sub_step"] = "india_higher_amount_proof_choice"
+                return done(
+                    "Please proceed ahead to upload your salary bank statement or provide consent using Account Aggregator. You can choose either option below."
+                )
+            session["sub_step"] = "india_employment_fetching"
+            return done("")
+
+        if sub_step == "india_higher_amount_proof_choice" and signal == "upload_statement":
+            session["sub_step"] = "india_higher_amount_upload_statement"
+            session["pending_income_verification"] = "upload_statement"
+            ui_flags["allow_upload"] = True
+            return done("Please upload your salary bank statement below.", None)
+
+        if sub_step == "india_higher_amount_proof_choice" and signal == "open_banking":
+            session["sub_step"] = "india_higher_amount_open_banking_email_sent"
+            session["pending_income_verification"] = "open_banking"
+            session["income_verification_method"] = "open_banking"
+            profile = _build_personal_widget_data(session, session_id) or session.get("customer_profile") or {}
+            if profile and not session.get("customer_profile"):
+                session["customer_profile"] = profile
+            email = _get_mail_recipient(session, profile.get("email"))
+            name = profile.get("name") or "Customer"
+            if email:
+                try:
+                    send_open_banking_email(email, name, template=_get_open_banking_template(session))
+                except Exception as exc:
+                    logger.error("Failed to trigger India higher amount open banking email for session %s: %s", session_id, exc)
+            else:
+                logger.warning("[routing] session=%s skipped India higher amount open banking email because customer_profile.email is missing", session_id)
+            return done(
+                "Consent Link Sent Successfully! We have sent a secure link to your registered Email ID to provide consent via Account Aggregator. Please check your inbox and spam folder and complete the consent."
+            )
+
+        if sub_step == "india_higher_amount_upload_statement" and signal.startswith("document_uploaded:"):
+            session["sub_step"] = "india_employment_fetching"
+            session["pending_income_verification"] = "upload_statement"
+            session["income_verification_method"] = "upload_statement"
+            return done(
+                "Salary Bank Account Statement has been uploaded successfully. We have received your statement and are processing it securely."
+            )
+
+        if sub_step == "india_higher_amount_open_banking_email_sent" and signal == "open_banking_linked":
+            session["sub_step"] = "india_employment_fetching"
+            session["pending_income_verification"] = "open_banking"
+            session["income_verification_method"] = "open_banking"
+            session["ntb_open_banking_income_verified"] = True
+            return done(
+                "Thank You! Your consent has been received. We have securely received your Account Aggregator consent and are now processing your account information for employment verification."
+            )
+
+        if sub_step == "india_employment_fetching" and signal == "india_employment_details_ready":
+            session["sub_step"] = "india_employment_details"
+            return done("")
+
+        if sub_step == "india_employment_details" and signal == "india_employment_confirmed":
+            _seed_india_preapproved_offer(session)
+            session["step"] = "offer"
+            session["step_number"] = 2
+            session["sub_step"] = "india_offer_details_loading"
+            return done("Thank you for confirming your employment details.")
+
+        if sub_step == "india_employment_details" and signal == "india_modify_employment":
+            session["sub_step"] = "india_modify_employment_details"
+            return done(
+                "",
+                {
+                    "widget": "IndiaEmploymentDetailsWidget",
+                    "data": _build_india_employment_widget_data(session, editable=True),
+                },
+            )
+
+        if sub_step == "india_modify_employment_details" and signal == "india_cancel_employment_edit":
+            session["sub_step"] = "india_employment_details"
+            return done("")
+
+    if _is_india_personal_session(session) and step == "offer":
+        if sub_step == "india_offer_details_loading" and signal == "india_offer_details_ready":
+            _seed_india_preapproved_offer(session)
+            session["sub_step"] = "india_post_employment_offer"
+            return done("")
+
+        if sub_step == "india_post_employment_offer" and signal == "india_post_employment_offer_accepted":
+            session.pop("india_counter_offer_review_origin", None)
+            session["step"] = "identity"
+            session["step_number"] = 3
+            session["sub_step"] = "india_personal_details_review"
+            return done("")
+
+        if sub_step == "india_post_employment_offer" and signal == "india_counter_offer_higher_amount_requested":
+            session["wants_more"] = True
+            session["india_counter_offer_review_origin"] = True
+            session["sub_step"] = "wants_more_review"
+            return done("Please review the manual review request details below.")
+
+    if _is_india_personal_session(session) and step == "identity":
+        if sub_step == "india_personal_details_review" and signal == "india_modify_personal_details":
+            session["sub_step"] = "india_modify_personal_details"
+            return done(
+                "",
+                {
+                    "widget": "IndiaPersonalDetailsWidget",
+                    "data": _build_india_personal_review_widget_data(session, editable=True),
+                },
+            )
+
+        if sub_step == "india_personal_details_review" and signal == "india_personal_details_confirmed":
+            session["step"] = "esign"
+            session["step_number"] = 4
+            session["sub_step"] = "documents"
+            return done(
+                "Proceeding ahead for E Signature process.\n\nYour personal details have been successfully confirmed.\n\nI request for your review request and E-signature."
+            )
+
+        if sub_step == "india_esign_request" and signal == "proceed_esign":
+            session["step"] = "esign"
+            session["step_number"] = 4
+            try:
+                _send_docusign_for_session(session, session_id)
+            except Exception as e:
+                logger.error("Exception in _send_docusign_for_session (continuing anyway): %s", e)
+            session["sub_step"] = "email_sent"
+            return done(
+                "Please complete the signature from your email. We will continue once it is verified."
+            )
+
+        if sub_step == "india_modify_personal_details" and signal == "india_cancel_personal_edit":
+            session["sub_step"] = "india_personal_details_review"
             return done("")
 
     profile_completion_payload = _extract_prefixed_json_payload(raw_msg, "PROFILE_COMPLETION")
@@ -2782,15 +3449,32 @@ def _handle_widget_event(session: dict, session_id: str, raw_msg: str, normalize
     if step == "offer":
         if sub_step == "pre_approved_offer":
             if signal in {"accepted_pre_approved_offer", "go with offer"}:
+                if _is_india_personal_session(session):
+                    session["step"] = "identity"
+                    session["step_number"] = 2
+                    session["sub_step"] = "india_bureau_otp_intro"
+                    intro_text = INDIA_BUREAU_OTP_INTRO_TEMPLATE.format(
+                        phone=_resolve_india_masked_phone(session)
+                    )
+                    return done(intro_text)
                 session["step"] = "identity"
                 session["sub_step"] = "bureau_consent"
                 _ensure_bureau_otp_sent(session, session.get("session_id", ""))
                 return done(BUREAU_CONSENT_OTP_PROMPT)
             if signal in {"higher_amount_requested", "need higher amount", "i need higher amount", "request for a higher amount"}:
                 session["wants_more"] = True
+                session.pop("india_higher_amount_rejoin_used", None)
                 session["journeyMode"] = "NTB_ENRICHMENT"
                 session["journeyOrigin"] = session.get("customerType", "UNKNOWN")
                 session["transitionReason"] = "Customer requested higher amount than pre-approved ETB offer"
+                if _is_india_personal_session(session):
+                    session["step"] = "identity"
+                    session["step_number"] = 2
+                    session["sub_step"] = "india_bureau_otp_intro"
+                    intro_text = INDIA_BUREAU_OTP_INTRO_TEMPLATE.format(
+                        phone=_resolve_india_masked_phone(session)
+                    )
+                    return done(intro_text)
                 session["step"] = "identity"
                 session["sub_step"] = "identify_yourself"
                 return done("**Welcome aboard!** Here's a quick overview of the journey ahead and the steps you'll complete to secure your finance.")
@@ -2808,10 +3492,14 @@ def _handle_widget_event(session: dict, session_id: str, raw_msg: str, normalize
                 return done("Please review the manual review request details below.")
 
         if sub_step in {"wants_more_review", "wants_more_open_banking"} and signal == "higher_amount_review_go_back":
+            if _is_india_personal_session(session) and session.pop("india_counter_offer_review_origin", None):
+                session["sub_step"] = "india_post_employment_offer"
+                return done("Returning to your counter offer.")
             session["sub_step"] = "wants_more_decision"
             return done("Please confirm whether the maximum eligible amount is okay for you.")
 
         if sub_step in {"wants_more_review", "wants_more_open_banking"} and signal == "submit_higher_amount_review":
+            session.pop("india_counter_offer_review_origin", None)
             session["sub_step"] = "wants_more_backoffice"
             _ensure_higher_amount_workitem(session)
             return done("Your request has been submitted for manual review.")
@@ -2870,12 +3558,22 @@ def _handle_widget_event(session: dict, session_id: str, raw_msg: str, normalize
             )
 
         if sub_step == "email_sent" and signal == "esign_email_complete":
+            if _is_india_personal_session(session):
+                session["step"] = "disburse"
+                session["step_number"] = 5
+                session["sub_step"] = "india_summary"
+                return done(
+                    "**Congratulations!** \n\n Your documents have been successfully signed and verified."
+                )
             session["step"] = "disburse"
             session["step_number"] = 5
             session["sub_step"] = "account"
             return done("**Congratulations!** \n\n Your documents have been successfully signed and verified.\n\n Next, please select the account that should be credited with the approved funds.")
 
     if step == "disburse":
+        if _is_india_personal_session(session) and sub_step == "india_summary" and signal == "india_submit_close":
+            session["india_submit_close_completed"] = True
+            return done("")
         if sub_step == "account":
             if raw_lower.startswith("account_selected::"):
                 iban = raw.split("::", 1)[1].strip()
@@ -2940,6 +3638,9 @@ def _handle_widget_event(session: dict, session_id: str, raw_msg: str, normalize
         if sub_step in {"otp_success", "ivr_success"} and signal == "complete_disbursement":
             _finish_disbursement(session)
             return done("Final verification is complete. Your disbursement summary is ready.")
+
+    if raw_lower.startswith("__sys__"):
+        return done("")
 
     return None
 
@@ -3365,6 +4066,23 @@ async def chat(request: ChatRequest):
                     },
                 )
 
+        if current_session.get("sub_step") == "india_higher_amount_upload_statement" and normalized_user_msg.startswith("document_uploaded:"):
+            current_session["sub_step"] = "india_employment_fetching"
+            current_session["pending_income_verification"] = "upload_statement"
+            current_session["income_verification_method"] = "upload_statement"
+            _store_gateway_session(session_id, current_session)
+            widget_spec = resolve_widget(current_session, None)
+            response_text = "Salary Bank Account Statement has been uploaded successfully. We have received your statement and are processing it securely."
+            return StreamingResponse(
+                _build_sse_stream(response_text, widget_spec),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "x-vercel-ai-ui-message-stream": "v1",
+                },
+            )
+
         if current_session.get("sub_step") == "modify_income_upload_statement" and normalized_user_msg.startswith("document_uploaded:"):
             _finalize_pending_profile_update(current_session, "income")
             current_session["sub_step"] = "updating_details"
@@ -3379,6 +4097,24 @@ async def chat(request: ChatRequest):
             _store_gateway_session(session_id, current_session)
             widget_spec = resolve_widget(current_session, None)
             response_text = "We are updating your income details now. Please wait while we save the changes."
+            return StreamingResponse(
+                _build_sse_stream(response_text, widget_spec),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "x-vercel-ai-ui-message-stream": "v1",
+                },
+            )
+
+        if current_session.get("sub_step") == "india_higher_amount_open_banking_email_sent" and normalized_user_msg == "open_banking_linked":
+            current_session["sub_step"] = "india_employment_fetching"
+            current_session["pending_income_verification"] = "open_banking"
+            current_session["income_verification_method"] = "open_banking"
+            current_session["ntb_open_banking_income_verified"] = True
+            _store_gateway_session(session_id, current_session)
+            widget_spec = resolve_widget(current_session, None)
+            response_text = "Thank You! Your consent has been received. We have securely received your Account Aggregator consent and are now processing your account information for employment verification."
             return StreamingResponse(
                 _build_sse_stream(response_text, widget_spec),
                 media_type="text/event-stream",
@@ -3466,6 +4202,51 @@ async def chat(request: ChatRequest):
                 },
             )
 
+        if current_session.get("sub_step") == "india_higher_amount_proof_choice" and normalized_user_msg in {"upload_statement", "open_banking"}:
+            if normalized_user_msg == "upload_statement":
+                current_session["sub_step"] = "india_higher_amount_upload_statement"
+                current_session["pending_income_verification"] = "upload_statement"
+                _store_gateway_session(session_id, current_session)
+                return StreamingResponse(
+                    _build_sse_stream("Please upload your salary bank statement below.", None, {"allow_upload": True}),
+                    media_type="text/event-stream",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "Connection": "keep-alive",
+                        "x-vercel-ai-ui-message-stream": "v1",
+                    },
+                )
+
+            current_session["sub_step"] = "india_higher_amount_open_banking_email_sent"
+            current_session["pending_income_verification"] = "open_banking"
+            current_session["income_verification_method"] = "open_banking"
+            profile = _build_personal_widget_data(current_session, session_id) or current_session.get("customer_profile") or {}
+            if profile and not current_session.get("customer_profile"):
+                current_session["customer_profile"] = profile
+            email = _get_mail_recipient(current_session, profile.get("email"))
+            name = profile.get("name") or "Customer"
+            if email:
+                try:
+                    send_open_banking_email(email, name, template=_get_open_banking_template(current_session))
+                except Exception as exc:
+                    logger.error("Failed to trigger India higher amount open banking email for session %s: %s", session_id, exc)
+            else:
+                logger.warning("[routing] session=%s skipped India higher amount open banking email because customer_profile.email is missing", session_id)
+            _store_gateway_session(session_id, current_session)
+            widget_spec = resolve_widget(current_session, None)
+            return StreamingResponse(
+                _build_sse_stream(
+                    "Consent Link Sent Successfully! We have sent a secure link to your registered Email ID to provide consent via Account Aggregator. Please check your inbox and spam folder and complete the consent.",
+                    widget_spec,
+                ),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "x-vercel-ai-ui-message-stream": "v1",
+                },
+            )
+
         explicit_identity_routes = {
             "modify_section": "modify_section",
             "modify_personal": "modify_personal",
@@ -3495,7 +4276,7 @@ async def chat(request: ChatRequest):
                 profile = _build_personal_widget_data(current_session, session_id) or {}
                 if profile and not current_session.get("customer_profile"):
                     current_session["customer_profile"] = profile
-                email = profile.get("email")
+                email = _get_mail_recipient(current_session, profile.get("email"))
                 name = profile.get("name") or "Customer"
                 logger.info(
                     "[routing] session=%s triggering open banking email email=%s name=%s profile_keys=%s",
@@ -3506,7 +4287,7 @@ async def chat(request: ChatRequest):
                 )
                 if email:
                     try:
-                        send_open_banking_email(email, name)
+                        send_open_banking_email(email, name, template=_get_open_banking_template(current_session))
                     except Exception as exc:
                         logger.error("Failed to trigger Open Banking email for session %s: %s", session_id, exc)
                 else:
@@ -3555,6 +4336,7 @@ async def chat(request: ChatRequest):
             )
 
         update_commands = (
+            "UPDATE_INDIA_PERSONAL",
             "UPDATE_PERSONAL",
             "UPDATE_ADDRESS",
             "UPDATE_EMPLOYMENT",
@@ -3565,6 +4347,71 @@ async def chat(request: ChatRequest):
             payload = _extract_prefixed_json_payload(last_user_msg, command)
             if payload is None:
                 continue
+            if (
+                command == "UPDATE_INDIA_PERSONAL"
+                and _is_india_personal_session(current_session)
+                and current_session.get("sub_step") == "india_modify_personal_details"
+            ):
+                review = current_session.setdefault("india_personal_review", {})
+                for key in (
+                    "name",
+                    "phone",
+                    "email",
+                    "aadhaar_number",
+                    "gender",
+                    "date_of_birth",
+                    "residential_address",
+                    "marital_status",
+                    "nationality",
+                    "father_name",
+                    "dependents",
+                    "income_type",
+                ):
+                    value = payload.get(key)
+                    if value is not None:
+                        review[key] = str(value).strip()
+                current_session["sub_step"] = "india_personal_details_review"
+                _store_gateway_session(session_id, current_session)
+                widget_spec = resolve_widget(current_session, None)
+                response_text = "Your personal details have been updated. Please review them before you continue."
+                return StreamingResponse(
+                    _build_sse_stream(response_text, widget_spec),
+                    media_type="text/event-stream",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "Connection": "keep-alive",
+                        "x-vercel-ai-ui-message-stream": "v1",
+                    },
+                )
+            if (
+                command == "UPDATE_EMPLOYMENT"
+                and _is_india_personal_session(current_session)
+                and current_session.get("sub_step") == "india_modify_employment_details"
+            ):
+                _persist_profile_update(current_session, "employment", {
+                    "type": payload.get("type"),
+                    "industry": payload.get("industry"),
+                    "employer": payload.get("employer"),
+                    "experience": payload.get("experience"),
+                    "workAddress": payload.get("workAddress"),
+                    "uan": payload.get("uan"),
+                    "employeeMemberId": payload.get("employeeMemberId"),
+                    "employeeName": payload.get("employeeName"),
+                    "uanStatus": payload.get("uanStatus"),
+                })
+                current_session["sub_step"] = "india_employment_details"
+                _store_gateway_session(session_id, current_session)
+                widget_spec = resolve_widget(current_session, None)
+                response_text = "Your employment details have been updated. Please review and confirm to continue."
+                return StreamingResponse(
+                    _build_sse_stream(response_text, widget_spec),
+                    media_type="text/event-stream",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "Connection": "keep-alive",
+                        "x-vercel-ai-ui-message-stream": "v1",
+                    },
+                )
             if command == "UPDATE_EMPLOYMENT":
                 _stage_pending_profile_update(current_session, "employment", {
                     "type": payload.get("type"),
@@ -3782,7 +4629,7 @@ async def chat(request: ChatRequest):
         profile = _build_personal_widget_data(updated_session, session_id) or {}
         if profile and not updated_session.get("customer_profile"):
             updated_session["customer_profile"] = profile
-        email = profile.get("email")
+        email = _get_mail_recipient(updated_session, profile.get("email"))
         name = profile.get("name") or "Customer"
         logger.info(
             "[routing] session=%s triggering open banking email email=%s name=%s profile_keys=%s",
@@ -3793,7 +4640,7 @@ async def chat(request: ChatRequest):
         )
         if email:
             try:
-                send_open_banking_email(email, name)
+                send_open_banking_email(email, name, template=_get_open_banking_template(updated_session))
             except Exception as exc:
                 logger.error("Failed to trigger Open Banking email for session %s: %s", session_id, exc)
         else:
@@ -3806,7 +4653,7 @@ async def chat(request: ChatRequest):
         profile = _build_personal_widget_data(updated_session, session_id) or updated_session.get("customer_profile") or {}
         if profile and not updated_session.get("customer_profile"):
             updated_session["customer_profile"] = profile
-        email = profile.get("email")
+        email = _get_mail_recipient(updated_session, profile.get("email"))
         name = profile.get("name") or updated_session.get("collected", {}).get("full_name") or "Customer"
         logger.info(
             "[routing] session=%s triggering docusign email email=%s name=%s profile_keys=%s",
@@ -3817,7 +4664,7 @@ async def chat(request: ChatRequest):
         )
         if email:
             try:
-                send_docusign_email(email, name)
+                send_docusign_email(email, name, template=_get_docusign_template(updated_session), region=updated_session.get("region", "SA"))
             except Exception as exc:
                 logger.error("Failed to trigger Docusign email for session %s: %s", session_id, exc)
         else:
@@ -3975,13 +4822,16 @@ async def api_update_customer(request: UpdateCustomerRequest):
 @router.post("/chat/send_open_banking_email")
 async def api_send_open_banking_email(request: OpenBankingEmailRequest):
     """Send the Open Banking consent email through the configured mail service."""
+    session = _load_gateway_session(request.session_id) if request.session_id else {}
+    email = _get_mail_recipient(session, request.email)
     logger.info(
-        "[send_open_banking_email] request session=%s email=%s name=%s",
+        "[send_open_banking_email] request session=%s email=%s final_email=%s name=%s",
         request.session_id,
         request.email,
+        email,
         request.name,
     )
-    success = send_open_banking_email(request.email, request.name)
+    success = send_open_banking_email(email or request.email, request.name, template=_get_open_banking_template(session))
     logger.info(
         "[send_open_banking_email] result session=%s success=%s",
         request.session_id,
@@ -3992,13 +4842,16 @@ async def api_send_open_banking_email(request: OpenBankingEmailRequest):
 @router.post("/send_open_banking_email")
 async def api_send_open_banking_email_alt(request: SendOpenBankingEmailRequest):
     """Send the Open Banking consent email through the configured mail service."""
+    session = _load_gateway_session(request.session_id) if request.session_id else {}
+    email = _get_mail_recipient(session, request.email)
     logger.info(
-        "[send_open_banking_email_alt] request session=%s email=%s name=%s",
+        "[send_open_banking_email_alt] request session=%s email=%s final_email=%s name=%s",
         request.session_id,
         request.email,
+        email,
         request.name,
     )
-    success = send_open_banking_email(request.email, request.name)
+    success = send_open_banking_email(email or request.email, request.name, template=_get_open_banking_template(session))
     logger.info(
         "[send_open_banking_email_alt] result session=%s success=%s",
         request.session_id,
@@ -4009,13 +4862,16 @@ async def api_send_open_banking_email_alt(request: SendOpenBankingEmailRequest):
 @router.post("/chat/send_docusign_email")
 async def api_send_docusign_email(request: DocusignEmailRequest):
     """Send the e-sign document email through the configured mail service."""
+    session = _load_gateway_session(request.session_id) if request.session_id else {}
+    email = _get_mail_recipient(session, request.email)
     logger.info(
-        "[send_docusign_email] request session=%s email=%s name=%s",
+        "[send_docusign_email] request session=%s email=%s final_email=%s name=%s",
         request.session_id,
         request.email,
+        email,
         request.name,
     )
-    success = send_docusign_email(request.email, request.name)
+    success = send_docusign_email(email or request.email, request.name, template=_get_docusign_template(session), region=session.get("region", "SA"))
     logger.info(
         "[send_docusign_email] result session=%s success=%s",
         request.session_id,
@@ -4026,13 +4882,16 @@ async def api_send_docusign_email(request: DocusignEmailRequest):
 @router.post("/send_docusign_email")
 async def api_send_docusign_email_alt(request: DocusignEmailRequest):
     """Send the e-sign document email through the configured mail service."""
+    session = _load_gateway_session(request.session_id) if request.session_id else {}
+    email = _get_mail_recipient(session, request.email)
     logger.info(
-        "[send_docusign_email_alt] request session=%s email=%s name=%s",
+        "[send_docusign_email_alt] request session=%s email=%s final_email=%s name=%s",
         request.session_id,
         request.email,
+        email,
         request.name,
     )
-    success = send_docusign_email(request.email, request.name)
+    success = send_docusign_email(email or request.email, request.name, template=_get_docusign_template(session), region=session.get("region", "SA"))
     logger.info(
         "[send_docusign_email_alt] result session=%s success=%s",
         request.session_id,

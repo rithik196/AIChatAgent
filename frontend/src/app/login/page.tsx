@@ -129,12 +129,13 @@ function LoginPageInner() {
   const searchParams = useSearchParams();
   const journeyConfig = resolveJourneyVariant(searchParams.get("journey"));
   const isIndiaJourney = journeyConfig.key === "india";
+  const otpLength = isIndiaJourney ? 6 : 4;
   const availableCountries = journeyConfig.availableCountries;
   const landingChoices = journeyConfig.landingChoices ?? [];
 
   const [stage, setStage] = useState<Stage>("phone");
   const [phone, setPhone] = useState("");
-  const [otp, setOtp] = useState(["", "", "", ""]);
+  const [otp, setOtp] = useState<string[]>(() => Array.from({ length: otpLength }, () => ""));
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [postLoginState, setPostLoginState] = useState<"idle" | "success">("idle");
@@ -226,7 +227,11 @@ function LoginPageInner() {
     e.preventDefault();
     setError("");
     if (!isValid) {
-      setError(`Please enter a valid ${selectedCountry.length}-digit mobile number.`);
+      if (isIndiaJourney) {
+        setError("Enter correct mobile number");
+      } else {
+        setError(`Please enter a valid ${selectedCountry.length}-digit mobile number.`);
+      }
       return;
     }
     setLoading(true);
@@ -243,7 +248,7 @@ function LoginPageInner() {
       const res = await fetch("/customer_agent/api/auth/send-otp", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone: phone, purpose: "login" }),
+        body: JSON.stringify({ phone: phone, purpose: isIndiaJourney ? "india_login" : "login" }),
       });
       const data = await res.json();
       if (!data.success) {
@@ -269,7 +274,7 @@ function LoginPageInner() {
     next[index] = cleanValue.slice(-1);
     setOtp(next);
     
-    if (cleanValue && index < 3) {
+    if (cleanValue && index < otpLength - 1) {
       otpRefs.current[index + 1]?.focus();
     }
   };
@@ -285,8 +290,8 @@ function LoginPageInner() {
     setError("");
     setPostLoginState("idle");
     const entered = otp.join("");
-    if (entered.length < 4) {
-      setError("Please enter the 4-digit OTP");
+    if (entered.length !== otpLength) {
+      setError(`Please enter the ${otpLength}-digit OTP`);
       return;
     }
     setLoading(true);
@@ -294,7 +299,7 @@ function LoginPageInner() {
       const res = await fetch("/customer_agent/api/auth/verify-otp", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone: phone, otp: entered, purpose: "login" }),
+        body: JSON.stringify({ phone: phone, otp: entered, purpose: isIndiaJourney ? "india_login" : "login" }),
       });
       const data = await res.json();
       if (!data.success) {
@@ -823,7 +828,7 @@ function LoginPageInner() {
                   </p>
 
                   <form onSubmit={handleOtpSubmit} className="mt-4 flex flex-col gap-3">
-                    <div className="flex justify-center gap-3">
+                    <div className="flex justify-center gap-2 sm:gap-3">
                       {otp.map((digit, i) => (
                         <input
                           key={i}
@@ -835,7 +840,7 @@ function LoginPageInner() {
                           autoComplete="one-time-code"
                           aria-label={`OTP digit ${i + 1}`}
                           maxLength={1}
-                          className="w-12 h-12 text-center text-[16px] font-bold bg-white/95 border border-[#1F6FB2]/15 focus:ring-2 focus:ring-[#1F6FB2]/15 focus:border-[#1F6FB2] rounded-xl text-slate-800 transition-all outline-none"
+                          className="w-10 h-11 sm:w-12 sm:h-12 text-center text-[15px] sm:text-[16px] font-bold bg-white/95 border border-[#1F6FB2]/15 focus:ring-2 focus:ring-[#1F6FB2]/15 focus:border-[#1F6FB2] rounded-xl text-slate-800 transition-all outline-none"
                           value={digit ? "*" : ""}
                           onChange={(e) => handleOtpChange(i, e.target.value)}
                           onKeyDown={(e) => handleOtpKeyDown(i, e)}
@@ -851,9 +856,9 @@ function LoginPageInner() {
 
                     <button
                       type="submit"
-                      disabled={loading || otp.join("").length < 4}
+                      disabled={loading || otp.join("").length !== otpLength}
                       className={`w-full py-2.5 px-4 rounded-xl font-bold flex items-center justify-center gap-1.5 text-white shadow-md shadow-[#1F6FB2]/20 transition-all ${
-                        otp.join("").length === 4 && !loading
+                        otp.join("").length === otpLength && !loading
                           ? 'bg-gradient-to-r from-[#1F6FB2] to-[#4CB8E8] cursor-pointer hover:shadow-lg active:scale-98' 
                           : 'bg-slate-300 cursor-not-allowed text-slate-400 shadow-none'
                       }`}
@@ -872,7 +877,7 @@ function LoginPageInner() {
                       type="button"
                       onClick={() => {
                         setStage("phone");
-                        setOtp(["", "", "", ""]);
+                        setOtp(Array.from({ length: otpLength }, () => ""));
                         setError("");
                       }}
                       className="text-[10px] font-bold text-[#1F6FB2] hover:underline text-center mt-1"

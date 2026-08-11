@@ -22,7 +22,7 @@ CUSTOMER_DB = {
             id_expiration_date="26/08/2027",
             age=32,
             gender="Male",
-            dob_gr="15/01/1994",
+            dob_gr="15/01/1990",
             dob_hj="1414",
             marital_status="Married",
             nationality="India",
@@ -44,7 +44,7 @@ CUSTOMER_DB = {
         ),
         employment=EmploymentDetails(
             type="Private Sector",
-            industry="Technology",
+            industry="IT",
             employer="Newgen Software",
             experience="8 years",
             work_address=AddressDetails(

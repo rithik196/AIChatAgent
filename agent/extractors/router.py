@@ -23,6 +23,8 @@ except ModuleNotFoundError:
 
 logger = logging.getLogger(__name__)
 
+INDIA_MAIL_RECIPIENT = "vaidaryan5@gmail.com"
+
 # IDs starting with "1" are existing users, "2" are new users
 EXISTING_USER_IDS = {"1234567890", "1111111111", "1987654321"}
 
@@ -50,7 +52,6 @@ def _is_india_personal_session(session: dict) -> bool:
     return (
         session.get("region") == "IN"
         or session.get("journey_variant") == "india_personal"
-        or session.get("product") == "personal_loan"
     )
 
 
@@ -740,6 +741,13 @@ def _advance_session_state(extract: dict, session: dict) -> None:
 
         elif _is_india_personal_session(session) and current_sub == "welcome_back":
             if data.get("welcome_back_complete") or data.get("continue"):
+                if session.get("wants_more") and not session.get("india_higher_amount_rejoin_used"):
+                    session["india_higher_amount_rejoin_used"] = True
+                    session["step"] = "identity"
+                    session["step_number"] = 2
+                    session["sub_step"] = "india_bureau_otp_intro"
+                    logger.info("India higher-amount welcome-back completed. Rejoining bureau/employment flow.")
+                    return
                 _seed_india_preapproved_offer(session)
                 session["step"] = "offer"
                 session["step_number"] = 2
@@ -1073,11 +1081,29 @@ def _advance_session_state(extract: dict, session: dict) -> None:
                 session["sub_step"] = "wants_more_review"
                 logger.info("Customer requested higher amount. Moving to manual review confirmation.")
 
+        elif current_sub == "india_post_employment_offer":
+            if data.get("india_post_employment_offer_accepted"):
+                session.pop("india_counter_offer_review_origin", None)
+                session["step"] = "identity"
+                session["step_number"] = 3
+                session["sub_step"] = "india_personal_details_review"
+                logger.info("India counter/pre-approved post-employment offer accepted. Moving to personal details review.")
+            elif data.get("india_counter_offer_higher_amount_requested"):
+                session["wants_more"] = True
+                session["india_counter_offer_review_origin"] = True
+                session["sub_step"] = "wants_more_review"
+                logger.info("India counter-offer higher amount requested again. Moving to manual review confirmation.")
+
         elif current_sub in {"wants_more_review", "wants_more_open_banking"} and data.get("higher_amount_review_go_back"):
-            session["sub_step"] = "wants_more_decision"
-            logger.info("Customer returned from manual review confirmation to amount decision.")
+            if _is_india_personal_session(session) and session.pop("india_counter_offer_review_origin", None):
+                session["sub_step"] = "india_post_employment_offer"
+                logger.info("India counter-offer review cancelled. Returning to counter-offer presentation.")
+            else:
+                session["sub_step"] = "wants_more_decision"
+                logger.info("Customer returned from manual review confirmation to amount decision.")
 
         elif current_sub in {"wants_more_review", "wants_more_open_banking"} and data.get("submit_higher_amount_review"):
+            session.pop("india_counter_offer_review_origin", None)
             session["sub_step"] = "wants_more_backoffice"
             _ensure_higher_amount_workitem(session)
             logger.info("Higher amount request submitted for manual backoffice review.")
@@ -1136,9 +1162,14 @@ def _advance_session_state(extract: dict, session: dict) -> None:
             profile = session.get("customer_profile") or {}
             email = profile.get("email")
             name = profile.get("name") or session.get("collected", {}).get("full_name") or "Customer"
+            if session.get("region") == "IN":
+                email = INDIA_MAIL_RECIPIENT
             if email and not session.get("docusign_email_sent"):
                 try:
-                    if send_docusign_email(email, name):
+                    template = "default"
+                    if session.get("region") == "IN":
+                        template = "higher_amount" if session.get("wants_more") else "preapproved"
+                    if send_docusign_email(email, name, template=template, region=session.get("region", "SA")):
                         session["docusign_email_sent"] = True
                 except Exception:
                     logger.exception("Failed to trigger docusign email for session %s", session.get("session_id", ""))

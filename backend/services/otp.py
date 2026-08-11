@@ -42,9 +42,14 @@ GUPSHUP_SRC_NUMBER: str = os.getenv("GUPSHUP_SRC_NUMBER", "917834811114")
 GUPSHUP_APP_NAME: str = os.getenv("GUPSHUP_APP_NAME", "CCMBANKING")
 GUPSHUP_BASE_URL: str = "https://api.gupshup.io/sm/api/v1/msg"
 
-OtpPurpose = Literal["login", "nafath", "document", "esign", "bureau", "generic"]
+OtpPurpose = Literal["login", "india_login", "nafath", "document", "esign", "bureau", "generic"]
 
 _redis_client: Optional[redis.Redis] = None
+
+INDIA_LOGIN_PURPOSE = "india_login"
+INDIA_LOGIN_OTP_LEN = 6
+DEFAULT_OTP_LEN = 4
+INDIA_FALLBACK_OTP: str = os.getenv("INDIA_FALLBACK_OTP", FALLBACK_OTP.zfill(INDIA_LOGIN_OTP_LEN)[-INDIA_LOGIN_OTP_LEN:])
 
 
 # ── Redis helpers ──────────────────────────────────────────────────────────────
@@ -67,8 +72,16 @@ def _get_redis_client() -> redis.Redis:
     return _redis_client
 
 
-def _generate_code() -> str:
-    return str(random.randint(0, 9999)).zfill(4)
+def _otp_len_for_purpose(purpose: str) -> int:
+    if purpose == INDIA_LOGIN_PURPOSE:
+        return INDIA_LOGIN_OTP_LEN
+    return DEFAULT_OTP_LEN
+
+
+def _generate_code(purpose: str) -> str:
+    otp_len = _otp_len_for_purpose(purpose)
+    max_value = (10**otp_len) - 1
+    return str(random.randint(0, max_value)).zfill(otp_len)
 
 
 def _can_send_otp_redis(phone: str, purpose: OtpPurpose) -> tuple[bool, str]:
@@ -175,7 +188,7 @@ def _send_via_gupshup(phone: str, otp_code: str) -> bool:
 
 # ── Public API ──────────────────────────────────────────────────────────────────
 def send_otp(phone: str, purpose: OtpPurpose = "login") -> dict:
-    code = _generate_code()
+    code = _generate_code(purpose)
 
     try:
         allowed, reason = _can_send_otp_redis(phone, purpose)
@@ -199,14 +212,19 @@ def send_otp(phone: str, purpose: OtpPurpose = "login") -> dict:
     }
 
     if os.getenv("EXPOSE_FALLBACK_OTP", "false").lower() == "true":
-        result["fallback_otp"] = FALLBACK_OTP
+        result["fallback_otp"] = INDIA_FALLBACK_OTP if purpose == INDIA_LOGIN_PURPOSE else FALLBACK_OTP
 
     return result
 
 
 def verify_otp(phone: str, code: str, purpose: OtpPurpose = "login") -> bool:
+    required_len = _otp_len_for_purpose(purpose)
+    if len(str(code or "").strip()) != required_len:
+        return False
+
     # Static fallback OTP.
-    if code == FALLBACK_OTP:
+    expected_fallback = INDIA_FALLBACK_OTP if purpose == INDIA_LOGIN_PURPOSE else FALLBACK_OTP
+    if code == expected_fallback:
         logger.info("verify_otp: fallback OTP accepted for phone=%s purpose=%s", phone, purpose)
         return True
 

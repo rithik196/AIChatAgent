@@ -8,6 +8,8 @@ export type EditableVoiceWidget =
   | "ModifyAddressWidget"
   | "ModifyEmploymentWidget"
   | "ModifyIncomeWidget"
+  | "IndiaPersonalDetailsWidget"
+  | "IndiaEmploymentDetailsWidget"
   | "OfferSliderWidget"
   | "ExpensesWidget";
 
@@ -22,6 +24,8 @@ const EDITABLE_WIDGETS = new Set<EditableVoiceWidget>([
   "ModifyAddressWidget",
   "ModifyEmploymentWidget",
   "ModifyIncomeWidget",
+  "IndiaPersonalDetailsWidget",
+  "IndiaEmploymentDetailsWidget",
   "OfferSliderWidget",
   "ExpensesWidget",
 ]);
@@ -341,6 +345,55 @@ function parseEmployment(text: string): Record<string, string> | null {
   return null;
 }
 
+function parseIndiaPersonal(text: string): Record<string, string> | null {
+  if (/\b(father'?s name|father name)\b/.test(text)) {
+    const value = extractValueAfter(text, "father'?s name|father name");
+    return value ? { fatherName: titleCase(value) } : null;
+  }
+
+  if (/\b(date of birth|birth date|dob)\b/.test(text)) {
+    const value = extractValueAfter(text, "date of birth|birth date|dob");
+    return value ? { dateOfBirth: value } : null;
+  }
+
+  if (/\b(residential address|address)\b/.test(text)) {
+    const value = extractValueAfter(text, "residential address|address");
+    return value ? { residentialAddress: value } : null;
+  }
+
+  if (/\b(marital|marital status|single|married|divorced|widowed)\b/.test(text)) {
+    const value = extractValueAfter(text, "marital status|marital") || text;
+    return { maritalStatus: closestOption(value, ["Single", "Married", "Divorced", "Widowed"]) };
+  }
+
+  if (/\b(dependents?|number of dependents?)\b/.test(text)) {
+    const value = extractValueAfter(text, "number of dependents?|dependents?");
+    const count = numberFromSpeech(value || text);
+    if (count === null) return null;
+    return { dependents: String(count).padStart(2, "0") };
+  }
+
+  return null;
+}
+
+function parseIndiaEmployment(text: string): Record<string, string> | null {
+  const fields: Array<[RegExp, string, string, boolean?]> = [
+    [/\b(industry type|industry)\b/, "industryType", "industry type|industry", true],
+    [/\b(total experience|experience)\b/, "totalExperience", "total experience|experience"],
+    [/\b(employer name|company name|employer)\b/, "employerName", "employer name|company name|employer"],
+    [/\b(employee member id|member id)\b/, "employeeMemberId", "employee member id|member id"],
+  ];
+
+  for (const [matcher, key, pattern, titleize] of fields) {
+    if (!matcher.test(text)) continue;
+    const value = extractValueAfter(text, pattern);
+    if (!value) return null;
+    return { [key]: titleize ? titleCase(value) : value };
+  }
+
+  return null;
+}
+
 function parseIncome(text: string): Record<string, string> | null {
   const candidate = /\b(monthly income|income|salary)\b/.test(text)
     ? extractValueAfter(text, "monthly income|income|salary") || text
@@ -421,6 +474,10 @@ function parseWidgetUpdate(widget: EditableVoiceWidget, transcript: string): Rec
       return parseEmployment(text);
     case "ModifyIncomeWidget":
       return parseIncome(text);
+    case "IndiaPersonalDetailsWidget":
+      return parseIndiaPersonal(text);
+    case "IndiaEmploymentDetailsWidget":
+      return parseIndiaEmployment(text);
     case "OfferSliderWidget":
       return parseOffer(text);
     case "ExpensesWidget":
