@@ -177,11 +177,13 @@ BUREAU_CONSENT_OTP_PROMPT = (
 )
 
 INDIA_BUREAU_OTP_INTRO_TEMPLATE = (
-    "Great! I've sent a 6-digit OTP to your registered mobile number {phone}."
+    "Great! I've sent a 6-digit OTP to your registered mobile number {phone} for Bureau Verification."
 )
+
 INDIA_BUREAU_OTP_PROMPT = "Please share the 6-digit OTP here so I can verify it."
 INDIA_BUREAU_OTP_ACK = "Thank you! Let me verify that for you."
 INDIA_BUREAU_OTP_RETRY_PROMPT = "I could not capture a valid 6-digit OTP. Please share the 6-digit OTP here so I can verify it."
+
 
 FINAL_DISBURSEMENT_OTP_PROMPT = "Please enter the 4-digit OTP sent to your registered mobile number."
 OTP_RETRY_PROMPT = "The entered OTP is incorrect. Please re-enter the correct OTP."
@@ -508,9 +510,6 @@ def _build_india_bureau_verified_widget_data(session: dict) -> dict[str, Any]:
         "applicant": applicant_name,
         "date_of_birth": dob_value,
         "bureau_status": "Verified",
-        "auto_advance_ms": 2200,
-        "next_message": "india_employment_fetching",
-        "silent": True,
     }
 
 
@@ -585,7 +584,7 @@ def _build_india_personal_review_widget_data(session: dict, editable: bool = Fal
 
     name = "Narendar Singh"
     review["name"] = name
-    phone = ensure_value(review, "phone", "+91 8811234433")
+    phone = ensure_value(review, "phone", "8811223344")
     review["email"] = INDIA_DISPLAY_EMAIL
     email = INDIA_DISPLAY_EMAIL
     aadhaar_number = ensure_value(review, "aadhaar_number", "XXXX XXXX 6832")
@@ -619,6 +618,20 @@ def _build_india_personal_review_widget_data(session: dict, editable: bool = Fal
         "tracker_total": 5,
         "tracker_variant": "check",
     }
+
+
+def _build_india_submit_close_message(customer_name: str = "Narendar Singh") -> str:
+    return (
+        "Should you wish to make an early settlement, please contact us at least 30 days in advance. "
+        f"It has been a genuine pleasure assisting you today, {customer_name}. "
+        "We wish you every success with your plans and we look forward to continuing to be of service. "
+        "Our team is available 24 hours a day, 7 days a week should you need any assistance, simply call "
+        "022-1234-5678 or return to this assistant at any time. Thank you for choosing ICICI Bank."
+    )
+
+
+def _build_india_submit_thank_you_message() -> str:
+    return "Thank you. Your Personal Loan application has been submitted successfully."
 
 
 def _hydrate_india_customer_profile(session: dict) -> None:
@@ -802,6 +815,9 @@ def _resolve_india_widget(session: dict) -> dict | None | object:
             "widget": "IndiaBureauVerifiedWidget",
             "data": _build_india_bureau_verified_widget_data(session),
         }
+
+    if sub_step == "india_uan_entry":
+        return None
 
     if sub_step == "india_higher_amount_proof_choice":
         return {
@@ -1765,13 +1781,7 @@ def _build_india_post_esign_summary_data(session: dict) -> dict:
         "submitClose": {
             "completed": bool(session.get("india_submit_close_completed")),
             "buttonLabel": "Submit & Close",
-            "closingText": (
-                "Should you wish to make an early settlement, please contact us at least 30 days in advance. "
-                "It has been a genuine pleasure assisting you today, Narendar Singh. "
-                "We wish you every success with your plans and we look forward to continuing to be of service. "
-                "Our team is available 24 hours a day, 7 days a week should you need any assistance, simply call "
-                "022-1234-5678 or return to this assistant at any time. Thank you for choosing ICICI Bank."
-            ),
+            "closingText": _build_india_submit_close_message(customer_name),
         },
         "show_step_tracker": True,
         "tracker_step": 5,
@@ -2680,31 +2690,95 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
             "data": _build_india_post_esign_summary_data(session),
         }
 
+    if _is_india_personal_session(session) and step == "disburse" and sub_step == "india_submit_processing":
+        return {
+            "widget": "LoadingWidget",
+            "data": {
+                "title": "Submitting Your Personal Loan Application...",
+                "subtitle": "Finalizing your request and securely closing your session.",
+                "auto_advance_ms": 5000,
+                "next_message": "india_submit_complete",
+                "silent": True,
+            },
+        }
+
+    if _is_india_personal_session(session) and step == "disburse" and sub_step == "india_submit_complete":
+        return {
+            "widget": "IndiaDisbursementSuccessWidget",
+            "data": {
+                "customerName": "Narendar Singh",
+                "referenceNumber": "PL-2026-XXXXXX1841",
+                "disbursementDate": "06 July 2026",
+                "loanAmount": 15000,
+                "accountNumber": "Savings Account ******7223",
+                "repaymentPeriod": "84 Months",
+                "interestRate": "11%",
+                "firstInstallmentDue": "03 August 2026",
+                "monthlyInstallment": "INR 25,684",
+                "totalPayable": "INR 21,57,427",
+                "bankName": "ICICI Bank",
+                "accountHolderName": "Narendar Singh",
+                "ifscCode": "ICIC001234",
+                "bankValidationStatus": "Validated",
+                "bankBranch": "Greater Kailash, Delhi",
+                "earlySettlementMessage": (
+                    "Should you wish to make an early settlement, "
+                    "please contact us at least 30 days in advance."
+                ),
+                "pleasureMessage": (
+                    "It has been a genuine pleasure assisting you today, "
+                    "Narendar Singh. We wish you every success with your plans, "
+                    "and we look forward to continuing to be of service."
+                ),
+                "supportMessage": (
+                    "Our team is available 24 hours a day, 7 days a week should "
+                    "you need any assistance. Simply call 022-1234-5678 or return "
+                    "to this assistant at any time."
+                ),
+            },
+        }
+
     if step == "done":
         finance = session.get("finance_summary") or {}
         profile = _build_personal_widget_data(session, session.get("session_id"))
         selected_account = session.get("selected_account", {})
-        customer_name = profile.get("name") or session.get("collected", {}).get("full_name") or "Customer"
+        customer_name = (
+            profile.get("name")
+            or session.get("collected", {}).get("full_name")
+            or "Customer"
+        )
+
         return {
             "widget": "DisbursementWidget",
-            "data": session.get("disbursement", {
-                "customer_name": customer_name,
-                "reference": "PF-2025-XXXXXXXX",
-                "date": time.strftime("%d %B %Y"),
-                "amount": finance.get("amount", 0),
-                "account": selected_account.get("iban", "Current Account ****1234"),
-                "tenure": f"{finance.get('tenure', 0)} Months",
-                "profit_rate": finance.get("profit_rate", ""),
-                "first_installment": "03 July 2025",
-                "monthly_installment": finance.get("monthly_installment", 0),
-                "total_payable": finance.get("total_payable", 0),
-                "bank": selected_account.get("bank", ""),
-                "beneficiary": selected_account.get("beneficiary", ""),
-            }),
+            "data": session.get(
+                "disbursement",
+                {
+                    "customer_name": customer_name,
+                    "reference": "PF-2025-XXXXXXXX",
+                    "date": time.strftime("%d %B %Y"),
+                    "amount": finance.get("amount", 0),
+                    "account": selected_account.get(
+                        "iban",
+                        "Current Account ****1234",
+                    ),
+                    "tenure": f"{finance.get('tenure', 0)} Months",
+                    "profit_rate": finance.get("profit_rate", ""),
+                    "first_installment": "03 July 2025",
+                    "monthly_installment": finance.get(
+                        "monthly_installment",
+                        0,
+                    ),
+                    "total_payable": finance.get(
+                        "total_payable",
+                        0,
+                    ),
+                    "bank": selected_account.get("bank", ""),
+                    "beneficiary": selected_account.get("beneficiary", ""),
+                },
+            ),
         }
 
     return None
-
 
 # ── SSE stream builder (AI SDK v6 UIMessageStream protocol) ─────────
 
@@ -2929,12 +3003,35 @@ def _handle_active_widget_text_action(
                 return done("")
             if _looks_like_otp_attempt(raw_msg) and not _looks_like_general_question(raw_msg, session):
                 return done("Please enter a valid 6-digit OTP.", None)
+        if sub_step == "india_uan_entry":
+            uan = re.sub(r"\D", "", _normalize_chat_text(raw_msg))
+
+            if len(uan) == 12:
+                session.setdefault("employment", {})["uan"] = uan
+                session["sub_step"] = "india_uan_otp_prompt"
+                return done(
+                    "Great! I have sent a six-digit OTP to your registered mobile number. "
+                    "Please enter the six-digit OTP."
+                )
+
+            if re.search(r"\d", _normalize_chat_text(raw_msg)):
+                return done("Please enter a valid 12-digit UAN.", None)
+
+
+        if sub_step == "india_uan_otp_prompt":
+            otp = _extract_otp_from_message(raw_msg, expected_len=6, strict_len=True)
+            if otp:
+                session["india_uan_otp"] = otp
+                session["sub_step"] = "india_employment_fetching"
+                return done("OTP Verified Successfully")
+            if _looks_like_otp_attempt(raw_msg) and not _looks_like_general_question(raw_msg, session):
+                return done("Please enter a valid 6-digit OTP.", None)
 
         if sub_step == "india_bureau_otp_prompt":
             otp = _extract_otp_from_message(raw_msg, expected_len=6, strict_len=True)
             if otp:
                 session["india_bureau_otp"] = otp
-                session["sub_step"] = "india_bureau_otp_received"
+                session["sub_step"] = "india_bureau_otp_verifying"
                 return done(INDIA_BUREAU_OTP_ACK)
             if _looks_like_otp_attempt(raw_msg) and not _looks_like_general_question(raw_msg, session):
                 return done(INDIA_BUREAU_OTP_RETRY_PROMPT, None)
@@ -2973,7 +3070,7 @@ def _handle_active_widget_text_action(
         ):
             session["sub_step"] = "wants_more_backoffice"
             _ensure_higher_amount_workitem(session)
-            return done("Your request has been submitted for manual review.")
+            return done("I have successfully shared your request for a higher amount limit with our specialist team for a personalized review")
 
     return None
 
@@ -3183,10 +3280,14 @@ def _handle_widget_event(session: dict, session_id: str, raw_msg: str, normalize
     response_text = "Please continue."
     ui_flags: dict[str, Any] = {}
 
-    def done(text: str, widget_spec_override: dict | None | object = ...) -> StreamingResponse:
+    def done(
+        text: str,
+        widget_spec_override: dict | None | object = ...,
+        ui_flags_override: dict[str, Any] | None = None,
+    ) -> StreamingResponse:
         _store_gateway_session(session_id, session)
         widget_spec = resolve_widget(session, None) if widget_spec_override is ... else widget_spec_override
-        return _stream_widget_response(text, widget_spec, ui_flags)
+        return _stream_widget_response(text, widget_spec, {**ui_flags, **(ui_flags_override or {})})
 
     if _is_india_personal_session(session) and step == "identity":
         if sub_step == "identify_yourself" and signal == "continue":
@@ -3224,8 +3325,12 @@ def _handle_widget_event(session: dict, session_id: str, raw_msg: str, normalize
             return done("")
 
         if sub_step == "india_bureau_otp_verifying" and signal == "india_bureau_otp_verified":
-            session["sub_step"] = "india_bureau_verified"
-            return done("")
+            session["sub_step"] = "india_uan_entry"
+            bureau_widget = {
+                "widget": "IndiaBureauVerifiedWidget",
+                "data": _build_india_bureau_verified_widget_data(session),
+            }
+            return done("", bureau_widget, {"postText": "Please enter UAN:"})
 
         if sub_step == "india_bureau_verified" and signal == "india_employment_fetching":
             if session.get("wants_more"):
@@ -3263,20 +3368,24 @@ def _handle_widget_event(session: dict, session_id: str, raw_msg: str, normalize
             )
 
         if sub_step == "india_higher_amount_upload_statement" and signal.startswith("document_uploaded:"):
-            session["sub_step"] = "india_employment_fetching"
             session["pending_income_verification"] = "upload_statement"
             session["income_verification_method"] = "upload_statement"
+            session["step"] = "offer"
+            session["step_number"] = 2
+            session["sub_step"] = "india_offer_details_loading"
             return done(
                 "Salary Bank Account Statement has been uploaded successfully. We have received your statement and are processing it securely."
             )
 
         if sub_step == "india_higher_amount_open_banking_email_sent" and signal == "open_banking_linked":
-            session["sub_step"] = "india_employment_fetching"
             session["pending_income_verification"] = "open_banking"
             session["income_verification_method"] = "open_banking"
             session["ntb_open_banking_income_verified"] = True
+            session["step"] = "offer"
+            session["step_number"] = 2
+            session["sub_step"] = "india_offer_details_loading"
             return done(
-                "Thank You! Your consent has been received. We have securely received your Account Aggregator consent and are now processing your account information for employment verification."
+            "Thank You! Your consent has been received. We are now processing your higher amount request."
             )
 
         if sub_step == "india_employment_fetching" and signal == "india_employment_details_ready":
@@ -3284,11 +3393,16 @@ def _handle_widget_event(session: dict, session_id: str, raw_msg: str, normalize
             return done("")
 
         if sub_step == "india_employment_details" and signal == "india_employment_confirmed":
+            if session.get("wants_more"):
+                session["sub_step"] = "india_higher_amount_proof_choice"
+                return done("Thank you for confirming your employment details.")
+
             _seed_india_preapproved_offer(session)
             session["step"] = "offer"
             session["step_number"] = 2
             session["sub_step"] = "india_offer_details_loading"
             return done("Thank you for confirming your employment details.")
+
 
         if sub_step == "india_employment_details" and signal == "india_modify_employment":
             session["sub_step"] = "india_modify_employment_details"
@@ -3505,7 +3619,7 @@ def _handle_widget_event(session: dict, session_id: str, raw_msg: str, normalize
             session.pop("india_counter_offer_review_origin", None)
             session["sub_step"] = "wants_more_backoffice"
             _ensure_higher_amount_workitem(session)
-            return done("Your request has been submitted for manual review.")
+            return done("I have successfully shared your request for a higher amount limit with our specialist team for a personalized review.")
 
         payload = _extract_prefixed_json_payload(raw_msg, "CONFIRM_FINANCE_PLAN")
         if sub_step == "slider" and payload is not None:
@@ -3575,6 +3689,10 @@ def _handle_widget_event(session: dict, session_id: str, raw_msg: str, normalize
     if step == "disburse":
         if _is_india_personal_session(session) and sub_step == "india_summary" and signal == "india_submit_close":
             session["india_submit_close_completed"] = True
+            session["sub_step"] = "india_submit_processing"
+            return done("")
+        if _is_india_personal_session(session) and sub_step == "india_submit_processing" and signal == "india_submit_complete":
+            session["sub_step"] = "india_submit_complete"
             return done("")
         if sub_step == "account":
             if raw_lower.startswith("account_selected::"):
@@ -4110,10 +4228,12 @@ async def chat(request: ChatRequest):
             )
 
         if current_session.get("sub_step") == "india_higher_amount_open_banking_email_sent" and normalized_user_msg == "open_banking_linked":
-            current_session["sub_step"] = "india_employment_fetching"
             current_session["pending_income_verification"] = "open_banking"
             current_session["income_verification_method"] = "open_banking"
             current_session["ntb_open_banking_income_verified"] = True
+            current_session["step"] = "offer"
+            current_session["step_number"] = 2
+            current_session["sub_step"] = "india_offer_details_loading"
             _store_gateway_session(session_id, current_session)
             widget_spec = resolve_widget(current_session, None)
             response_text = "Thank You! Your consent has been received. We have securely received your Account Aggregator consent and are now processing your account information for employment verification."
