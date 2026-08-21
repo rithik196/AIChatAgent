@@ -370,8 +370,11 @@
   }
 
   .voice-wave-bar {
-    animation: voice-wave-pulse 960ms ease-in-out infinite;
     transform-origin: bottom;
+  }
+
+  .voice-wave-active {
+    animation: voice-wave-pulse 960ms ease-in-out infinite;
   }
 
   .voice-wave-ai {

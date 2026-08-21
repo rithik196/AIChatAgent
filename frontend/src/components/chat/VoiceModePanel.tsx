@@ -32,6 +32,10 @@ export function VoiceModePanel({
   fileInputRef,
 }: VoiceModePanelProps) {
   const isAi = mode === "ai";
+  const isListening = voiceState === "listening";
+  const isUserWaiting = mode === "user" && voiceState === "idle";
+  const waveformActive = isAi || isListening;
+  const statusLabel = isAi ? "AI Speaking" : isListening ? "User Speaking" : "Open your mic to answer";
 
   return (
     <div className="rounded-t-[24px] border border-slate-200 bg-[#EFF9FF] px-4 pb-4 pt-3 shadow-[0_-4px_18px_-10px_rgba(15,23,42,0.45)]">
@@ -47,9 +51,9 @@ export function VoiceModePanel({
       </div>
 
       <div className="pt-4">
-        <VoiceWaveform mode={mode} />
+        <VoiceWaveform mode={mode} active={waveformActive} />
         <div className={cn("mt-1 text-center text-[11px] leading-4", isAi ? "text-[#247EA5]" : "text-[#C65F28]")}>
-          {isAi ? "AI Speaking" : "User Speaking"}
+          {statusLabel}
         </div>
       </div>
 
@@ -71,7 +75,8 @@ export function VoiceModePanel({
           disabled={voiceState === "processing" || isLoading}
           className={cn(
             "flex h-12 w-12 items-center justify-center rounded-xl bg-white text-[#425768] shadow-sm transition-colors hover:text-[#0D141A] disabled:cursor-not-allowed disabled:text-slate-300",
-            voiceState === "listening" && "text-[#C65F28]"
+            isUserWaiting && "text-[#C65F28] shadow-[0_0_0_3px_rgba(198,95,40,0.16),0_8px_18px_-12px_rgba(198,95,40,0.9)]",
+            isListening && "bg-[#FFF3E8] text-[#C65F28] shadow-[0_0_0_4px_rgba(198,95,40,0.24),0_10px_22px_-12px_rgba(198,95,40,0.95)]"
           )}
           aria-label={voiceState === "listening" ? "Stop listening" : "Start listening"}
           title={voiceState === "listening" ? "Stop listening" : "Start listening"}

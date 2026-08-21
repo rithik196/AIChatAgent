@@ -67,7 +67,7 @@ export const INDIA_COUNTRY: CountryOption = {
 };
 
 const DEFAULT_JOURNEY_CONFIG: JourneyConfig = {
-    head:"",
+    head:"Finance",
   key: "default",
   region: "SA",
   title: "Smarter Finance",
@@ -96,7 +96,7 @@ const DEFAULT_JOURNEY_CONFIG: JourneyConfig = {
 };
 
 const INDIA_JOURNEY_CONFIG: JourneyConfig = {
-    head:"Loan",
+    head:"Personal Loan",
   key: "india",
   region: "IN",
   queryValue: "india",
