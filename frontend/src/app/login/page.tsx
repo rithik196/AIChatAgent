@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, Suspense } from "react";
 import Image from "next/image";
 import { useRouter, useSearchParams } from "next/navigation";
 import { LandingChatBox } from "@/components/chat/LandingChatBox";
@@ -124,7 +124,7 @@ function playGreeting(
   }
 }
 
-export default function LoginPage() {
+function LoginPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const journeyConfig = resolveJourneyVariant(searchParams.get("journey"));
@@ -401,7 +401,7 @@ export default function LoginPage() {
               Raya
             </div>
             <div className="text-[10.5px] font-semibold text-slate-500 tracking-tight flex items-center gap-1">
-              <span>Your Personal {journeyConfig.head} Assistant</span>
+              <span>Your {journeyConfig.head} Assistant</span>
               <span className="w-1.5 h-1.5 bg-[#2EAF62] rounded-full animate-pulse" />
             </div>
           </div>
@@ -627,8 +627,8 @@ export default function LoginPage() {
           <div className="text-[10px] font-bold text-[#1F6FB2] tracking-widest uppercase mb-0.5">
             Raya
           </div>
-          <div className="text-[10.5px] font-semibold text-slate-500 tracking-tight flex items-center gap-1">
-            <span>Your Personal {journeyConfig.head} Assistant</span>
+          <div className="text-[10.5px] font-bold text-slate-500 tracking-tight flex items-center gap-1">
+            <span>Your {journeyConfig.head} Assistant</span>
             <span className="w-1.5 h-1.5 bg-[#2EAF62] rounded-full animate-pulse" />
           </div>
         </div>
@@ -921,5 +921,13 @@ export default function LoginPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense>
+      <LoginPageInner />
+    </Suspense>
   );
 }

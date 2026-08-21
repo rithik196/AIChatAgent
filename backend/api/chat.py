@@ -49,9 +49,21 @@ AGENT_DIR = REPO_ROOT / "agent"
 if str(AGENT_DIR) not in sys.path:
     sys.path.append(str(AGENT_DIR))
 try:
-    from knowledge.faq_engine import answer_general_query as answer_gateway_general_query
+    from knowledge.faq_engine import (
+        OUT_OF_SCOPE,
+        SMALL_TALK_SCOPE,
+        answer_general_query as answer_gateway_general_query,
+        classify_query_scope as classify_gateway_query_scope,
+        out_of_scope_message as gateway_out_of_scope_message,
+        small_talk_response as gateway_small_talk_response,
+    )
 except Exception:
+    OUT_OF_SCOPE = "out_of_scope"
+    SMALL_TALK_SCOPE = "small_talk"
     answer_gateway_general_query = None
+    classify_gateway_query_scope = None
+    gateway_out_of_scope_message = None
+    gateway_small_talk_response = None
 
 try:
     from shared.journey_fallback import compose_fallback_response, looks_like_fallback_interruption
@@ -66,9 +78,19 @@ except Exception:
 
 COMMODITY_CERTIFICATE_TEMPLATE = REPO_ROOT / "frontend" / "public" / "assets" / "CommodityCertificate.html"
 COMMODITY_CERTIFICATE_OUTPUT_DIR = Path(os.getenv("COMMODITY_CERTIFICATE_OUTPUT_DIR", REPO_ROOT / ".data" / "generated_documents"))
-CHROME_CANDIDATES = (
-    Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),
-    Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"),
+_BROWSER_ENV_PATH = os.getenv("COMMODITY_CERTIFICATE_BROWSER") or os.getenv("BROWSER_EXECUTABLE_PATH")
+CHROME_CANDIDATES = tuple(
+    candidate
+    for candidate in (
+        Path(_BROWSER_ENV_PATH) if _BROWSER_ENV_PATH else None,
+        Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),
+        Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"),
+        Path("/usr/bin/chromium"),
+        Path("/usr/bin/chromium-browser"),
+        Path("/usr/bin/google-chrome"),
+        Path("/usr/bin/microsoft-edge"),
+    )
+    if candidate is not None
 )
 
 # ── In-memory session store (backed by agent persistence) ────────────
@@ -886,10 +908,58 @@ def _resolve_india_widget(session: dict) -> dict | None | object:
         }
 
     return _INDIA_WIDGET_UNHANDLED
+def _safe_commodity_certificate_session_id(session_id: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", str(session_id or "session"))
+
+
+def _commodity_certificate_filename_from_value(value: Any) -> str | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+
+    filename = Path(value.split("?", 1)[0].strip()).name
+    if not filename.lower().endswith(".pdf"):
+        return None
+    if not filename.startswith("CommodityCertificate_"):
+        return None
+    if Path(filename).name != filename:
+        return None
+    return filename
+
+
+def _delete_generated_document_file(directory: Path, filename: str) -> None:
+    document_path = directory / filename
+    try:
+        if document_path.exists() and document_path.is_file():
+            document_path.unlink()
+    except OSError:
+        logger.exception("Failed to delete generated document %s", document_path)
+
+
+def _delete_generated_documents_for_session(session_id: str, session: dict | None = None) -> None:
+    filenames: set[str] = {f"CommodityCertificate_{_safe_commodity_certificate_session_id(session_id)}.pdf"}
+
+    certificate_state = session.get("commodity_certificate") if isinstance(session, dict) else None
+    if isinstance(certificate_state, dict):
+        for key in ("pdf_filename", "pdf_url"):
+            filename = _commodity_certificate_filename_from_value(certificate_state.get(key))
+            if filename:
+                filenames.add(filename)
+
+    if isinstance(session, dict):
+        filename = _commodity_certificate_filename_from_value(session.get("commodity_certificate_url"))
+        if filename:
+            filenames.add(filename)
+
+    legacy_dir = REPO_ROOT / "frontend" / "public" / "generated"
+    for filename in filenames:
+        _delete_generated_document_file(COMMODITY_CERTIFICATE_OUTPUT_DIR, filename)
+        _delete_generated_document_file(legacy_dir, filename)
 
 
 def _delete_gateway_journey(session_id: str) -> None:
-    SESSION_STORE.pop(session_id, None)
+    session = SESSION_STORE.pop(session_id, None) or _load_gateway_session(session_id)
+    _delete_generated_documents_for_session(session_id, session)
+
     if mongo_journey and mongo_journey.is_available():
         mongo_journey.delete_journey(session_id)
 
@@ -1146,6 +1216,17 @@ def _answer_gateway_question(raw_text: str, session: dict) -> str | None:
     is_question = _looks_like_general_question(raw_text, session)
     if not is_question:
         return None
+    if classify_gateway_query_scope:
+        scope = classify_gateway_query_scope(raw_text, session)
+        if scope.get("scope") == OUT_OF_SCOPE:
+            answer = gateway_out_of_scope_message() if gateway_out_of_scope_message else (
+                "I'm sorry, but I'm not able to assist with that request. Please try asking about our banking services or your Cash Finance application."
+            )
+            return compose_fallback_response(answer, session) if compose_fallback_response else answer
+        if scope.get("scope") == SMALL_TALK_SCOPE:
+            return gateway_small_talk_response() if gateway_small_talk_response else (
+                "I'm doing well, thank you. I'm here to help with your Cash Finance application."
+            )
     if answer_gateway_general_query:
         try:
             faq = answer_gateway_general_query(raw_text, session)
@@ -1166,6 +1247,10 @@ async def _answer_gateway_question_with_agent(raw_text: str, session_id: str, se
     is_question = _looks_like_general_question(raw_text, session)
     if not is_question:
         return None
+    if classify_gateway_query_scope:
+        scope = classify_gateway_query_scope(raw_text, session)
+        if scope.get("scope") == OUT_OF_SCOPE:
+            return _answer_gateway_question(raw_text, session)
     try:
         async with httpx.AsyncClient(timeout=20.0) as client:
             resp = await client.post(
@@ -1828,6 +1913,27 @@ def _resolve_commodity_certificate_amount(session: dict) -> int:
     return amount
 
 
+def _resolve_commodity_certificate_customer_name(session: dict) -> str:
+    profile = session.get("customer_profile") if isinstance(session.get("customer_profile"), dict) else {}
+    name = str(profile.get("name") or "").strip()
+    if name:
+        return name
+
+    try:
+        hydrated_profile = _build_personal_widget_data(session, session.get("session_id", "")) or {}
+    except Exception:
+        logger.exception("Failed to hydrate customer name for commodity certificate")
+        hydrated_profile = {}
+
+    name = str(hydrated_profile.get("name") or "").strip()
+    if name:
+        return name
+
+    collected = session.get("collected") if isinstance(session.get("collected"), dict) else {}
+    name = str(collected.get("full_name") or "").strip()
+    return name or "Customer"
+
+
 def _render_commodity_certificate_html(session: dict) -> str:
     if not COMMODITY_CERTIFICATE_TEMPLATE.exists():
         raise FileNotFoundError(f"Commodity certificate template not found: {COMMODITY_CERTIFICATE_TEMPLATE}")
@@ -1840,6 +1946,7 @@ def _render_commodity_certificate_html(session: dict) -> str:
     finance_amount = _resolve_commodity_certificate_amount(session)
     current_date = datetime.datetime.now().strftime("%d %B %Y")
     volume = finance_amount / COMMODITY_CERTIFICATE_PRICE if COMMODITY_CERTIFICATE_PRICE else 0.0
+    customer_name = _resolve_commodity_certificate_customer_name(session)
 
     replacements = {
         "&certificateNumber&": html.escape(certificate_number),
@@ -1850,6 +1957,8 @@ def _render_commodity_certificate_html(session: dict) -> str:
         "$Volume$": f"{volume:.2f}",
         "&Value&": f"{finance_amount:,.0f}",
         "$Value$": f"{finance_amount:,.0f}",
+        "&customerName&": html.escape(customer_name),
+        "$customerName$": html.escape(customer_name),
     }
 
     rendered = template
@@ -1876,6 +1985,8 @@ def _render_commodity_certificate_pdf_from_html(session: dict, pdf_path: Path) -
             str(browser),
             "--headless",
             "--disable-gpu",
+            "--no-sandbox",
+            "--disable-dev-shm-usage",
             "--allow-file-access-from-files",
             "--print-to-pdf-no-header",
             "--no-pdf-header-footer",
@@ -2005,6 +2116,7 @@ def _write_commodity_certificate_pdf(session: dict, pdf_path: Path) -> None:
     volume = finance_amount / COMMODITY_CERTIFICATE_PRICE if COMMODITY_CERTIFICATE_PRICE else 0.0
     volume_text = f"{volume:.2f}"
     value_text = f"{finance_amount:,.0f}"
+    customer_name = _resolve_commodity_certificate_customer_name(session)
 
     page1: list[str] = []
     page1.append(_pdf_centered_text_command(790, f"Certificate Number: {certificate_number}", "F2", 18))
@@ -2017,8 +2129,8 @@ def _write_commodity_certificate_pdf(session: dict, pdf_path: Path) -> None:
         page1.append(_pdf_centered_text_command(y, line, "F1", 11))
         y -= 16
 
-    page1.append(_pdf_text_command(60, y - 12, "Seller : Newgen Software", "F2", 11))
-    page1.append(_pdf_text_command(60, y - 28, "Buyer : Newgen Software", "F2", 11))
+    page1.append(_pdf_text_command(60, y - 12, "Seller : Newgen Bank", "F2", 11))
+    page1.append(_pdf_text_command(60, y - 28, f"Buyer : {customer_name}", "F2", 11))
 
     rows = [
         ("Bid No :", certificate_number),
@@ -2594,17 +2706,9 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
         }
 
     if step == "offer" and sub_step == "slider":
-        offer = session.get("offer", {})
         return {
             "widget": "OfferSliderWidget",
-            "data": {
-                "max_amount": offer.get("max_amount", 250000),
-                "min_amount": 5000,
-                "profit_rate": offer.get("profit_rate", "6.1%"),
-                "default_tenure": offer.get("max_tenure", 60) if is_preapproved_path else 36,
-                "default_amount": offer.get("max_amount", 250000) if is_preapproved_path else None,
-                "is_preapproved_path": is_preapproved_path,
-            },
+            "data": _build_offer_slider_data(session, is_preapproved_path),
         }
 
     if step == "offer" and sub_step == "summary":
@@ -3094,6 +3198,39 @@ def _build_finance_summary(amount: int, tenure: int, profit_rate_text: Any = Non
         "profit_rate": f"{annual_rate:g}%",
         "monthly_installment": monthly_installment,
         "total_payable": monthly_installment * int(tenure),
+    }
+
+
+def _coerce_int(value: Any, fallback: int) -> int:
+    parsed = _parse_currency_amount(value)
+    if parsed is None:
+        return int(fallback)
+    return int(round(parsed))
+
+
+def _build_offer_slider_data(session: dict, is_preapproved_path: bool | None = None) -> dict:
+    offer = session.get("offer") or {}
+    if is_preapproved_path is None:
+        customer_type = session.get("customerType") or ("ETB" if session.get("user_type") == "existing" else "NTB")
+        is_preapproved_path = customer_type == "ETB"
+
+    min_amount = 5000
+    max_amount = _coerce_int(offer.get("max_amount"), 250000)
+    default_amount = max_amount if is_preapproved_path else int(round(max_amount * 0.6))
+    default_amount = min(max_amount, max(min_amount, default_amount))
+
+    default_tenure = _coerce_int(
+        offer.get("max_tenure"),
+        DEFAULT_OFFER_TENURE,
+    ) if is_preapproved_path else 36
+
+    return {
+        "max_amount": max_amount,
+        "min_amount": min_amount,
+        "profit_rate": offer.get("profit_rate", "6.1%"),
+        "default_tenure": default_tenure,
+        "default_amount": default_amount,
+        "is_preapproved_path": is_preapproved_path,
     }
 
 
@@ -3623,9 +3760,10 @@ def _handle_widget_event(session: dict, session_id: str, raw_msg: str, normalize
 
         payload = _extract_prefixed_json_payload(raw_msg, "CONFIRM_FINANCE_PLAN")
         if sub_step == "slider" and payload is not None:
-            amount = int(payload.get("amount") or payload.get("loan_amount") or session.get("offer", {}).get("max_amount", 0))
-            tenure = int(payload.get("tenure") or payload.get("tenure_months") or 36)
-            rate = payload.get("profitRate") or session.get("offer", {}).get("profit_rate", "6.1%")
+            slider_defaults = _build_offer_slider_data(session)
+            amount = _coerce_int(payload.get("amount") or payload.get("loan_amount"), slider_defaults["default_amount"])
+            tenure = _coerce_int(payload.get("tenure") or payload.get("tenure_months"), slider_defaults["default_tenure"])
+            rate = payload.get("profitRate") or slider_defaults["profit_rate"]
             session["finance_summary"] = _build_finance_summary(amount, tenure, rate)
             session["finance_amount"] = amount
             session["sub_step"] = "summary"

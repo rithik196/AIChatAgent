@@ -105,7 +105,7 @@ export function FinanceSummaryWidget({ data }: FinanceSummaryWidgetProps) {
                 })
               );
             }}
-            className="w-full py-3 journey-widget-button border border-transparent text-[14px] hover:opacity-90 transition-all duration-300"
+            className="w-full py-3 journey-widget-button  text-[14px] hover:opacity-90 transition-all duration-300"
           >
             Modify Amount or Tenure
           </motion.button>
