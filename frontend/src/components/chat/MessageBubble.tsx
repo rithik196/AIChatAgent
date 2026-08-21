@@ -50,6 +50,7 @@ import { IndiaPersonalDetailsWidget } from "../widgets/IndiaPersonalDetailsWidge
 import { StepIndicator } from "../widgets/StepIndicator";
 import { WelcomeBackWidget } from "../widgets/WelcomeBackWidget";
 import { ImportantText } from "../shared/ImportantText";
+import { IndiaDisbursementSuccessWidget } from "@/components/widgets/IndiaDisbursementSuccessWidget";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type WidgetData = any;
@@ -127,6 +128,7 @@ const WIDGET_REGISTRY: Record<string, WidgetComponent> = {
   IndiaFacilityLetterWidget,
   IndiaPostEsignSummaryWidget,
   IndiaPersonalDetailsWidget,
+  IndiaDisbursementSuccessWidget,
   WelcomeBackWidget,
 };
 

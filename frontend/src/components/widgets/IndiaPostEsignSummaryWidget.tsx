@@ -65,11 +65,7 @@ export function IndiaPostEsignSummaryWidget({ data }: IndiaPostEsignSummaryWidge
 
   const loanDetails = data?.loanDetails || {};
   const repaymentAccount = data?.repaymentAccount || {};
-  const footerMessage = data?.footerMessage || {};
   const submitCloseLabel = submitClose.buttonLabel || "Submit & Close";
-  const submitCloseText =
-    submitClose.closingText ||
-    "Should you wish to make an early settlement, please contact us at least 30 days in advance. It has been a genuine pleasure assisting you today, Narendar Singh. We wish you every success with your plans and we look forward to continuing to be of service. Our team is available 24 hours a day, 7 days a week should you need any assistance, simply call 022-1234-5678 or return to this assistant at any time. Thank you for choosing ICICI Bank.";
 
   useEffect(() => {
     setIsSubmitClosed(Boolean(submitClose.completed));
@@ -95,10 +91,7 @@ export function IndiaPostEsignSummaryWidget({ data }: IndiaPostEsignSummaryWidge
       transition={{ duration: 0.35, ease: "easeOut" }}
       className="w-full max-w-sm mt-3 space-y-4"
     >
-      <div className="rounded-[16px] px-5 py-4 shadow-sm" style={{ backgroundImage: "linear-gradient(90deg, #EBF4F5 0%, #B9DCF2 100%)" }}>
-        <p className="text-[15px] font-bold text-[#0D141A]">Congratulations, {data?.customerName || "Customer"}!</p>
-        <p className="mt-1 text-[14px] leading-6 text-[#22313F]">Your loan amount has been successfully sent to your account. All the details are displayed on the screen for your reference.</p>
-      </div>
+     
 
       <div className="journey-panel p-4">
         <div className="mb-4 flex items-center gap-3">
@@ -138,16 +131,19 @@ export function IndiaPostEsignSummaryWidget({ data }: IndiaPostEsignSummaryWidge
 
         <label className="mb-4 flex cursor-pointer items-start gap-3 rounded-[14px] border border-[#D5DCE3] bg-[#F9FBFC] px-4 py-3">
           <input
-            type="checkbox"
-            checked={useDifferentAccount}
-            onChange={(event) => {
-              setUseDifferentAccount(event.target.checked);
-              if (!event.target.checked) {
-                setBankValidationStatus(data?.repaymentAccount?.bankValidationStatus || "Pending");
-              }
-            }}
-            className="mt-1 h-4 w-4 rounded border-[#D5DCE3] text-[#1457D7]"
-          />
+  type="checkbox"
+          checked={useDifferentAccount}
+          disabled={isSubmitClosed}
+          onChange={(event) => {
+            setUseDifferentAccount(event.target.checked);
+            if (!event.target.checked) {
+              setBankValidationStatus(
+                data?.repaymentAccount?.bankValidationStatus || "Pending"
+              );
+            }
+          }}
+          className="mt-1 h-4 w-4 rounded border-[#D5DCE3] text-[#1457D7] disabled:cursor-not-allowed disabled:opacity-50"
+        />
           <span className="text-[13px] leading-5 text-[#22313F]">Consider Different Account for Repayment</span>
         </label>
 
@@ -178,16 +174,6 @@ export function IndiaPostEsignSummaryWidget({ data }: IndiaPostEsignSummaryWidge
                 </div>
               </div>
             ) : null}
-
-            {validationSucceeded ? (
-              <div className="rounded-[14px] border border-[#D5DCE3] bg-white px-4 py-4 text-[13px] leading-6 text-[#22313F]">
-                <p className="font-semibold">{footerMessage.earlySettlement || "Should you wish to make an early settlement, please contact us at least 30 days in advance."}</p>
-                <p className="mt-3 font-semibold">{footerMessage.pleasureMessage || `It has been a genuine pleasure assisting you today, ${data?.customerName || "Narendar Singh"}.`}</p>
-                <p className="mt-3 font-semibold">{footerMessage.successMessage || "We wish you every success with your plans, and we look forward to continuing to be of service."}</p>
-                <p className="mt-3 font-semibold">{footerMessage.supportMessage || "Our team is available 24 hours a day, 7 days a week should you need any assistance. Simply call 022-234-5678 or return to this assistant at any time."}</p>
-                <p className="mt-3 font-semibold">{footerMessage.thankYouMessage || "Thank you for choosing ICICI Bank."}</p>
-              </div>
-            ) : null}
           </div>
         ) : null}
 
@@ -200,12 +186,6 @@ export function IndiaPostEsignSummaryWidget({ data }: IndiaPostEsignSummaryWidge
           >
             {submitCloseLabel}
           </button>
-
-          {isSubmitClosed ? (
-            <div className="rounded-[14px] border border-[#D5DCE3] bg-white px-4 py-4 text-[13px] leading-6 text-[#22313F]">
-              <p className="font-semibold">{submitCloseText}</p>
-            </div>
-          ) : null}
         </div>
       </div>
     </motion.div>

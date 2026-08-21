@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect } from "react";
+import React from "react";
 import { motion } from "framer-motion";
 import { CheckCircle2, CalendarDays, ShieldCheck, UserRound } from "lucide-react";
 
@@ -11,9 +11,6 @@ type IndiaBureauVerifiedWidgetProps = {
     applicant?: string;
     date_of_birth?: string;
     bureau_status?: string;
-    auto_advance_ms?: number;
-    next_message?: string;
-    silent?: boolean;
   };
 };
 
@@ -35,18 +32,6 @@ export function IndiaBureauVerifiedWidget({ data }: IndiaBureauVerifiedWidgetPro
   const applicant = data?.applicant ?? "Narendar Singh";
   const dateOfBirth = data?.date_of_birth ?? "15/01/1990";
   const bureauStatus = data?.bureau_status ?? "Verified";
-  const autoAdvanceMs = data?.auto_advance_ms ?? 2200;
-  const nextMessage = data?.next_message ?? "india_employment_fetching";
-  const silent = data?.silent ?? true;
-
-  useEffect(() => {
-    if (!silent) return;
-    const timer = window.setTimeout(() => {
-      window.dispatchEvent(new CustomEvent("mock-send-message", { detail: `__SYS__${nextMessage}` }));
-    }, autoAdvanceMs);
-    return () => window.clearTimeout(timer);
-  }, [autoAdvanceMs, nextMessage, silent]);
-
   return (
     <motion.div
       initial={{ opacity: 0, y: 12 }}

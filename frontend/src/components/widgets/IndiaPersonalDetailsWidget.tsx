@@ -53,7 +53,7 @@ export function IndiaPersonalDetailsWidget({ data, messageId }: WidgetProps) {
   const [activeField, setActiveField] = useState<RowKey | null>(null);
   const [values, setValues] = useState<EditableValues>(() => ({
     name: data?.name ?? "Narendar Singh",
-    phone: data?.phone ?? "+91 8811234433",
+    phone: data?.phone ?? "8811223344",
     email: data?.email ?? "narendar.singh@gmail.com",
     aadhaarNumber: data?.aadhaar_number ?? "XXXX XXXX 6832",
     gender: data?.gender ?? "Male",

@@ -212,6 +212,7 @@ const VOICE_TTS_FAILSAFE_EXTRA_MS = 2500;
 const VOICE_ASSISTANT_ECHO_GUARD_MS = 4000;
 const VOICE_WIDGET_UPDATE_PROMPT =
   "Updated. You can make another change or say save changes.";
+const INDIA_AUTO_LOGOUT_THANK_YOU = "Thank you. Your Personal Loan application has been submitted successfully.";
 const OFFER_SLIDER_RANGE_PROMPT = "Please select the amount or tenure within the shown range.";
 const OFFER_SLIDER_TENURE_OPTIONS = [12, 24, 36, 48, 60];
 
@@ -555,6 +556,7 @@ function ChatView({ product, sessionId, initialMessages, initialSession, journey
   const [voicePanelText, setVoicePanelText] = useState('');
   const [lastVoiceUserText, setLastVoiceUserText] = useState('');
   const [showHeaderMenu, setShowHeaderMenu] = useState(false);
+  const [indiaAutoLogoutState, setIndiaAutoLogoutState] = useState<"idle" | "processing" | "complete">("idle");
   const [bufferedAssistantIds, setBufferedAssistantIds] = useState<Set<string>>(new Set());
   const [instantRevealAssistantIds, setInstantRevealAssistantIds] = useState<Set<string>>(new Set());
   const [knownMessageIds, setKnownMessageIds] = useState<Set<string>>(
@@ -562,6 +564,7 @@ function ChatView({ product, sessionId, initialMessages, initialSession, journey
   );
   const [activeVoicePreviewId, setActiveVoicePreviewId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const indiaAutoLogoutTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const { messages, status, sendMessage, setMessages } = useChat({
     id: sessionId,
@@ -575,6 +578,7 @@ function ChatView({ product, sessionId, initialMessages, initialSession, journey
 
   const latestPersonalDetails = extractLatestPersonalDetails(messages) ?? extractSessionPersonalDetails(initialSession);
   const isLoading = status === 'submitted' || status === 'streaming';
+  const isIndiaSubmitClosing = journeyConfig.key === "india" && indiaAutoLogoutState !== "idle";
 
   // Track whether voice mode is active (user initiated via mic button)
   const voiceModeRef = useRef(false);
@@ -973,6 +977,10 @@ function ChatView({ product, sessionId, initialMessages, initialSession, journey
           ? ((detail as { systemText: string }).systemText || "").trim()
           : "";
 
+      if (journeyConfig.key === "india" && systemText === "__SYS__india_submit_close") {
+        setIndiaAutoLogoutState("processing");
+      }
+
       if (visibleText && systemText && !localBubbleAdded) {
         appendLocalMockVisibleBubble(visibleText);
       }
@@ -983,7 +991,7 @@ function ChatView({ product, sessionId, initialMessages, initialSession, journey
         sendMessage({ text: visibleText });
       }
     }
-  }, [appendLocalMockVisibleBubble, sendMessage]);
+  }, [appendLocalMockVisibleBubble, journeyConfig.key, sendMessage]);
 
   const dispatchMockMessage = useCallback((detail: unknown) => {
     if (isLoading) {
@@ -1354,6 +1362,7 @@ function ChatView({ product, sessionId, initialMessages, initialSession, journey
 
   const onSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (isIndiaSubmitClosing) return;
     if (!input.trim()) return;
     voiceModeRef.current = false; // Switch to text mode
     sendMessage({ text: input });
@@ -1369,6 +1378,7 @@ function ChatView({ product, sessionId, initialMessages, initialSession, journey
   }, [dispatchMockMessage]);
 
   const chatWindowIsLoading = isLoading && !voiceModeOpen;
+  const inputBusy = isLoading || isIndiaSubmitClosing;
   const voiceModeSpeaker = voiceState === "speaking" || Boolean(activeVoicePreviewId) ? "ai" : "user";
   const suppressLastVoiceTranscript = journeyConfig.key === "india" && voiceState === "listening";
   const voiceModeText =
@@ -1471,7 +1481,7 @@ function ChatView({ product, sessionId, initialMessages, initialSession, journey
     setVoiceModeOpen(false);
   };
 
-  const handleLogout = async () => {
+  const handleLogout = useCallback(async () => {
     setShowHeaderMenu(false);
     autoListenAfterSpeechRef.current = false;
     voiceModeRef.current = false;
@@ -1491,11 +1501,37 @@ function ChatView({ product, sessionId, initialMessages, initialSession, journey
     } finally {
       router.replace(buildLoginHref(journeyConfig.key));
     }
+  }, [clearVoiceLifecycleTimers, commitVoicePreview, journeyConfig.key, router, sessionId, stopListening]);
+
+ useEffect(() => {
+  if (journeyConfig.key !== "india") return;
+  if (indiaAutoLogoutState !== "processing") return;
+
+  if (indiaAutoLogoutTimerRef.current) {
+    clearTimeout(indiaAutoLogoutTimerRef.current);
+  }
+
+  // Keep the success screen visible for 10 seconds,
+  // after the 5-second submission processing.
+  indiaAutoLogoutTimerRef.current = setTimeout(() => {
+    setIndiaAutoLogoutState("complete");
+    void handleLogout();
+  }, 15000);
+
+  return () => {
+    if (indiaAutoLogoutTimerRef.current) {
+      clearTimeout(indiaAutoLogoutTimerRef.current);
+      indiaAutoLogoutTimerRef.current = null;
+    }
   };
+}, [handleLogout, indiaAutoLogoutState, journeyConfig.key]);
 
   useEffect(() => {
     return () => {
       clearVoiceLifecycleTimers();
+      if (indiaAutoLogoutTimerRef.current) {
+        clearTimeout(indiaAutoLogoutTimerRef.current);
+      }
     };
   }, [clearVoiceLifecycleTimers]);
 
@@ -1626,7 +1662,7 @@ function ChatView({ product, sessionId, initialMessages, initialSession, journey
             mode={voiceModeSpeaker}
             voiceState={voiceState}
             allowUpload={allowUpload}
-            isLoading={isLoading}
+            isLoading={inputBusy}
             onUpload={handleUploadClick}
             onFileSelect={handleFileSelect}
             onMicToggle={handleVoiceModeMicToggle}
@@ -1636,7 +1672,7 @@ function ChatView({ product, sessionId, initialMessages, initialSession, journey
         ) : (
           <ChatInputBar
             input={input || ''}
-            isLoading={isLoading}
+            isLoading={inputBusy}
             allowUpload={allowUpload}
             voiceState={voiceState}
             supported={supported}

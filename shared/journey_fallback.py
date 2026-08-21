@@ -168,6 +168,28 @@ OUT_OF_SCOPE_ANSWER = (
 )
 
 
+def _localize_india_fallback_answer(answer: str) -> str:
+    localized = re.sub(
+        r"cash\s+finance\s+application",
+        "Personal Loan Application",
+        answer,
+        flags=re.IGNORECASE,
+    )
+    localized = re.sub(
+        r"cash\s+finance\s+journey",
+        "Personal Loan journey",
+        localized,
+        flags=re.IGNORECASE,
+    )
+    localized = re.sub(
+        r"\bcash\s+finance\b",
+        "personal loan",
+        localized,
+        flags=re.IGNORECASE,
+    )
+    return localized
+
+
 def _is_india_personal_session(session: dict[str, Any] | None) -> bool:
     session = session or {}
     return (
@@ -275,6 +297,8 @@ def compose_fallback_response(answer: str | None, session: dict[str, Any] | None
             if _is_india_personal_session(session)
             else OUT_OF_SCOPE_ANSWER
         )
+    elif _is_india_personal_session(session):
+        cleaned_answer = _localize_india_fallback_answer(cleaned_answer)
     resume_prompt = build_resume_prompt(session)
     if resume_prompt.lower() in cleaned_answer.lower():
         return cleaned_answer
