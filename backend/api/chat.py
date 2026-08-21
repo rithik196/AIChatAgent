@@ -3398,9 +3398,9 @@ def _handle_widget_event(session: dict, session_id: str, raw_msg: str, normalize
                 return done("Thank you for confirming your employment details.")
 
             _seed_india_preapproved_offer(session)
-            session["step"] = "offer"
-            session["step_number"] = 2
-            session["sub_step"] = "india_offer_details_loading"
+            session["step"] = "identity"
+            session["step_number"] = 3
+            session["sub_step"] = "india_personal_details_review"
             return done("Thank you for confirming your employment details.")
 
 
