@@ -2474,6 +2474,22 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
                 },
             }
 
+        offer = session.setdefault("offer", {})
+        offer["max_amount"] = PREAPPROVED_ETB_AMOUNT
+        offer.setdefault("profit_rate", "6.1%")
+        offer.setdefault("max_tenure", DEFAULT_OFFER_TENURE)
+        return {
+            "widget": "PreApprovedOfferWidget",
+            "data": {
+                "title": "Your Pre-Approved Offer",
+                "max_amount": PREAPPROVED_ETB_AMOUNT,
+                "profit_rate": offer.get("profit_rate", "6.1%"),
+                "max_tenure": offer.get("max_tenure", DEFAULT_OFFER_TENURE),
+                "is_preapproved_path": True,
+                **tracker_data,
+            },
+        }
+
     if step == "offer" and sub_step == "india_offer_details_loading":
         is_counter_offer = bool(session.get("wants_more"))
         return {
@@ -2528,22 +2544,6 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
                 "tracker_step": 2,
                 "tracker_total": 5,
                 "tracker_variant": "check",
-            },
-        }
-
-        offer = session.setdefault("offer", {})
-        offer["max_amount"] = PREAPPROVED_ETB_AMOUNT
-        offer.setdefault("profit_rate", "6.1%")
-        offer.setdefault("max_tenure", DEFAULT_OFFER_TENURE)
-        return {
-            "widget": "PreApprovedOfferWidget",
-            "data": {
-                "title": "Your Pre-Approved Offer",
-                "max_amount": PREAPPROVED_ETB_AMOUNT,
-                "profit_rate": offer.get("profit_rate", "6.1%"),
-                "max_tenure": offer.get("max_tenure", DEFAULT_OFFER_TENURE),
-                "is_preapproved_path": True,
-                **tracker_data,
             },
         }
 
@@ -2674,7 +2674,7 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
             "widget": "LoadingWidget",
             "data": {
                 "title": "Verifying OTP...",
-                "subtitle": "Checking the 4-digit code you entered in chat.",
+                "subtitle": "Checking the 4-digit code. Please wait.",
                 "auto_advance_ms": 5000,
                 "next_message": "otp_verification_complete",
                 "silent": True,
@@ -3674,6 +3674,15 @@ def _handle_widget_event(session: dict, session_id: str, raw_msg: str, normalize
                 return done("Please complete the missing details in chat to continue.")
             session["sub_step"] = "expenses"
             return done("Let's proceed to your monthly expenses review.")
+
+        if sub_step == "expenses_saving" and signal == "expenses_saved":
+            session["sub_step"] = "expenses_saved"
+            return done("Your monthly expenses have been saved successfully.")
+
+        if sub_step == "expenses_saved" and signal == "expenses_saved_complete":
+            session["sub_step"] = "bureau_consent"
+            _ensure_bureau_otp_sent(session, session_id)
+            return done(BUREAU_CONSENT_OTP_PROMPT)
 
         if signal == "bureau_consent_granted":
             session["sub_step"] = "bureau_consent"
