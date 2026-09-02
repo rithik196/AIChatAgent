@@ -3610,6 +3610,30 @@ def _handle_widget_event(session: dict, session_id: str, raw_msg: str, normalize
             return done("")
 
     if step == "identity" and not _is_india_personal_session(session):
+        if sub_step == "open_banking_email_sent" and signal == "open_banking_linked":
+            session["sub_step"] = "updating_details"
+            session["updating"] = {
+                "section": "Income Details",
+                "auto_advance_ms": 11000,
+                "next_message": "open_banking_update_complete",
+                "silent": True,
+            }
+            session["pending_income_verification"] = "open_banking"
+            session["income_verification_method"] = "open_banking"
+            session["ntb_open_banking_income_verified"] = True
+            return done("We are updating your income details now. Please wait while we save the changes.")
+
+        if sub_step == "updating_details" and signal == "open_banking_update_complete":
+            _finalize_pending_profile_update(session, "income")
+            _prefill_open_banking_expenses(session)
+            session["sub_step"] = "personal_details"
+            session.pop("updating", None)
+            session.pop("pending_income_verification", None)
+            return done(
+                "Your details have been successfully updated. "
+                "Would you like to update any other details, or should we confirm and proceed?"
+            )
+
         explicit_identity_routes = {
             "modify_section": "modify_section",
             "modify_personal": "modify_personal",
@@ -3618,6 +3642,8 @@ def _handle_widget_event(session: dict, session_id: str, raw_msg: str, normalize
             "modify_address_new": "modify_address",
             "modify_employment": "modify_employment",
             "modify_income": "modify_income",
+            "upload_statement": "modify_income_upload_statement",
+            "open_banking": "open_banking_email_sent",
         }
         target_sub_step = explicit_identity_routes.get(signal)
         if target_sub_step:
@@ -3628,6 +3654,34 @@ def _handle_widget_event(session: dict, session_id: str, raw_msg: str, normalize
                 session["modify_address_mode"] = "existing"
             elif signal == "modify_address_new":
                 session["modify_address_mode"] = "new"
+            elif signal == "upload_statement":
+                session["pending_income_verification"] = "upload_statement"
+            elif signal == "open_banking":
+                session["pending_income_verification"] = "open_banking"
+                session["income_verification_method"] = "open_banking"
+                session["ntb_open_banking_income_verified"] = True
+                profile = _build_personal_widget_data(session, session_id) or {}
+                if profile and not session.get("customer_profile"):
+                    session["customer_profile"] = profile
+                email = _get_mail_recipient(session, profile.get("email"))
+                name = profile.get("name") or "Customer"
+                logger.info(
+                    "[routing] session=%s triggering open banking email email=%s name=%s profile_keys=%s",
+                    session_id,
+                    email,
+                    name,
+                    sorted(profile.keys()) if isinstance(profile, dict) else [],
+                )
+                if email:
+                    try:
+                        send_open_banking_email(email, name, template=_get_open_banking_template(session))
+                    except Exception as exc:
+                        logger.error("Failed to trigger Open Banking email for session %s: %s", session_id, exc)
+                else:
+                    logger.warning(
+                        "[routing] session=%s skipped open banking email because customer_profile.email is missing",
+                        session_id,
+                    )
 
             prompt_map = {
                 "modify_section": "Which section would you like to update?",
@@ -3636,8 +3690,14 @@ def _handle_widget_event(session: dict, session_id: str, raw_msg: str, normalize
                 "modify_address": "Please update your address details below.",
                 "modify_employment": "Please update your employment details below.",
                 "modify_income": "Please update your income details below.",
+                "modify_income_upload_statement": "Please upload your bank statement below.",
+                "open_banking_email_sent": "An email has been sent to your registered ID. Please link your account.",
             }
-            return done(prompt_map.get(target_sub_step, "Please continue."))
+            return done(
+                prompt_map.get(target_sub_step, "Please continue."),
+                ...,
+                {"allow_upload": target_sub_step == "modify_income_upload_statement"},
+            )
 
     profile_completion_payload = _extract_prefixed_json_payload(raw_msg, "PROFILE_COMPLETION")
     if profile_completion_payload is not None:
