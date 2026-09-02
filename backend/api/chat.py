@@ -3609,6 +3609,36 @@ def _handle_widget_event(session: dict, session_id: str, raw_msg: str, normalize
             session["sub_step"] = "india_personal_details_review"
             return done("")
 
+    if step == "identity" and not _is_india_personal_session(session):
+        explicit_identity_routes = {
+            "modify_section": "modify_section",
+            "modify_personal": "modify_personal",
+            "modify_address": "modify_address_choice",
+            "modify_address_existing": "modify_address",
+            "modify_address_new": "modify_address",
+            "modify_employment": "modify_employment",
+            "modify_income": "modify_income",
+        }
+        target_sub_step = explicit_identity_routes.get(signal)
+        if target_sub_step:
+            session["sub_step"] = target_sub_step
+            if signal == "modify_address":
+                session.pop("modify_address_mode", None)
+            elif signal == "modify_address_existing":
+                session["modify_address_mode"] = "existing"
+            elif signal == "modify_address_new":
+                session["modify_address_mode"] = "new"
+
+            prompt_map = {
+                "modify_section": "Which section would you like to update?",
+                "modify_personal": "Please update your personal details below.",
+                "modify_address_choice": "Would you like to update your existing address or add a new address?",
+                "modify_address": "Please update your address details below.",
+                "modify_employment": "Please update your employment details below.",
+                "modify_income": "Please update your income details below.",
+            }
+            return done(prompt_map.get(target_sub_step, "Please continue."))
+
     profile_completion_payload = _extract_prefixed_json_payload(raw_msg, "PROFILE_COMPLETION")
     if profile_completion_payload is not None:
         session["step"] = "identity"
