@@ -3590,7 +3590,7 @@ def _handle_widget_event(session: dict, session_id: str, raw_msg: str, normalize
             session["step_number"] = 4
             session["sub_step"] = "documents"
             return done(
-                "Proceeding ahead for E Signature process.\n\nYour personal details have been successfully confirmed.\n\nI request for your review request and E-signature."
+                "Proceeding ahead for E Signature process."
             )
 
         if sub_step == "india_esign_request" and signal == "proceed_esign":
