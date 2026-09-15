@@ -35,13 +35,6 @@ export function BackofficeWorkitemWidget({ data }: BackofficeWorkitemWidgetProps
       <div className="journey-surface p-4">
         <div className="flex flex-col gap-3">
           <div className="journey-panel rounded-[12px] p-4">
-            <p className="journey-body leading-relaxed">
-              <ImportantText text="I have successfully shared your request for a higher finance limit with our specialist team for a personalized review." />
-            </p>
-            <VoiceDivider />
-          </div>
-
-          <div className="journey-panel rounded-[12px] p-4">
             <p className="journey-body font-semibold">
               <ImportantText text={`Application ID: #${applicationId}`} />
             </p>
