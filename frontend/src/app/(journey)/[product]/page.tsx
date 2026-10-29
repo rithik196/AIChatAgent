@@ -22,12 +22,25 @@ import { buildJourneySessionId, getJourneyDisplayName, resolveJourneyVariant, bu
 
 /** Convert saved conversation messages → UIMessage format for useChat */
 function toUIMessages(saved: { role: string; content: string; timestamp?: number; widget?: unknown; metadata?: unknown }[]): UIMessage[] {
-  return saved.map((m, i) => ({
-    id: `hist_${i}_${m.timestamp || i}`,
-    role: m.role as "user" | "assistant",
-    parts: [{ type: "text" as const, text: m.content }],
-    metadata: (m.metadata || (m.widget ? { widget: m.widget } : undefined)) as UIMessage["metadata"],
-  }));
+  return saved.map((m, i) => {
+    let metadata = (m.metadata || (m.widget ? { widget: m.widget } : undefined)) as MessageBubbleProps["metadata"];
+    const widget = metadata?.widget;
+    if (
+      isWidgetSpec(widget) && widget.widget === "LoadingWidget" && widget.data?.completion_visible_text &&
+      saved.slice(i + 1).some((message) => message.role === "assistant" &&
+        (widget.data?.next_message === "promissory_esign_complete"
+          ? message.content.includes("Congratulations! Your Promissory Note has been successfully verified and registered on the Ministry of Justice Nafith platform.")
+          : message.content.includes("Your Murabaha Contract and Commodity Certificate have been successfully signed and archived.")))
+    ) {
+      metadata = { ...metadata, widget: { ...widget, data: { ...widget.data, completed: true } } };
+    }
+    return {
+      id: `hist_${i}_${m.timestamp || i}`,
+      role: m.role as "user" | "assistant",
+      parts: [{ type: "text" as const, text: m.content }],
+      metadata: metadata as UIMessage["metadata"],
+    };
+  });
 }
 
 function getMessageText(message?: UIMessage): string {
@@ -204,6 +217,8 @@ function extractSessionPersonalDetails(session: Record<string, unknown> | null):
 }
 
 const VOICE_POST_SPEECH_HOLD_MS = 1000;
+const VOICE_CHECKBOX_WAIT_MS = 15000;
+const VOICE_CHECKBOX_RETRY_MS = 200;
 const VOICE_MIN_SPEECH_MS = 1200;
 const VOICE_MAX_SPEECH_MS = 45000;
 const VOICE_WORDS_PER_MINUTE = 155;
@@ -401,8 +416,15 @@ function isOfferSliderVoiceUpdateOutOfRange(
   return false;
 }
 
+function getVoiceMessageText(message: UIMessage | undefined): string {
+  const metadata = message?.metadata as { postText?: string } | undefined;
+  return [getMessageText(message), metadata?.postText]
+    .filter((text): text is string => typeof text === "string" && Boolean(text.trim()))
+    .join("\n\n");
+}
+
 function getVoiceSpeechContent(message: UIMessage | undefined): { previewText: string; speechText: string } {
-  const text = getMessageText(message);
+  const text = getVoiceMessageText(message);
   const widgetName = getMessageWidgetName(message);
   const widgetData = getMessageWidgetData(message);
 
@@ -708,12 +730,26 @@ function ChatView({ product, sessionId, initialMessages, initialSession, journey
       return null;
     };
 
+    const radio = action.radioValue
+      ? root.querySelector<HTMLInputElement>(`input[type="radio"][value="${action.radioValue}"]`)
+      : null;
+    if (action.radioValue && (!radio || radio.disabled)) return false;
+    const checkbox = action.clickCheckboxFirst
+      ? root.querySelector<HTMLInputElement>('input[type="checkbox"]')
+      : null;
+    if (action.clickCheckboxFirst && (!checkbox || checkbox.disabled)) return false;
+
+    if (radio && !radio.checked) {
+      radio.click();
+    }
+
     if (action.clickCheckboxFirst) {
-      const checkbox = root.querySelector<HTMLInputElement>('input[type="checkbox"]');
       if (checkbox && !checkbox.checked) {
         checkbox.click();
       }
     }
+
+    if (action.buttonLabels.length === 0 && (action.radioValue || action.clickCheckboxFirst)) return true;
 
     let target = findMatch(root);
 
@@ -723,8 +759,9 @@ function ChatView({ product, sessionId, initialMessages, initialSession, journey
 
     if (!target) return false;
 
-    if (action.clickCheckboxFirst || (target.disabled && action.clickFirstButtonIfDisabled)) {
-      window.setTimeout(() => {
+    if (action.clickCheckboxFirst || action.radioValue || (target.disabled && action.clickFirstButtonIfDisabled)) {
+      let submitAttempts = 0;
+      const clickWhenEnabled = () => {
         const latestRoot = getRoot();
         if (!latestRoot) return;
 
@@ -738,10 +775,19 @@ function ChatView({ product, sessionId, initialMessages, initialSession, journey
           return;
         }
 
+        if ((action.waitForCheckbox || action.waitForControls) && latestTarget && submitAttempts < 10) {
+          submitAttempts += 1;
+          window.setTimeout(clickWhenEnabled, 75);
+          return;
+        }
+
         if (latestTarget && action.clickFirstButtonIfDisabled) {
           latestTarget.click();
+        } else {
+          console.warn("Voice action could not submit: the widget button is unavailable or disabled", action.messageId);
         }
-      }, 75);
+      };
+      window.setTimeout(clickWhenEnabled, 75);
       return true;
     }
 
@@ -765,6 +811,25 @@ function ChatView({ product, sessionId, initialMessages, initialSession, journey
     (action: VoiceResolvedAction, transcriptText: string): boolean => {
       const clicked = clickVoiceAction(action);
       if (clicked) return true;
+
+      if (action.waitForCheckbox || action.waitForControls) {
+        // The widget may not be rendered yet (voice preview / reveal delay); retry so the checkbox gets ticked visibly.
+        const startedAt = Date.now();
+        const retry = () => {
+          if (clickVoiceAction(action)) return;
+          if (Date.now() - startedAt < VOICE_CHECKBOX_WAIT_MS) {
+            window.setTimeout(retry, VOICE_CHECKBOX_RETRY_MS);
+            return;
+          }
+          if (action.fallbackSystemText || action.fallbackVisibleText) {
+            dispatchVoiceFallback(action.fallbackVisibleText || transcriptText, action.fallbackSystemText);
+          } else {
+            console.warn("Voice action could not find enabled widget controls", action.messageId);
+          }
+        };
+        window.setTimeout(retry, VOICE_CHECKBOX_RETRY_MS);
+        return true;
+      }
 
       if (action.fallbackSystemText || action.fallbackVisibleText) {
         dispatchVoiceFallback(action.fallbackVisibleText || transcriptText, action.fallbackSystemText);
@@ -1319,7 +1384,7 @@ function ChatView({ product, sessionId, initialMessages, initialSession, journey
 
       resetToIdle();
 
-      const text = getMessageText(message);
+      const text = getVoiceMessageText(message);
       if (!text.trim()) return;
 
       if (voiceModeRef.current && voiceModeOpen) {
@@ -1340,7 +1405,7 @@ function ChatView({ product, sessionId, initialMessages, initialSession, journey
       }
 
       if (voiceModeRef.current && !voiceModeOpen) {
-        const speechText = buildVoiceSpeechText(text);
+        const { speechText } = getVoiceSpeechContent(message);
         rememberAssistantSpeechForEchoGuard(speechText);
         speak(speechText);
       }
@@ -1397,7 +1462,7 @@ function ChatView({ product, sessionId, initialMessages, initialSession, journey
     if (!voiceModeOpen || isLoading) return;
 
     const assistantToSpeak = bufferedAssistant || lastAssistant;
-    const assistantText = getMessageText(assistantToSpeak);
+    const assistantText = getVoiceMessageText(assistantToSpeak);
     if (!assistantToSpeak || !assistantText) return;
     if (resolvedVoicePromptIdsRef.current.has(assistantToSpeak.id)) return;
     if (spokenAssistantIdsRef.current.has(assistantToSpeak.id)) return;
@@ -1566,7 +1631,7 @@ function ChatView({ product, sessionId, initialMessages, initialSession, journey
 
   return (
     <SpeakContext.Provider value={speak}>
-    <div className="flex flex-col h-full bg-white relative">
+    <div className="flex min-h-0 flex-col h-full bg-white relative">
       <div className="absolute top-0 left-0 w-full z-10 bg-white/70 backdrop-blur-xl shadow-[0_8px_24px_-18px_rgba(15,23,42,0.45)] relative">
         <div className="px-4 py-3.5 flex items-center gap-3">
           <div className="h-10 w-10  bg-white/85  flex items-center justify-center shrink-0">
@@ -1632,7 +1697,7 @@ function ChatView({ product, sessionId, initialMessages, initialSession, journey
         <div className="absolute bottom-0 left-0 h-[2px] w-full bg-gradient-to-r from-[#FB8B23] to-[#C24231]" />
       </div>
 
-      <div className={voiceModeOpen ? "flex-1 overflow-hidden pt-0 pb-[300px]" : "flex-1 overflow-hidden pt-0 pb-24"}>
+      <div className={voiceModeOpen ? "min-h-0 flex-1 overflow-hidden pt-0 pb-[300px]" : "min-h-0 flex-1 overflow-hidden pt-0 pb-24"}>
         <ChatWindow
           messages={chatWindowMessages}
           isLoading={chatWindowIsLoading}

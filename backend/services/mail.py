@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import logging
 import os
+from html import escape
+from threading import Thread
 from urllib.parse import quote_plus
 from typing import Any
 
@@ -133,7 +135,7 @@ def _build_india_higher_amount_open_banking_email(customer_name: str) -> dict[st
     return {"subject": subject, "mailBody": mail_body}
 
 
-def _build_docusign_email(customer_name: str) -> dict[str, str]:
+def _build_docusign_email(customer_name: str, contract_only: bool = False) -> dict[str, str]:
     subject = "Action Required: Review and Sign Your Documents"
     contract_url = _build_docusign_link(
         customer_name,
@@ -142,6 +144,21 @@ def _build_docusign_email(customer_name: str) -> dict[str, str]:
         "ContractSaudi",
         9,
     )
+    if contract_only:
+        return {
+            "subject": "Action Required: Review and Sign Your Financing Contract",
+            "mailBody": f"""
+<html>
+<body style="font-family: Arial, sans-serif; color: #0f172a; padding: 24px;">
+  <h2>E-Sign Your Financing Contract</h2>
+  <p>Hello {escape(customer_name)},</p>
+  <p>Your Financing Contract is ready for signature. Please review and sign the contract using the button below.</p>
+  <a href="{escape(contract_url, quote=True)}" target="_blank" rel="noopener noreferrer" style="display: inline-block; padding: 12px 22px; background: #1B739E; color: #ffffff; text-decoration: none; border-radius: 8px;">Proceed to e-sign contract</a>
+  <p>Powered by Raya Finance Agent</p>
+</body>
+</html>
+""".strip(),
+        }
     promissory_url = _build_docusign_link(
         customer_name,
     DEFAULT_DOCUSIGN_SIGNER_EMAIL,
@@ -185,6 +202,26 @@ def _build_docusign_email(customer_name: str) -> dict[str, str]:
 """.format(customer_name=customer_name, contract_url=contract_url, promissory_url=promissory_url).strip()
 
     return {"subject": subject, "mailBody": mail_body}
+
+
+def _build_promissory_note_email(customer_name: str) -> dict[str, str]:
+  note_url = _build_docusign_link(
+    customer_name, DEFAULT_DOCUSIGN_SIGNER_EMAIL, "PromissoryNote", "PromissoryNote", 4,
+  )
+  return {
+    "subject": "Action Required: Review and Sign Your Promissory Note",
+    "mailBody": f"""
+<html>
+<body style="font-family: Arial, sans-serif; color: #0f172a; padding: 24px;">
+  <h2>E-Sign Your Promissory Note</h2>
+  <p>Hello {escape(customer_name)},</p>
+  <p>Your Promissory Note is ready for signature. Please review and sign it using the button below.</p>
+  <a href="{escape(note_url, quote=True)}" target="_blank" rel="noopener noreferrer" style="display: inline-block; padding: 12px 22px; background: #1B739E; color: #ffffff; text-decoration: none; border-radius: 8px;">Proceed to e-sign Promissory Note</a>
+  <p>Powered by Raya Finance Agent</p>
+</body>
+</html>
+""".strip(),
+  }
 
 
 def _build_india_docusign_email(customer_name: str, template: str = "preapproved") -> dict[str, str]:
@@ -274,6 +311,37 @@ def send_open_banking_email(customer_email: str, customer_name: str, template: s
     return False
 
 
+def request_docusign_email(
+    session: dict,
+    customer_email: str | None,
+    customer_name: str,
+    template: str,
+    region: str = "SA",
+) -> None:
+    """Request a journey e-sign email without waiting for external delivery."""
+    sent_key = "promissory_email_sent" if template == "promissory_note" else "docusign_email_sent"
+    requested_key = "promissory_email_requested" if template == "promissory_note" else "docusign_email_requested"
+    if session.get(sent_key) or session.get(requested_key):
+        return
+    if not customer_email:
+        logger.warning("Cannot request %s signing email: customer email is missing; continuing journey", template)
+        return
+
+    def deliver() -> None:
+        try:
+            if not send_docusign_email(customer_email, customer_name, template=template, region=region):
+                logger.warning("%s signing email delivery failed; journey remains unblocked", template)
+        except Exception:
+            logger.exception("%s signing email delivery failed; journey remains unblocked", template)
+
+    try:
+        Thread(target=deliver, name=f"esign-email-{template}", daemon=True).start()
+    except RuntimeError:
+        logger.exception("Could not start %s signing email delivery; continuing journey", template)
+        return
+    session[requested_key] = True
+
+
 def send_docusign_email(
     customer_email: str,
     customer_name: str,
@@ -284,7 +352,9 @@ def send_docusign_email(
     email_content = (
         _build_india_docusign_email(customer_name, template=template)
         if region == "IN"
-        else _build_docusign_email(customer_name)
+        else _build_promissory_note_email(customer_name)
+        if template == "promissory_note"
+        else _build_docusign_email(customer_name, contract_only=template == "murabaha_contract")
     )
     payload: dict[str, Any] = {
         **email_content,

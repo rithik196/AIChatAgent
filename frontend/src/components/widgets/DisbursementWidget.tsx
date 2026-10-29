@@ -150,7 +150,7 @@ export function DisbursementWidget({ data }: DisbursementWidgetProps) {
       >
         <p>It has been a genuine pleasure assisting you today, {customerName}. We wish you every success with your plans, and we look forward to continuing to be of service.</p>
         <p className="mt-4 font-semibold">Our team is available 24 hours a day, 7 days a week should you need any assistance, simply call 022-1234-5678 or return to this assistant at any time.</p>
-        <p className="mt-4">Thank you sincerely for choosing Newgen Bank".</p>
+        <p className="mt-4">Thank you sincerely for choosing Newgen Bank.</p>
       </div>
     </motion.div>
   );

@@ -7,6 +7,10 @@ export type VoiceResolvedAction = {
   buttonLabels: string[];
   clickFirstButtonIfDisabled?: boolean;
   clickCheckboxFirst?: boolean;
+  /** Wait for the widget checkbox to render before ticking it and submitting, instead of falling back immediately. */
+  waitForCheckbox?: boolean;
+  radioValue?: "sell" | "delivery";
+  waitForControls?: boolean;
   fallbackVisibleText?: string;
   fallbackSystemText?: string;
 };
@@ -630,15 +634,93 @@ function widgetAction(message: UIMessage | undefined, transcript: string): Voice
         });
       }
       if (matchesAnyPhrase(normalized, ["continue", "proceed"])) {
-        return action(["Proceed to next step", "E-Sign via Nafath", "Proceed to e-sign"], {
-          fallbackVisibleText: "E-Sign via Nafath",
+        return action(["Proceed to next step", "E-Sign Contract via Emdha", "E-Sign via Nafith", "Proceed to e-sign"], {
+          fallbackVisibleText: "E-Sign via Nafith",
           fallbackSystemText: "__SYS__proceed_esign",
         });
       }
       if (matchesAnyPhrase(normalized, ["e sign", "esign", "proceed to e sign", "proceed to e-sign", "nafath", "sign documents"])) {
-        return action(["E-Sign via Nafath", "Generate Contract & Promissory Note", "Proceed to e-sign"], {
-          fallbackVisibleText: "E-Sign via Nafath",
+        return action(["E-Sign Contract via Emdha", "E-Sign via Nafith", "Generate Contract & Promissory Note", "Proceed to e-sign"], {
+          fallbackVisibleText: "E-Sign via Nafith",
           fallbackSystemText: "__SYS__proceed_esign",
+        });
+      }
+      return null;
+
+    case "PromiseToPurchaseWidget":
+      if (matchesAnyPhrase(normalized, ["submit promise", "submit promise to purchase", "i submit my promise to purchase", "i submit my binding promise to purchase", "i agree", "i consent"])) {
+        return action(["Submit Promise to Purchase (Wa'ad)"], {
+          clickCheckboxFirst: true,
+          waitForCheckbox: true,
+          clickFirstButtonIfDisabled: true,
+          fallbackVisibleText: "I submit my binding Promise to Purchase (Wa'ad).",
+          fallbackSystemText: "__SYS__promise_to_purchase_submitted",
+        });
+      }
+      return null;
+
+    case "BankCommodityBuyWidget":
+      if (matchesAnyPhrase(normalized, [
+        "execute murabaha ownership transfer",
+        "execute murabba ownership transfer",
+        "execute murabha ownership transfer",
+        "execute murabahah ownership transfer",
+        "execute ownership transfer",
+        "proceed to murabaha transaction execution",
+        "proceed",
+        "continue",
+      ])) {
+        return action(["Execute Murabaha Ownership Transfer"], {
+          fallbackVisibleText: "Proceed to Murabaha Transaction execution",
+          fallbackSystemText: "__SYS__execute_murabaha_ownership_transfer",
+        });
+      }
+      return null;
+
+    case "MurabahaSaleExecutionWidget":
+      if (matchesAnyPhrase(normalized, ["accept murabaha", "accept murabaha sale", "i accept the murabaha sale", "transfer title", "transfer ownership", "execute ownership transfer"])) {
+        return action(["Accept Murabaha & Transfer Title"], {
+          fallbackVisibleText: "I accept the Murabaha sale and transfer of ownership.",
+          fallbackSystemText: "__SYS__accept_murabaha_sale",
+        });
+      }
+      return null;
+
+    case "WakalahConsentWidget":
+      if (matchesAnyPhrase(normalized, ["do not consent", "do not agree", "do not authorize", "don't consent", "don't agree", "don't authorize"])) {
+        return null;
+      }
+      if (matchesAnyPhrase(normalized, ["request physical commodity delivery", "physical delivery", "physical commodity delivery", "select delivery"])) {
+        return action([], {
+          radioValue: "delivery",
+          waitForControls: true,
+        });
+      }
+      if (matchesAnyPhrase(normalized, [
+        "authorize commodity sale",
+        "authorize the sale",
+        "i authorize the sale of the commodity on my behalf",
+        "authorize and auto execute commodity sale",
+        "authorize and auto execute",
+        "consent to sell commodity",
+        "i consent to sell",
+      ])) {
+        return action(["Authorize & Auto-Execute Commodity Sale"], {
+          radioValue: "sell",
+          clickCheckboxFirst: true,
+          waitForCheckbox: true,
+        });
+      }
+      if (matchesAnyPhrase(normalized, ["sell on my behalf", "select cash finance", "select sell", "sell for cash"])) {
+        return action([], {
+          radioValue: "sell",
+          waitForControls: true,
+        });
+      }
+      if (matchesAnyPhrase(normalized, ["i agree", "i consent", "grant agency consent", "tick the checkbox", "check the checkbox"])) {
+        return action([], {
+          clickCheckboxFirst: true,
+          waitForCheckbox: true,
         });
       }
       return null;

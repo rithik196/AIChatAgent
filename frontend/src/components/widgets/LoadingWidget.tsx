@@ -12,6 +12,8 @@ interface LoadingWidgetProps {
     next_message?: string;
     /** If true, auto-fires silently (no chat bubble). If false/absent, shows Continue button. */
     silent?: boolean;
+    completion_visible_text?: string;
+    completed?: boolean;
   };
 }
 
@@ -21,22 +23,29 @@ export function LoadingWidget({ data }: LoadingWidgetProps) {
   const autoAdvanceMs = data?.auto_advance_ms || 3000;
   const nextMessage = data?.next_message || 'done';
   const silent = data?.silent ?? false;
-  const [completed, setCompleted] = useState(false);
+  const completionVisibleText = data?.completion_visible_text;
+  const alreadyCompleted = data?.completed ?? false;
+  const [completed, setCompleted] = useState(alreadyCompleted);
   const [readyToContinue, setReadyToContinue] = useState(false);
 
   useEffect(() => {
+    if (alreadyCompleted) return;
     const timer = setTimeout(() => {
       if (silent) {
         // Auto-advance internally — no user bubble
         setCompleted(true);
-        const event = new CustomEvent('mock-send-message', { detail: `__SYS__${nextMessage}` });
+        const event = new CustomEvent('mock-send-message', {
+          detail: completionVisibleText
+            ? { visibleText: completionVisibleText, systemText: `__SYS__${nextMessage}` }
+            : `__SYS__${nextMessage}`,
+        });
         window.dispatchEvent(event);
       } else {
         setReadyToContinue(true);
       }
     }, autoAdvanceMs);
     return () => clearTimeout(timer);
-  }, [autoAdvanceMs, nextMessage, silent]);
+  }, [alreadyCompleted, autoAdvanceMs, completionVisibleText, nextMessage, silent]);
 
   const handleContinue = () => {
     setCompleted(true);

@@ -2,11 +2,13 @@
 
 import React from "react";
 import { motion } from "framer-motion";
+import { ShieldCheck } from "lucide-react";
 
 interface Document {
   name: string;
   type: string;
   url?: string;
+  caption?: string;
 }
 
 interface DocumentPreviewWidgetProps {
@@ -15,6 +17,8 @@ interface DocumentPreviewWidgetProps {
     title?: string;
     subtitle?: string;
     current_step?: number;
+    action_label?: string;
+    disclaimer?: string;
     show_step_tracker?: boolean;
     tracker_step?: number;
     tracker_total?: number;
@@ -65,7 +69,7 @@ function filenameForDocument(doc: Document) {
 export function DocumentPreviewWidget({ data }: DocumentPreviewWidgetProps) {
   const currentStep = data?.current_step || 4;
   const isCertificateStep = currentStep === 3;
-  const actionLabel = isCertificateStep ? "Proceed to next step" : "E-Sign via Nafath";
+  const actionLabel = data?.action_label || (isCertificateStep ? "Proceed to next step" : "E-Sign via Nafith");
 
   const documents = data?.documents || [
     { name: "Contract Letter", type: "pdf", url: "/customer_agent/assets/ContractSaudi.pdf" },
@@ -172,11 +176,18 @@ export function DocumentPreviewWidget({ data }: DocumentPreviewWidgetProps) {
                   </svg>
                 </button>
 
-                <p className="journey-label leading-tight line-clamp-2 pr-8">{doc.name}</p>
+                <p className="journey-label leading-tight line-clamp-2 pr-8" title={doc.name}>{doc.name}</p>
+                {doc.caption && <p className="text-[11px] leading-4 text-emerald-700 mt-1">{doc.caption}</p>}
               </motion.div>
             ))}
         </div>
 
+          {data?.disclaimer && (
+            <div className="flex items-start gap-2 rounded-lg border border-[#D5DCE3] bg-white p-3 mb-4">
+              <ShieldCheck size={16} className="shrink-0 text-emerald-600 mt-0.5" aria-hidden="true" />
+              <p className="text-[12px] leading-5 text-[#526675]">{data.disclaimer}</p>
+            </div>
+          )}
           <button
             onClick={handleAction}
             className="w-full py-3.5 journey-widget-button text-[14px] shadow-lg transition-all duration-300"

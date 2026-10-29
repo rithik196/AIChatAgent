@@ -291,6 +291,9 @@ _ROUTING_SIGNALS = {
     "otp_verification_complete", "ivr_verification_complete",
     "complete_disbursement", "verification_declined",
     "trade_certificate_ready",
+    "accept_murabaha_sale", "execute_murabaha_ownership_transfer", "promise_to_purchase_submitted",
+    "commodity_buy_complete", "ownership_transfer_complete",
+    "authorize_commodity_sale", "promissory_esign_complete",
 }
 
 
@@ -461,6 +464,21 @@ def _fast_state_response(session: dict) -> str | None:
     if step == "offer" and sub_step == "summary":
         return "Your finance summary is ready. Would you like to proceed to commodity trade or modify the amount and tenure?"
 
+    if step == "trade" and sub_step == "promise":
+        return "To finalize your finance, we will initiate the Shariah-compliant Commodity Murabaha process. First, as we require your unilateral Promise to Purchase (Wa'ad) before the bank purchases the commodity."
+
+    if step == "trade" and sub_step == "bank_purchase_loading":
+        return "Wa'ad consent received and logged. The bank is now auto-executing the commodity purchase on the Commodity platform."
+
+    if step == "trade" and sub_step == "bank_purchase":
+        return "Wa'ad consent received and logged. The bank is now auto-executing the commodity purchase on the Commodity platform."
+
+    if step == "trade" and sub_step == "murabaha_sale_loading":
+        return ""
+
+    if step == "trade" and sub_step == "murabaha_sale":
+        return "We now offer the commodity to you under Murabaha sale at cost plus agreed profit markup. Please accept the transfer of ownership."
+
     if step == "trade" and sub_step == "authorize":
         return (
             "To complete your Islamic Murabaha finance, the bank will buy the commodity on your behalf and then sell it to you at an agreed price. "
@@ -481,12 +499,27 @@ def _fast_state_response(session: dict) -> str | None:
         return "The commodity trade was successful. Wait now generating the Commodity Transaction Certificate."
 
     if step == "esign" and sub_step == "documents":
+        if session.get("murabaha_sale_accepted") and not _is_india_personal_session(session):
+            return "Commodity ownership has been legally transferred to you! Your Commodity Transaction Certificate and Contract Letter have been generated. Please review both documents and proceed with E-signing via Emdha for final archival."
         return (
             "The Contract & Promissory Note documents are ready. "
             "Would you like to proceed with e-signing the documents?"
         )
 
+    if step == "esign" and sub_step == "promissory_documents":
+        total = (session.get("commodity_sale") or {}).get("total_payable")
+        total_text = f"{total:,.2f}".rstrip("0").rstrip(".") if isinstance(total, (int, float)) else "--"
+        return f"Now that commodity monetization is complete, your electronic Promissory Note for the deferred total of {total_text} SAR has been generated on the Nafith platform. Please complete your final E-sign."
+
+    if step == "esign" and sub_step == "promissory_email_sent":
+        return "Please complete the Promissory Note signature from your email."
+
+    if step == "esign" and sub_step == "wakalah_prompt":
+        return "To obtain cash financing, please provide your consent appointing the bank/broker as your agent (Wakalah) to sell the commodity on your behalf on the open market."
+
     if step == "esign" and sub_step == "email_sent":
+        if session.get("murabaha_sale_accepted") and not _is_india_personal_session(session):
+            return "Please complete the signature from your email. We will continue once it is verified."
         return "Your e-sign request has been sent. Please complete the signature from your email and let me know once it is done."
 
     if step == "disburse" and sub_step == "account":
@@ -961,7 +994,44 @@ def _deterministic_classify(msg: str, step: str, sub_step: str, session: dict) -
 
     # ─── TRADE ────────────────────────────────────────
     elif step == "trade":
-        if sub_step == "authorize":
+        if sub_step == "promise":
+            if msg_lower == "promise_to_purchase_submitted" or any(
+                _contains_phrase(msg_lower, phrase)
+                for phrase in ("i submit my promise to purchase", "i submit my binding promise to purchase")
+            ):
+                return {"step": "trade", "intent": "STEP_DATA",
+                        "data": {"promise_to_purchase_submitted": True}}
+
+        elif sub_step == "bank_purchase_loading":
+            if msg_lower == "commodity_buy_complete":
+                return {"step": "trade", "intent": "STEP_DATA",
+                        "data": {"commodity_buy_complete": True}}
+
+        elif sub_step == "bank_purchase":
+            if msg_lower == "execute_murabaha_ownership_transfer" or any(
+                _contains_phrase(msg_lower, phrase)
+                for phrase in (
+                    "proceed to murabaha transaction execution",
+                    "execute murabaha ownership transfer",
+                    "execute murabba ownership transfer",
+                    "execute murabha ownership transfer",
+                    "execute murabahah ownership transfer",
+                    "execute ownership transfer",
+                )
+            ):
+                return {"step": "trade", "intent": "STEP_DATA",
+                        "data": {"execute_murabaha_ownership_transfer": True}}
+
+        elif sub_step == "murabaha_sale_loading":
+            if msg_lower == "ownership_transfer_complete":
+                return {"step": "trade", "intent": "STEP_DATA",
+                        "data": {"ownership_transfer_complete": True}}
+
+        elif sub_step == "murabaha_sale":
+            if msg_lower == "accept_murabaha_sale" or _contains_phrase(msg_lower, "i accept the murabaha sale and transfer of ownership"):
+                return {"step": "trade", "intent": "STEP_DATA", "data": {"accept_murabaha_sale": True}}
+
+        elif sub_step == "authorize":
             if _is_continuation_message(msg_lower) or any(
                 _contains_phrase(msg_lower, phrase) for phrase in ("authorize", "i authorize")
             ):
@@ -1009,7 +1079,19 @@ def _deterministic_classify(msg: str, step: str, sub_step: str, session: dict) -
 
     # ─── ESIGN ────────────────────────────────────────
     elif step == "esign":
-        if sub_step == "documents":
+        if sub_step == "wakalah_prompt":
+            if msg_lower == "authorize_commodity_sale" or _contains_phrase(msg_lower, "i authorize the sale of the commodity on my behalf"):
+                return {"step": "esign", "intent": "STEP_DATA", "data": {"authorize_commodity_sale": True}}
+
+        elif sub_step == "promissory_documents":
+            if msg_lower == "proceed_esign" or any(_contains_phrase(msg_lower, phrase) for phrase in ("e sign", "e-sign", "esign", "sign promissory note", "nafath")):
+                return {"step": "esign", "intent": "STEP_DATA", "data": {"esign_nafath": True}}
+
+        elif sub_step == "promissory_email_sent":
+            if msg_lower == "promissory_esign_complete":
+                return {"step": "esign", "intent": "STEP_DATA", "data": {"promissory_esign_complete": True}}
+
+        elif sub_step == "documents":
             if _is_continuation_message(msg_lower):
                 return {"step": "esign", "intent": "STEP_DATA", "data": {"esign_nafath": True}}
             signals = [
