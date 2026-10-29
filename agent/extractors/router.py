@@ -11,7 +11,7 @@ from temporalio.service import RPCError
 try:
     from backend.utils.eligibility import calculate_max_eligible_amount, validate_iban
     from backend.db import update_customer
-    from backend.services.mail import send_docusign_email
+    from backend.services.mail import send_docusign_email, request_docusign_email
 except ModuleNotFoundError:
     # Allow running agent from its folder without requiring PYTHONPATH.
     repo_root = Path(__file__).resolve().parents[2]
@@ -19,7 +19,7 @@ except ModuleNotFoundError:
         sys.path.insert(0, str(repo_root))
     from backend.utils.eligibility import calculate_max_eligible_amount, validate_iban
     from backend.db import update_customer
-    from backend.services.mail import send_docusign_email
+    from backend.services.mail import send_docusign_email, request_docusign_email
 
 logger = logging.getLogger(__name__)
 
@@ -1132,8 +1132,8 @@ def _advance_session_state(extract: dict, session: dict) -> None:
         elif data.get("proceed_trade") and current_sub == "summary":
             session["step"] = "trade"
             session["step_number"] = 3
-            session["sub_step"] = "authorize"
-            logger.info("Moving to commodity trade authorization")
+            session["sub_step"] = "authorize" if _is_india_personal_session(session) else "promise"
+            logger.info("Moving to commodity trade %s", session["sub_step"])
         elif data.get("higher_amount_requested") and current_sub == "summary":
             session["sub_step"] = "slider"
             logger.info("Customer wants to modify amount/tenure. Returning to slider.")
@@ -1142,7 +1142,35 @@ def _advance_session_state(extract: dict, session: dict) -> None:
     # STEP 3: TRADE
     # ═══════════════════════════════════════════
     elif current_step == "trade":
-        if current_sub == "authorize" and data.get("confirmed"):
+        if current_sub == "promise" and data.get("promise_to_purchase_submitted"):
+            amount = (session.get("finance_summary") or {}).get("amount")
+            if isinstance(amount, (int, float)) and not isinstance(amount, bool) and 0 < amount < float("inf"):
+                session["promise_to_purchase"] = {"accepted": True, "amount": amount}
+                session["sub_step"] = "bank_purchase_loading"
+
+        elif current_sub == "bank_purchase_loading" and data.get("commodity_buy_complete"):
+            session["sub_step"] = "bank_purchase"
+
+        elif current_sub == "bank_purchase" and data.get("execute_murabaha_ownership_transfer"):
+            session["sub_step"] = "murabaha_sale_loading"
+
+        elif current_sub == "murabaha_sale_loading" and data.get("ownership_transfer_complete"):
+            session["sub_step"] = "murabaha_sale"
+
+        elif current_sub == "murabaha_sale" and data.get("accept_murabaha_sale"):
+            finance = session.get("finance_summary") or {}
+            amount, total, tenure = finance.get("amount"), finance.get("total_payable"), finance.get("tenure")
+            if (
+                isinstance(amount, (int, float)) and not isinstance(amount, bool) and 0 < amount < float("inf")
+                and isinstance(total, (int, float)) and not isinstance(total, bool) and amount <= total < float("inf")
+                and isinstance(tenure, int) and not isinstance(tenure, bool) and tenure > 0
+            ):
+                session["murabaha_sale_accepted"] = {"amount": amount, "total_payable": total, "tenure": tenure}
+                session["step"] = "esign"
+                session["step_number"] = 4
+                session["sub_step"] = "documents"
+
+        elif current_sub == "authorize" and data.get("confirmed"):
             session["sub_step"] = "loading"
             logger.info("Trade authorized. Starting execution loader.")
 
@@ -1182,11 +1210,41 @@ def _advance_session_state(extract: dict, session: dict) -> None:
     # STEP 4: E-SIGN
     # ═══════════════════════════════════════════
     elif current_step == "esign":
-        if (data.get("signed") or data.get("esign_nafath") or data.get("proceed_esign")) and current_sub == "documents":
+        if current_sub == "wakalah_prompt" and data.get("authorize_commodity_sale") and session.get("murabaha_sale_accepted") and not _is_india_personal_session(session):
+            finance = session.get("finance_summary") or {}
+            amount, total, tenure = finance.get("amount"), finance.get("total_payable"), finance.get("tenure")
+            if (
+                isinstance(amount, (int, float)) and not isinstance(amount, bool) and 0 < amount < float("inf")
+                and isinstance(total, (int, float)) and not isinstance(total, bool) and amount <= total < float("inf")
+                and isinstance(tenure, int) and not isinstance(tenure, bool) and tenure > 0
+            ):
+                session["commodity_sale"] = {"consented": True, "broker": "DDCAP", "amount": amount, "total_payable": total, "tenure": tenure, "simulated": True}
+                session["sub_step"] = "promissory_documents"
+
+        elif current_sub == "promissory_documents" and (data.get("esign_nafath") or data.get("proceed_esign")) and session.get("commodity_sale"):
+            profile = session.get("customer_profile") or {}
+            request_docusign_email(session, profile.get("email"), profile.get("name") or "Customer", template="promissory_note", region="SA")
+            session["sub_step"] = "promissory_email_sent"
+
+        elif current_sub == "promissory_email_sent" and data.get("promissory_esign_complete") and session.get("commodity_sale"):
+            session["promissory_esign_simulated_complete"] = True
+            session["step"] = "disburse"
+            session["sub_step"] = "account"
+            session["step_number"] = 5
+
+        elif (data.get("signed") or data.get("esign_nafath") or data.get("proceed_esign")) and current_sub == "documents":
+            if session.get("murabaha_sale_accepted") and not _is_india_personal_session(session):
+                profile = session.get("customer_profile") or {}
+                request_docusign_email(session, profile.get("email"), profile.get("name") or "Customer", template="murabaha_contract", region="SA")
             session["sub_step"] = "email_sent"
-            logger.info("E-Sign email sent, starting wait loader")
+            logger.info("E-Sign stage advanced, starting wait loader without requiring email delivery")
 
         elif data.get("esign_email_complete") and current_sub == "email_sent":
+            if session.get("murabaha_sale_accepted") and not _is_india_personal_session(session):
+                session["sub_step"] = "wakalah_prompt"
+                session["step_number"] = 5
+                session["murabaha_esign_simulated_complete"] = True
+                return
             session["step"] = "disburse"
             session["step_number"] = 5
             session["sub_step"] = "account"

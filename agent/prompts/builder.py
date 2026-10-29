@@ -10,18 +10,24 @@ def build_system_prompt(session: dict) -> str:
     sub_step = session.get("sub_step", "awaiting_id")
     user_type = session.get("user_type", "unknown")
     journey_mode = session.get("journeyMode", "PRE_DEDUPE")
-    
+
     step_goal = STEP_GOALS.get(step, "Continue the journey naturally")
     if isinstance(step_goal, dict):
         step_goal = step_goal.get(region, step_goal.get("SA", ""))
-    
+
     schema = EXTRACTION_SCHEMAS.get(step, '{}')
     if isinstance(schema, dict):
         schema = schema.get(region, schema.get("SA", '{}'))
 
-    # Sub-step specific instructions
     sub_step_instructions = _get_sub_step_instructions(step, sub_step, user_type, journey_mode)
-
+    if region == "SA" and session.get("murabaha_sale_accepted") and step == "esign":
+        sub_step_instructions = {
+            "documents": "Show the Commodity Transaction Certificate and Contract Letter only. Ask the customer to review both and select E-Sign Contract via Emdha. Extract {\"esign_emdha\": true} only on an explicit signing request. Send only the existing Saudi contract signing link, never the certificate or promissory note.",
+            "email_sent": "The contract-only signing email is requested in the background. Delivery may fail or time out without blocking the journey. Wait for the existing simulated signing loader to complete. Do not claim successful email delivery, a real signing callback, or verified archival integration.",
+            "wakalah_prompt": "Show the Sell Consent (Wakalah) widget. Extract {\"authorize_commodity_sale\": true} only for explicit authorization to sell the commodity on the customer's behalf. Do not infer consent from a generic continue or from selecting physical delivery. Sale execution is simulated; do not claim a real exchange integration.",
+            "promissory_documents": "The simulated commodity sale is complete. Show only the existing Promissory Note PDF, with no reference or extra registration details. Deferred total is finance_summary.total_payable. Extract {\"esign_nafith\": true} only for an explicit signing request. Send only the Promissory Note signing link; never resend the contract. Nafith generation is simulated, not a real registration API.",
+            "promissory_email_sent": "The Promissory Note-only email is requested in the background. Delivery may fail or time out without blocking the journey. Wait for the existing simulated 15-second signing completion. Do not claim successful email delivery or a verified Nafith callback, or send another email.",
+        }.get(sub_step, sub_step_instructions)
     return f"""
 {MASTER_SYSTEM_PROMPT}
 
@@ -236,6 +242,38 @@ Show the complete finance summary with all calculated values.
 - Ask if they want to proceed to commodity trade or modify
 - Do NOT explain Murabaha or the commodity trade at this step
 - Extract: {"proceed_trade": true} when they proceed
+""",
+        ("trade", "promise"): """
+The customer must issue their unilateral Promise to Purchase (Wa'ad) before the bank purchases the commodity.
+- Ask them to review the consent widget and submit their promise.
+- The cost is exactly finance_summary.amount, not the total payable or a default amount.
+- Do not execute or authorize the trade at this step.
+- Extract: {"promise_to_purchase_submitted": true} only when they explicitly submit their Promise to Purchase.
+""",
+        ("trade", "bank_purchase_loading"): """
+Wa'ad consent received and logged. The bank is now auto-executing the commodity purchase on the Commodity platform.
+- The system shows an "Executing Commodity buy..." loader for 3 seconds, then the Bank Commodity Buy widget.
+- Extract: {"commodity_buy_complete": true} only when the loader completes.
+""",
+        ("trade", "bank_purchase"): """
+Wa'ad consent received and logged. The bank is now auto-executing the commodity purchase on the Commodity platform.
+- Display the Bank Commodity Buy widget for Crude Palm Oil with purchase cost exactly finance_summary.amount.
+- Do not invent transaction IDs, platform references, or any other purchase details.
+- Extract: {"execute_murabaha_ownership_transfer": true} when the customer selects Execute Murabaha Ownership Transfer or asks to proceed to Murabaha Transaction execution.
+- At this step, also recognize "Execute Murabba ownership transfer", "Execute Murabha ownership transfer", "Execute Murabahah ownership transfer", and "Execute ownership transfer" as the same explicit request.
+- This opens the Murabaha sale offer only; do not mark ownership transferred or the trade completed.
+""",
+        ("trade", "murabaha_sale_loading"): """
+- The system shows an "Executing Ownership Transfer..." loader for 3 seconds with no chat text, then the Murabaha Sale Execution widget.
+- Extract: {"ownership_transfer_complete": true} only when the loader completes.
+""",
+        ("trade", "murabaha_sale"): """
+We now offer the commodity to you under Murabaha sale at cost plus agreed profit markup. Please accept the transfer of ownership.
+- Show Murabaha Sale Execution for Crude Palm Oil.
+- Cost is finance_summary.amount, agreed profit is (finance_summary.monthly_installment * finance_summary.tenure) minus amount, deferred selling price is finance_summary.total_payable, and tenure is finance_summary.tenure.
+- The disclaimer is informational, not a checkbox.
+- Extract: {"accept_murabaha_sale": true} only when the customer explicitly accepts the Murabaha sale and transfer of ownership.
+- Acceptance opens the existing commodity certificate and Saudi financing contract for review. Do not send an email until the customer requests e-signing.
 """,
         ("trade", "authorize"): """
 The customer is about to authorize the commodity trade.

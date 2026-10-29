@@ -15,6 +15,10 @@ import { VerificationSuccessWidget } from "../widgets/VerificationSuccessWidget"
 import { PersonalDetailsWidget } from "../widgets/PersonalDetailsWidget";
 import { EligibleOfferWidget } from "../widgets/EligibleOfferWidget";
 import { FinanceSummaryWidget } from "../widgets/FinanceSummaryWidget";
+import { PromiseToPurchaseWidget } from "../widgets/PromiseToPurchaseWidget";
+import { BankCommodityBuyWidget } from "../widgets/BankCommodityBuyWidget";
+import { MurabahaSaleExecutionWidget } from "../widgets/MurabahaSaleExecutionWidget";
+import { WakalahConsentWidget } from "../widgets/WakalahConsentWidget";
 import { DocumentPreviewWidget } from "../widgets/DocumentPreviewWidget";
 import { GenerateContractWidget } from "../widgets/GenerateContractWidget";
 import { OtpVerificationWidget } from "../widgets/OtpVerificationWidget";
@@ -78,6 +82,7 @@ export interface MessageMetadata {
   options?: Array<{ id: string; label: string; value: string }>;
   optionContext?: { type?: string; field?: string };
   postText?: string;
+  postTextBeforeWidget?: boolean;
   show_step_tracker?: boolean;
   tracker_step?: number;
   tracker_total?: number;
@@ -96,6 +101,10 @@ const WIDGET_REGISTRY: Record<string, WidgetComponent> = {
   PersonalDetailsWidget,
   EligibleOfferWidget,
   FinanceSummaryWidget,
+  PromiseToPurchaseWidget,
+  BankCommodityBuyWidget,
+  MurabahaSaleExecutionWidget,
+  WakalahConsentWidget,
   DocumentPreviewWidget,
   GenerateContractWidget,
   OtpVerificationWidget,
@@ -139,6 +148,7 @@ export interface MessageBubbleProps {
   parts?: MessagePart[];
   metadata?: MessageMetadata;
   showWidget?: boolean;
+  showPostText?: boolean;
   onWidgetShown?: (element: HTMLDivElement) => void;
 }
 
@@ -249,7 +259,7 @@ function renderInlineSpans(text: string): React.ReactNode[] {
   return parts;
 }
 
-export function MessageBubble({ messageId, role, content, parts, metadata, showWidget = true, onWidgetShown }: MessageBubbleProps) {
+export function MessageBubble({ messageId, role, content, parts, metadata, showWidget = true, showPostText = true, onWidgetShown }: MessageBubbleProps) {
   const isUser = role === "user";
   const speak = useSpeakContext();
   const [isSpeaking, setIsSpeaking] = useState(false);
@@ -370,7 +380,7 @@ export function MessageBubble({ messageId, role, content, parts, metadata, showW
 
   const renderPostText = () => {
     const postText = metadata?.postText?.trim();
-    if (!postText || isUser) return null;
+    if (!postText || isUser || !showPostText) return null;
 
     return (
       <div
@@ -505,6 +515,7 @@ export function MessageBubble({ messageId, role, content, parts, metadata, showW
         />
       )}
       {renderTextBlock()}
+      {metadata?.postTextBeforeWidget && renderPostText()}
       {WidgetComponent && showWidget && (
         <div ref={widgetRef} className="w-full" data-widget-message-id={messageId} data-widget-name={widgetSpec?.widget || ""}>
           <StepIndicator
@@ -516,7 +527,7 @@ export function MessageBubble({ messageId, role, content, parts, metadata, showW
           <WidgetComponent data={widgetSpec?.data} messageId={messageId} widgetName={widgetSpec?.widget || ""} />
         </div>
       )}
-      {renderPostText()}
+      {!metadata?.postTextBeforeWidget && renderPostText()}
       {renderOptions()}
     </div>
   );

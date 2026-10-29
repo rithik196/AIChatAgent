@@ -26,7 +26,7 @@ from pathlib import Path
 import datetime
 
 from db import get_customer_by_phone, get_customer_by_national_id, update_customer, get_etb_registered_ibans
-from services.mail import send_open_banking_email, send_docusign_email
+from services.mail import send_open_banking_email, send_docusign_email, request_docusign_email
 from services.otp import send_otp, verify_otp
 from utils.eligibility import calculate_max_eligible_amount
 
@@ -435,6 +435,10 @@ def _get_open_banking_template(session: dict | None) -> str:
 def _get_docusign_template(session: dict | None) -> str:
     if _is_india_personal_session(session):
         return "higher_amount" if (session or {}).get("wants_more") else "preapproved"
+    if (session or {}).get("commodity_sale") and (session or {}).get("sub_step") in {"promissory_documents", "promissory_email_sent"}:
+        return "promissory_note"
+    if (session or {}).get("murabaha_sale_accepted"):
+        return "murabaha_contract"
     return "default"
 
 
@@ -2212,6 +2216,9 @@ def _resolve_step_tracker(step: str, sub_step: str, customer_type: str, session:
             }
             total_steps = 5
 
+    if not _is_india_personal_session(session):
+        tracker_map[("trade", "promise")] = 3
+
     step_number = tracker_map.get((step, sub_step))
     if not step_number:
         return {"show_step_tracker": False, "tracker_total": total_steps}
@@ -2717,6 +2724,42 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
             "data": session.get("finance_summary") or {},
         }
 
+    if step == "trade" and sub_step == "promise":
+        return {
+            "widget": "PromiseToPurchaseWidget",
+            "data": {"amount": (session.get("finance_summary") or {}).get("amount"), **tracker_data},
+        }
+
+    if step == "trade" and sub_step == "bank_purchase_loading":
+        return {"widget": "LoadingWidget", "data": {"title": "Executing Commodity buy...", "subtitle": "Processing your secure request", "auto_advance_ms": 3000, "next_message": "commodity_buy_complete", "silent": True}}
+
+    if step == "trade" and sub_step == "bank_purchase":
+        return {
+            "widget": "BankCommodityBuyWidget",
+            "data": {
+                "amount": (session.get("finance_summary") or {}).get("amount"),
+                "commodity": "Crude Palm Oil",
+                **tracker_data,
+            },
+        }
+
+    if step == "trade" and sub_step == "murabaha_sale_loading":
+        return {"widget": "LoadingWidget", "data": {"title": "Executing Ownership Transfer...", "subtitle": "Processing your secure request", "auto_advance_ms": 3000, "next_message": "ownership_transfer_complete", "silent": True}}
+
+    if step == "trade" and sub_step == "murabaha_sale":
+        finance = session.get("finance_summary") or {}
+        return {
+            "widget": "MurabahaSaleExecutionWidget",
+            "data": {
+                "amount": finance.get("amount"),
+                "total_payable": finance.get("total_payable"),
+                "tenure": finance.get("tenure"),
+                "monthly_installment": finance.get("monthly_installment"),
+                "commodity": "Crude Palm Oil",
+                **tracker_data,
+            },
+        }
+
     if step == "trade" and sub_step == "authorize":
         return {"widget": "CommodityTradeAuthorizationWidget", "data": {**tracker_data}}
 
@@ -2735,16 +2778,33 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
                 "subtitle": "Generated and ready to download",
                 "current_step": 3,
                 "documents": [{"name": "Commodity Transaction Certificate", "type": "pdf", "url": certificate_url}],
+                **tracker_data,
             },
         }
 
     if step == "trade" and sub_step == "contract_prompt":
         return {
             "widget": "GenerateContractWidget",
-            "data": {}
+            "data": {**tracker_data}
         }
 
     if step == "esign" and sub_step == "documents":
+        if session.get("murabaha_sale_accepted") and not _is_india_personal_session(session):
+            return {
+                "widget": "DocumentPreviewWidget",
+                "data": {
+                    "documents": [
+                        {"name": "Commodity Transaction Certificate", "caption": "Ownership Proof", "type": "pdf", "url": _ensure_commodity_certificate_pdf(session)},
+                        {"name": "Contract Letter", "caption": "Binding Terms", "type": "pdf", "url": "/assets/ContractSaudi.pdf"},
+                    ],
+                    "title": "Contract & Certificate",
+                    "subtitle": "Ready for Digital Archival",
+                    "action_label": "E-Sign Contract via Emdha",
+                    "disclaimer": "Signing this agreement confirms your legal ownership of the commodity and archives the Murabaha sale into your banking records.",
+                    "current_step": 4,
+                    **tracker_data,
+                },
+            }
         if _is_india_personal_session(session):
             return {
                 "widget": "IndiaFacilityLetterWidget",
@@ -2767,7 +2827,7 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
                     {"name": "Promissory Note", "type": "pdf", "url": "/assets/PromissoryNote.pdf"},
                 ],
                 "title": "Contract & Promissory Note",
-                "subtitle": "Ready for E-Sign",
+                "subtitle": "Ready for E-Sign via Emdha",
                 "current_step": 4,
                 **tracker_data,
             },
@@ -2777,13 +2837,46 @@ def resolve_widget(session: dict, extract: dict | None) -> dict | None:
         return {
             "widget": "LoadingWidget",
             "data": {
-                "title": "E-Sign Email Sent",
+                "title": "E-Signing in Progress" if session.get("murabaha_sale_accepted") and not _is_india_personal_session(session) else "E-Sign Email Sent",
                 "subtitle": "Please complete the signature from your email. We will continue once it is verified.",
                 "auto_advance_ms": 15000,
                 "next_message": "esign_email_complete",
                 "silent": True,
             },
         }
+
+    if step == "esign" and sub_step == "promissory_documents" and session.get("commodity_sale"):
+        return {
+            "widget": "DocumentPreviewWidget",
+            "data": {
+                "title": "Promissory Note",
+                "subtitle": "Ready for E-Sign",
+                "documents": [{"name": "Promissory Note", "type": "pdf", "url": "/assets/PromissoryNote.pdf"}],
+                "current_step": 4,
+                "action_label": "E-Sign via Nafith",
+                **tracker_data,
+            },
+        }
+
+    if step == "esign" and sub_step == "promissory_email_sent" and session.get("commodity_sale"):
+        return {
+            "widget": "LoadingWidget",
+            "data": {
+                "title": "E-Signing in Progress",
+                "subtitle": "Please complete the Promissory Note signature from your email.",
+                "auto_advance_ms": 15000,
+                "next_message": "promissory_esign_complete",
+                "silent": True,
+            },
+        }
+
+    if step == "esign" and sub_step == "wakalah_prompt":
+        if session.get("murabaha_sale_accepted") and not _is_india_personal_session(session):
+            return {
+                "widget": "WakalahConsentWidget",
+                "data": {"amount": (session.get("finance_summary") or {}).get("amount"), **tracker_data},
+            }
+        return None
 
     if step == "esign" and sub_step == "otp_ivr":
         return {"widget": "OtpVerificationWidget", "data": {}}
@@ -3264,19 +3357,24 @@ def _populate_selected_account_details(session: dict) -> None:
 
 
 def _send_docusign_for_session(session: dict, session_id: str) -> None:
-    if session.get("docusign_email_sent"):
+    template = _get_docusign_template(session)
+    sent_key = "promissory_email_sent" if template == "promissory_note" else "docusign_email_sent"
+    if session.get(sent_key):
         return
     profile = _build_personal_widget_data(session, session_id) or session.get("customer_profile") or {}
     if profile and not session.get("customer_profile"):
         session["customer_profile"] = profile
     email = _get_mail_recipient(session, profile.get("email"))
     name = profile.get("name") or session.get("collected", {}).get("full_name") or "Customer"
+    if template in {"murabaha_contract", "promissory_note"}:
+        request_docusign_email(session, email, name, template=template, region=session.get("region", "SA"))
+        return
     if not email:
         logger.warning("[routing] session=%s skipped docusign email because customer_profile.email is missing", session_id)
         return
     try:
-        if send_docusign_email(email, name, template=_get_docusign_template(session), region=session.get("region", "SA")):
-            session["docusign_email_sent"] = True
+        if send_docusign_email(email, name, template=template, region=session.get("region", "SA")):
+            session[sent_key] = True
     except Exception as exc:
         logger.error("Failed to trigger Docusign email for session %s: %s", session_id, exc)
 
@@ -3871,12 +3969,57 @@ def _handle_widget_event(session: dict, session_id: str, raw_msg: str, normalize
         if sub_step == "summary" and signal == "continue":
             session["step"] = "trade"
             session["step_number"] = 3
+            if not _is_india_personal_session(session):
+                session["sub_step"] = "promise"
+                return done(
+                    "To finalize your finance, we will initiate the Shariah-compliant Commodity Murabaha process. First, as we require your unilateral Promise to Purchase (Wa'ad) before the bank purchases the commodity."
+                )
             session["sub_step"] = "authorize"
             return done(
                 "To finalize your finance, I will now initiate the commodity trade on your behalf. This step ensures your application remains fully Shariah-compliant. Do you authorize me to execute this trade for you?"
             )
 
     if step == "trade":
+        if sub_step == "promise" and signal == "promise_to_purchase_submitted":
+            amount = (session.get("finance_summary") or {}).get("amount")
+            if not isinstance(amount, (int, float)) or isinstance(amount, bool) or not 0 < amount < float("inf"):
+                return done("Your finance amount is unavailable. Please review your finance summary before submitting your promise.")
+            session["promise_to_purchase"] = {"accepted": True, "amount": amount}
+            session["sub_step"] = "bank_purchase_loading"
+            return done("Wa'ad consent received and logged. The bank is now auto-executing the commodity purchase on the Commodity platform.")
+
+        if sub_step == "bank_purchase_loading" and signal == "commodity_buy_complete":
+            session["sub_step"] = "bank_purchase"
+            return done("")
+
+        if sub_step == "bank_purchase" and signal == "execute_murabaha_ownership_transfer":
+            session["sub_step"] = "murabaha_sale_loading"
+            return done("")
+
+        if sub_step == "murabaha_sale_loading" and signal == "ownership_transfer_complete":
+            session["sub_step"] = "murabaha_sale"
+            return done("We now offer the commodity to you under Murabaha sale at cost plus agreed profit markup. Please accept the transfer of ownership.")
+
+        if sub_step == "murabaha_sale" and signal == "accept_murabaha_sale":
+            finance = session.get("finance_summary") or {}
+            amount, total, tenure = finance.get("amount"), finance.get("total_payable"), finance.get("tenure")
+            if (
+                not isinstance(amount, (int, float)) or isinstance(amount, bool) or not 0 < amount < float("inf")
+                or not isinstance(total, (int, float)) or isinstance(total, bool) or not amount <= total < float("inf")
+                or not isinstance(tenure, int) or isinstance(tenure, bool) or tenure <= 0
+            ):
+                return done("Your finance details are unavailable. Please review your finance summary before accepting the Murabaha sale.")
+            try:
+                _ensure_commodity_certificate_pdf(session)
+            except Exception:
+                logger.exception("Failed to generate Murabaha commodity certificate for %s", session_id)
+                return done("We could not prepare your commodity certificate. Please try accepting the Murabaha sale again.")
+            session["murabaha_sale_accepted"] = {"amount": amount, "total_payable": total, "tenure": tenure}
+            session["step"] = "esign"
+            session["step_number"] = 4
+            session["sub_step"] = "documents"
+            return done("Commodity ownership has been legally transferred to you! Your Commodity Transaction Certificate and Contract Letter have been generated. Please review both documents and proceed with E-signing via Emdha for final archival.")
+
         if sub_step == "authorize" and signal == "continue":
             session["sub_step"] = "loading"
             return done("We are executing the commodity trade now.")
@@ -3900,6 +4043,47 @@ def _handle_widget_event(session: dict, session_id: str, raw_msg: str, normalize
             return done("Please review the Contract & Promissory Note below. When ready, proceed with e-signing.")
 
     if step == "esign":
+        if sub_step == "wakalah_prompt" and signal == "authorize_commodity_sale" and session.get("murabaha_sale_accepted") and not _is_india_personal_session(session):
+            finance = session.get("finance_summary") or {}
+            amount, total, tenure = finance.get("amount"), finance.get("total_payable"), finance.get("tenure")
+            if (
+                not isinstance(amount, (int, float)) or isinstance(amount, bool) or not 0 < amount < float("inf")
+                or not isinstance(total, (int, float)) or isinstance(total, bool) or not amount <= total < float("inf")
+                or not isinstance(tenure, int) or isinstance(tenure, bool) or tenure <= 0
+            ):
+                return done("Your finance details are unavailable. Please review your finance summary before authorizing the sale.")
+            session["commodity_sale"] = {"consented": True, "broker": "DDCAP", "amount": amount, "total_payable": total, "tenure": tenure, "simulated": True}
+            session["sub_step"] = "promissory_documents"
+            amount_text = f"{amount:,.2f}".rstrip("0").rstrip(".")
+            total_text = f"{total:,.2f}".rstrip("0").rstrip(".")
+            return done(
+                f"Automated sale executed! Your commodity was sold on the open exchange to independent broker DDCAP for {amount_text} SAR. Net cash proceeds are secured.",
+                ui_flags_override={
+                    "postText": f"Now that commodity monetization is complete, your electronic Promissory Note for the deferred total of {total_text} SAR has been generated on the Nafith platform. Please complete your final E-sign.",
+                    "postTextBeforeWidget": True,
+                },
+            )
+
+        if sub_step == "promissory_documents" and signal == "proceed_esign" and session.get("commodity_sale"):
+            _send_docusign_for_session(session, session_id)
+            session["sub_step"] = "promissory_email_sent"
+            return done("Please complete the Promissory Note signature from your email.")
+
+        if sub_step == "promissory_email_sent" and signal == "promissory_esign_complete" and session.get("commodity_sale"):
+            amount = session["commodity_sale"]["amount"]
+            amount_text = f"{amount:,.2f}".rstrip("0").rstrip(".")
+            session["promissory_esign_simulated_complete"] = True
+            session["step"] = "disburse"
+            session["sub_step"] = "account"
+            session["step_number"] = 5
+            return done(
+                "Congratulations! Your Promissory Note has been successfully verified and registered on the Ministry of Justice Nafith platform.",
+                ui_flags_override={
+                    "postText": f"Next, please select the account that should be credited with your approved funds of {amount_text} SAR.",
+                    "postTextBeforeWidget": True,
+                },
+            )
+
         if sub_step == "documents" and signal == "proceed_esign":
             try:
                 _send_docusign_for_session(session, session_id)
@@ -3911,6 +4095,17 @@ def _handle_widget_event(session: dict, session_id: str, raw_msg: str, normalize
             )
 
         if sub_step == "email_sent" and signal == "esign_email_complete":
+            if session.get("murabaha_sale_accepted") and not _is_india_personal_session(session):
+                session["sub_step"] = "wakalah_prompt"
+                session["step_number"] = 5
+                session["murabaha_esign_simulated_complete"] = True
+                return done(
+                    "Your Murabaha Contract and Commodity Certificate have been successfully signed and archived.",
+                    ui_flags_override={
+                        "postText": "To obtain cash financing, please provide your consent appointing the bank/broker as your agent (Wakalah) to sell the commodity on your behalf on the open market.",
+                        "postTextBeforeWidget": True,
+                    },
+                )
             if _is_india_personal_session(session):
                 session["step"] = "disburse"
                 session["step_number"] = 5
@@ -5023,7 +5218,10 @@ async def chat(request: ChatRequest):
         )
         if email:
             try:
-                send_docusign_email(email, name, template=_get_docusign_template(updated_session), region=updated_session.get("region", "SA"))
+                if _get_docusign_template(updated_session) == "murabaha_contract":
+                    request_docusign_email(updated_session, email, name, template="murabaha_contract", region=updated_session.get("region", "SA"))
+                else:
+                    send_docusign_email(email, name, template=_get_docusign_template(updated_session), region=updated_session.get("region", "SA"))
             except Exception as exc:
                 logger.error("Failed to trigger Docusign email for session %s: %s", session_id, exc)
         else:

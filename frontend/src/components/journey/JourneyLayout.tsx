@@ -14,7 +14,7 @@ export function JourneyLayout({ chatPanel, journeyPanel }: JourneyLayoutProps) {
           but for simplicity in this responsive layout we split them on desktop and stack on mobile. */}
       
       {/* Chat Panel (Top on mobile, Left on desktop) */}
-      <div className="flex-1 w-full h-full relative">
+      <div className="min-h-0 min-w-0 flex-1 w-full h-full relative">
         {chatPanel}
       </div>
 
