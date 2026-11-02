@@ -1917,6 +1917,14 @@ def _resolve_commodity_certificate_amount(session: dict) -> int:
     return amount
 
 
+def _resolve_commodity_certificate_murabaha_value(session: dict, finance_amount: int) -> int:
+    finance = session.get("finance_summary") if isinstance(session.get("finance_summary"), dict) else {}
+    total_payable = finance.get("total_payable")
+    if not total_payable:
+        return int(finance_amount or 0)
+    return int(total_payable)
+
+
 def _resolve_commodity_certificate_customer_name(session: dict) -> str:
     profile = session.get("customer_profile") if isinstance(session.get("customer_profile"), dict) else {}
     name = str(profile.get("name") or "").strip()
@@ -1948,6 +1956,7 @@ def _render_commodity_certificate_html(session: dict) -> str:
     certificate_state["certificateNumber"] = certificate_number
 
     finance_amount = _resolve_commodity_certificate_amount(session)
+    murabaha_value = _resolve_commodity_certificate_murabaha_value(session, finance_amount)
     current_date = datetime.datetime.now().strftime("%d %B %Y")
     volume = finance_amount / COMMODITY_CERTIFICATE_PRICE if COMMODITY_CERTIFICATE_PRICE else 0.0
     customer_name = _resolve_commodity_certificate_customer_name(session)
@@ -1961,6 +1970,8 @@ def _render_commodity_certificate_html(session: dict) -> str:
         "$Volume$": f"{volume:.2f}",
         "&Value&": f"{finance_amount:,.0f}",
         "$Value$": f"{finance_amount:,.0f}",
+        "&MurabahaValue&": f"{murabaha_value:,.0f}",
+        "$MurabahaValue$": f"{murabaha_value:,.0f}",
         "&customerName&": html.escape(customer_name),
         "$customerName$": html.escape(customer_name),
     }
@@ -2120,6 +2131,7 @@ def _write_commodity_certificate_pdf(session: dict, pdf_path: Path) -> None:
     volume = finance_amount / COMMODITY_CERTIFICATE_PRICE if COMMODITY_CERTIFICATE_PRICE else 0.0
     volume_text = f"{volume:.2f}"
     value_text = f"{finance_amount:,.0f}"
+    murabaha_value_text = f"{_resolve_commodity_certificate_murabaha_value(session, finance_amount):,.0f}"
     customer_name = _resolve_commodity_certificate_customer_name(session)
 
     page1: list[str] = []
@@ -2148,7 +2160,7 @@ def _write_commodity_certificate_pdf(session: dict, pdf_path: Path) -> None:
         ("Price (MYR Equivalent) :", ""),
         ("Value :", value_text),
         ("Transaction Type :", "BID"),
-        ("Murabaha Value :", value_text),
+        ("Murabaha Value :", murabaha_value_text),
     ]
 
     table_y = y - 70
@@ -3327,13 +3339,21 @@ def _build_offer_slider_data(session: dict, is_preapproved_path: bool | None = N
     }
 
 
-def _complete_eligibility_check(session: dict) -> None:
+def _merge_eligibility_offer(session: dict) -> dict:
     current_offer = session.get("offer") or {}
-    computed_offer = _build_offer_from_eligibility(session)
-    session["offer"] = {
+    merged_offer = {
         **current_offer,
-        **computed_offer,
+        **_build_offer_from_eligibility(session),
     }
+    # ETB customers who chose "Go with offer" keep the pre-approved amount after SIMAH/eligibility.
+    if session.get("etb_preapproved_offer_accepted") and not session.get("wants_more"):
+        merged_offer["max_amount"] = PREAPPROVED_ETB_AMOUNT
+    session["offer"] = merged_offer
+    return merged_offer
+
+
+def _complete_eligibility_check(session: dict) -> None:
+    _merge_eligibility_offer(session)
     session["step"] = "offer"
     session["step_number"] = 2
     session["sub_step"] = "eligible"
@@ -3908,6 +3928,7 @@ def _handle_widget_event(session: dict, session_id: str, raw_msg: str, normalize
                         phone=_resolve_india_masked_phone(session)
                     )
                     return done(intro_text)
+                session["etb_preapproved_offer_accepted"] = True
                 session["step"] = "identity"
                 session["sub_step"] = "bureau_consent"
                 _ensure_bureau_otp_sent(session, session.get("session_id", ""))
@@ -4413,15 +4434,11 @@ async def chat(request: ChatRequest):
             "bureau_success",
             "eligibility_check",
         }:
-            offer = current_session.get("offer", {}) or {}
             customer_type = current_session.get("customerType") or "UNKNOWN"
             journey_mode = current_session.get("journeyMode") or (
                 "ETB_CORE" if customer_type == "ETB" else "NTB_ENRICHMENT"
             )
-            current_session["offer"] = {
-                **offer,
-                **_build_offer_from_eligibility(current_session),
-            }
+            _merge_eligibility_offer(current_session)
             current_session["step"] = "offer"
             current_session["step_number"] = 2
             current_session["sub_step"] = "eligible"

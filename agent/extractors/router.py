@@ -1047,6 +1047,8 @@ def _advance_session_state(extract: dict, session: dict) -> None:
                 **(session.get("offer") or {}),
                 **computed_offer,
             }
+            if session.get("etb_preapproved_offer_accepted") and not session.get("wants_more"):
+                session["offer"]["max_amount"] = PREAPPROVED_ETB_AMOUNT
             logger.info("Eligibility check complete. Max eligible: %s SAR. Moving to eligible offer presentation.", session["offer"].get("max_amount"))
 
     # ═══════════════════════════════════════════
@@ -1055,6 +1057,7 @@ def _advance_session_state(extract: dict, session: dict) -> None:
     elif current_step == "offer":
         if current_sub == "pre_approved_offer":
             if data.get("accepted_pre_approved_offer") or data.get("accepted_offer"):
+                session["etb_preapproved_offer_accepted"] = not _is_india_personal_session(session)
                 session["suppress_offer_text"] = True
                 session["step"] = "identity"
                 session["sub_step"] = "bureau_consent"
