@@ -1029,7 +1029,9 @@ def _ensure_expenses_prefilled(session: dict) -> None:
 
 
 def _prefill_open_banking_expenses(session: dict) -> None:
-    session["income_verification_method"] = "open_banking"
+    # Keep an uploaded-statement choice so eligibility uses the customer's typed income.
+    if session.get("income_verification_method") != "upload_statement":
+        session["income_verification_method"] = "open_banking"
     session["ntb_open_banking_income_verified"] = True
     if session.get("expenses_prefilled"):
         return
@@ -1377,6 +1379,8 @@ def _parse_currency_amount(value: Any) -> float | None:
 
 
 def _is_open_banking_income_selected(session: dict) -> bool:
+    if session.get("income_verification_method") == "upload_statement":
+        return False
     return (
         session.get("income_verification_method") == "open_banking"
         or session.get("pending_income_verification") == "open_banking"
@@ -3751,6 +3755,30 @@ def _handle_widget_event(session: dict, session_id: str, raw_msg: str, normalize
                 "Your details have been successfully updated. "
                 "Would you like to update any other details, or should we confirm and proceed?"
             )
+
+        if sub_step == "modify_employment_document_pending" and signal.startswith("document_uploaded:"):
+            _finalize_pending_profile_update(session, "employment")
+            session["sub_step"] = "updating_details"
+            session["updating"] = {
+                "section": "Employment Details",
+                "auto_advance_ms": 3000,
+                "next_message": "update_complete",
+                "silent": True,
+            }
+            return done("We are updating your employment details now. Please wait while we save the changes.")
+
+        if sub_step == "modify_income_upload_statement" and signal.startswith("document_uploaded:"):
+            _finalize_pending_profile_update(session, "income")
+            session["sub_step"] = "updating_details"
+            session["updating"] = {
+                "section": "Income Details",
+                "auto_advance_ms": 3000,
+                "next_message": "update_complete",
+                "silent": True,
+            }
+            session["pending_income_verification"] = "upload_statement"
+            session["income_verification_method"] = "upload_statement"
+            return done("We are updating your income details now. Please wait while we save the changes.")
 
         explicit_identity_routes = {
             "modify_section": "modify_section",
